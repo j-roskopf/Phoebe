@@ -28,6 +28,7 @@ import io.ktor.http.headersOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Before
@@ -224,6 +225,50 @@ class CatalogRepositoryRefreshDesktopTest {
 
         assertEquals(CatalogSyncPhase.Complete, repo.catalogSyncState.value.phase)
         assertEquals(JellyfinClient.JellyfinPageSize + 1, repo.catalog.value.tracksByParent.values.flatten().size)
+    }
+
+    @Test
+    fun cancellingJellyfinFullSyncStopsRefreshingState() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val secondAlbumStarted = CompletableDeferred<Unit>()
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/Items" -> when (request.url.parameters["includeItemTypes"]) {
+                    "MusicAlbum" -> {
+                        val start = request.url.parameters["startIndex"]?.toIntOrNull() ?: 0
+                        if (start == 0) {
+                            respondJson(jellyfinAlbumsPageJson(start = 1, count = JellyfinClient.JellyfinPageSize, total = JellyfinClient.JellyfinPageSize + 1))
+                        } else {
+                            secondAlbumStarted.complete(Unit)
+                            awaitCancellation()
+                        }
+                    }
+                    "Audio" -> respondJson("""{ "Items": [], "TotalRecordCount": 0 }""")
+                    "Playlist" -> respondJson("""{ "Items": [], "TotalRecordCount": 0 }""")
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val http = testHttpClient(engine)
+        val media = MediaSourcesRepository(db, PlatformStorage())
+        val repo = CatalogRepository(
+            plexClient = PlexClient(http),
+            jellyfinClient = JellyfinClient(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+
+        val refresh = async { repo.refreshAggregated(testJellyfinSession(syncMode = JellyfinSyncMode.Full)) }
+        secondAlbumStarted.await()
+
+        refresh.cancelAndJoin()
+
+        assertFalse(repo.catalogRefreshing.value)
+        assertEquals(CatalogSyncPhase.LoadingLibrary, repo.catalogSyncState.value.phase)
     }
 
     @Test

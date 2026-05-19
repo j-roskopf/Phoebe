@@ -3,7 +3,6 @@ package com.phoebe.app.ui
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExperimentalSharedTransitionApi
-import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -102,6 +101,7 @@ import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -184,6 +184,31 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.yield
 import kotlin.math.max
+
+private data class DesktopRouteTarget(
+    val screen: AppScreen,
+    val section: DesktopSection,
+    val selectedPlaylistId: String?,
+)
+
+private const val DesktopRouteFadeOutMillis = 70
+private const val DesktopRouteFadeInMillis = 150
+
+private fun desktopRouteFadeThroughTransition() =
+    fadeIn(
+        animationSpec = tween(
+            durationMillis = DesktopRouteFadeInMillis,
+            delayMillis = DesktopRouteFadeOutMillis,
+            easing = FastOutSlowInEasing,
+        ),
+        initialAlpha = 0f,
+    ) togetherWith fadeOut(
+        animationSpec = tween(
+            durationMillis = DesktopRouteFadeOutMillis,
+            easing = FastOutSlowInEasing,
+        ),
+        targetAlpha = 0f,
+    )
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -354,27 +379,30 @@ internal fun DesktopPlayer(
                     )
                     Column(Modifier.weight(1f).fillMaxHeight()) {
                         Row(Modifier.weight(1f).fillMaxWidth()) {
-                            SharedTransitionLayout(Modifier.weight(1f).fillMaxHeight()) {
+                            SharedTransitionLayout(Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
                                 val sharedTransitionScope = this
-                                var previousScreen by remember { mutableStateOf<AppScreen?>(null) }
+                                val routeTarget = DesktopRouteTarget(screen, section, selectedPlaylistId)
+                                var previousRouteTarget by remember { mutableStateOf<DesktopRouteTarget?>(null) }
                                 val sharedElementsEnabled = LocalSharedElementTransitionsEnabled.current &&
-                                    shouldUseDesktopSharedElements(previousScreen, screen)
-                                LaunchedEffect(screen) {
-                                    previousScreen = screen
+                                    shouldUseDesktopSharedElements(previousRouteTarget, routeTarget)
+                                LaunchedEffect(routeTarget) {
+                                    previousRouteTarget = routeTarget
                                 }
                                 CompositionLocalProvider(
                                     LocalSharedTransitionScope provides sharedTransitionScope,
                                     LocalSharedElementTransitionsEnabled provides sharedElementsEnabled,
                                 ) {
                                     AnimatedContent(
-                                        targetState = screen,
-                                        modifier = Modifier.fillMaxSize(),
+                                        targetState = routeTarget,
+                                        modifier = Modifier.fillMaxSize().clipToBounds(),
                                         transitionSpec = {
-                                            fadeIn(tween(180, easing = FastOutSlowInEasing)) togetherWith
-                                                fadeOut(tween(160, easing = FastOutSlowInEasing))
+                                            desktopRouteFadeThroughTransition()
                                         },
                                         label = "desktop-screen",
-                                    ) { targetScreen ->
+                                    ) { targetRoute ->
+                                        val targetScreen = targetRoute.screen
+                                        val targetSection = targetRoute.section
+                                        val targetSelectedPlaylistId = targetRoute.selectedPlaylistId
                                         CompositionLocalProvider(LocalAnimatedVisibilityScope provides this@AnimatedContent) {
                             when (targetScreen) {
                                 is AppScreen.ServerPicker -> PlexServerPickerPanel(
@@ -558,7 +586,7 @@ internal fun DesktopPlayer(
                                     modifier = Modifier.fillMaxSize(),
                                 )
                                 else -> when {
-                                    section == DesktopSection.Home && selectedPlaylistId == null -> {
+                                    targetSection == DesktopSection.Home && targetSelectedPlaylistId == null -> {
                                         val homeListState = RetainedLazyListStates.remember("desktop-home")
                                         DesktopHomeScreen(
                                         state = homeUiState,
@@ -597,7 +625,7 @@ internal fun DesktopPlayer(
                                         supportedCollectionEntries = supportedCollectionEntries,
                                     )
                                     }
-                                    section == DesktopSection.Search && selectedPlaylistId == null -> SearchDesktopView(
+                                    targetSection == DesktopSection.Search && targetSelectedPlaylistId == null -> SearchDesktopView(
                                         catalog = catalog,
                                         catalogRefreshing = catalogRefreshing,
                                         searchQuery = searchQuery,
@@ -609,7 +637,7 @@ internal fun DesktopPlayer(
                                         onAddToUpNext = onAddToUpNext,
                                         onDownload = onDownload,
                                     )
-                                    section == DesktopSection.Library && selectedPlaylistId == null -> {
+                                    targetSection == DesktopSection.Library && targetSelectedPlaylistId == null -> {
                                         LibraryDesktopView(
                                             catalog = catalog,
                                             catalogRefreshing = catalogRefreshing,
@@ -631,7 +659,7 @@ internal fun DesktopPlayer(
                                             modifier = Modifier.fillMaxSize(),
                                         )
                                     }
-                                    section == DesktopSection.Lyrics && selectedPlaylistId == null -> LyricsView(
+                                    targetSection == DesktopSection.Lyrics && targetSelectedPlaylistId == null -> LyricsView(
                                         track = lyricsTrack,
                                         currentTrackId = track?.id,
                                         positionMs = positionMs,
@@ -640,7 +668,7 @@ internal fun DesktopPlayer(
                                         onBack = null,
                                         onRetry = onRetryLyrics,
                                     )
-                                    section == DesktopSection.Settings && selectedPlaylistId == null -> SettingsDesktopView(
+                                    targetSection == DesktopSection.Settings && targetSelectedPlaylistId == null -> SettingsDesktopView(
                                         isLightMode = useLightAppearance,
                                         onLightModeChange = onUseLightAppearanceChange,
                                         tintId = appearanceTintId,
@@ -667,8 +695,8 @@ internal fun DesktopPlayer(
                                         catalogRefreshing = catalogRefreshing,
                                         jellyfinPagination = (session.isEmbyFamily() || session.isNavidrome()) && session?.jellyfinSyncMode == JellyfinSyncMode.Quick,
                                         onJellyfinPage = onJellyfinPage,
-                                        section = section,
-                                        selectedPlaylistId = selectedPlaylistId,
+                                        section = targetSection,
+                                        selectedPlaylistId = targetSelectedPlaylistId,
                                         searchQuery = searchQuery,
                                         libraryFilter = libraryFilter,
                                         libraryUi = libraryUi,
@@ -747,10 +775,16 @@ internal fun DesktopPlayer(
     }
 }
 
-private fun shouldUseDesktopSharedElements(initial: AppScreen?, target: AppScreen): Boolean =
+private fun shouldUseDesktopSharedElements(initial: DesktopRouteTarget?, target: DesktopRouteTarget): Boolean =
     initial != null &&
-        initial.hasDesktopSharedElements() &&
-        target.hasDesktopSharedElements()
+        initial.screen.hasDesktopSharedElements() &&
+        target.screen.hasDesktopSharedElements() &&
+        !initial.isBrowseSectionChangeTo(target)
+
+private fun DesktopRouteTarget.isBrowseSectionChangeTo(target: DesktopRouteTarget): Boolean =
+    screen == AppScreen.Home &&
+        target.screen == AppScreen.Home &&
+        this != target
 
 private fun AppScreen.hasDesktopSharedElements(): Boolean = when (this) {
     AppScreen.Home,

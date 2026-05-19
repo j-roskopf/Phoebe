@@ -315,6 +315,7 @@ class CatalogRepository(
                     val indexed = runCatching {
                         indexPlexTrackPages(server, library, token)
                     }.onFailure { error ->
+                        if (error is CancellationException) throw error
                         PhoebeLog.d("CatalogRepository") { "paged Plex track index failed: ${error.message}" }
                     }.getOrDefault(false)
                     if (!indexed && plexRawMetadata.albums.isNotEmpty()) {
@@ -390,6 +391,7 @@ class CatalogRepository(
                 )
                 runCatching { refetchPlaylistTracksFromPlex(session, playlist) }
                     .onFailure { error ->
+                        if (error is CancellationException) throw error
                         PhoebeLog.d("CatalogRepository") { "background refetch failed for '${playlist.title}': ${error.message}" }
                     }
             }
@@ -2039,6 +2041,7 @@ class CatalogRepository(
                         async {
                             runCatching { plexClient.trackDetails(server, ratingKey, token) }
                                 .onFailure { e ->
+                                    if (e is CancellationException) throw e
                                     PhoebeLog.d("CatalogRepository") {
                                         "history track warm failed for '$ratingKey': ${e.message}"
                                     }

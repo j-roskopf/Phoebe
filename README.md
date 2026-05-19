@@ -64,6 +64,8 @@ Desktop, Android, and iOS folder roots (web: stubbed). Indexed tracks merge with
 
 ## Features
 
+Architecture guidelines for shared Compose UI, Navigation 3 routes, and composable state/action contracts live in [docs/compose-architecture.md](docs/compose-architecture.md).
+
 ### Library and catalog
 
 - **Remote providers** — See [Music providers](#music-providers) for per-backend capabilities; sign in from the welcome screen (Plex PIN or direct URL for the others).

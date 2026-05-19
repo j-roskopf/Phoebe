@@ -2,10 +2,11 @@ package com.phoebe.app
 
 import com.phoebe.app.domain.Album
 import com.phoebe.app.domain.AppSettings
-import com.phoebe.app.domain.AppScreen
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.CatalogSnapshot
+import com.phoebe.app.domain.CollectionEntry
 import com.phoebe.app.domain.CollectionFacet
+import com.phoebe.app.domain.CollectionTarget
 import com.phoebe.app.domain.ArtistRadioAvailability
 import com.phoebe.app.domain.HomeSection
 import com.phoebe.app.domain.JellyfinSyncMode
@@ -58,22 +59,27 @@ import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.platform.discoverJellyfinServers as discoverJellyfinServersOnNetwork
 import com.phoebe.app.platform.openExternalUrl
 import com.phoebe.app.sources.LocalLibraryIO
+import com.phoebe.app.navigation.PhoebeNavigationCommand
+import com.phoebe.app.navigation.PhoebeRoute
+import com.phoebe.app.navigation.defaultPhoebeRoute
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
-import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlin.collections.ArrayDeque
+import kotlinx.coroutines.flow.StateFlow
 
 data class MusicAssistantRemotePlayback(
     val tracks: List<Track>,
@@ -120,8 +126,8 @@ class AppState(
     val playEventsByTrack = dependencies.playHistoryRepository.playEventsByTrack
     val defaultDownloadDirectoryLabel: String = dependencies.platformStorage.defaultDownloadDirectoryLabel()
 
-    private val mutableScreen = MutableStateFlow(defaultBrowseScreen())
-    val screen: StateFlow<AppScreen> = mutableScreen
+    private val mutableNavigationCommands = MutableSharedFlow<PhoebeNavigationCommand>(extraBufferCapacity = 32)
+    val navigationCommands = mutableNavigationCommands.asSharedFlow()
 
     private val mutableTab = MutableStateFlow(LibraryTab.Albums)
     val tab: StateFlow<LibraryTab> = mutableTab
@@ -174,13 +180,14 @@ class AppState(
     private val mutableDownloadDirectory = MutableStateFlow<String?>(null)
     val downloadDirectory: StateFlow<String?> = mutableDownloadDirectory
 
-    private val detailStack = ArrayDeque<AppScreen>()
     private var playRequestGeneration = 0
     private var collectionMixGeneration = 0
+    private var activeCollectionMix: CollectionMix? = null
     private var recentAlbumWarmSignature: String? = null
     private var playedAlbumWarmSignature: String? = null
     private var catalogRefreshJob: Job? = null
     private var playHistorySyncJob: Job? = null
+    private val backgroundSyncJobs = mutableSetOf<Job>()
     private val activeDownloadJobs = mutableSetOf<Job>()
 
     init {
@@ -195,7 +202,6 @@ class AppState(
             dependencies.audioPlayer.setCrossfadeDurationMs(appSettings.value.crossfadeSeconds * 1_000L)
             dependencies.playHistoryRepository.restore()
             mutableDownloadDirectory.value = dependencies.platformStorage.readDownloadDirectory()
-            mutableScreen.value = defaultBrowseScreen(session.value)
             if (session.value?.token?.isNotBlank() == true && session.value?.selectedServer == null) {
                 refreshServers()
             }
@@ -220,7 +226,7 @@ class AppState(
                 launch { dependencies.sessionRepository.refreshSelectedServerConnections() }
             }
             PhoebeLog.d("AppState") {
-                "startup restore complete → screen=${mutableScreen.value}, " +
+                "startup restore complete → route=${defaultRoute()}, " +
                     "session=${session.value?.userName ?: "none"}, " +
                     "localFolders=${mediaSources.value.localFolders.size}"
             }
@@ -310,27 +316,21 @@ class AppState(
         }
     }
 
-    /**
-     * If the UI is still on [AppScreen.SignIn] but the saved session (or local folders) implies a browse flow,
-     * jump to the correct screen. Covers startup races and missed navigation after async restore.
-     */
-    fun reconcileBrowseScreenIfNeeded() {
-        if (mutableScreen.value != AppScreen.SignIn) return
-        val target = defaultBrowseScreen()
-        if (target != AppScreen.SignIn) {
-            detailStack.clear()
-            mutableScreen.value = target
+    fun defaultRoute(sessionSnapshot: PlexSession? = session.value): PhoebeRoute =
+        defaultPhoebeRoute(sessionSnapshot, mediaSources.value)
+
+    private fun requestNavigation(command: PhoebeNavigationCommand) {
+        if (!mutableNavigationCommands.tryEmit(command)) {
+            scope.launch { mutableNavigationCommands.emit(command) }
         }
     }
 
-    private fun defaultBrowseScreen(sessionSnapshot: PlexSession? = session.value): AppScreen {
-        return when {
-            sessionSnapshot?.selectedLibrary != null -> AppScreen.Home
-            sessionSnapshot?.selectedServer != null -> AppScreen.LibraryPicker
-            sessionSnapshot?.token?.isNotBlank() == true -> AppScreen.ServerPicker
-            mediaSources.value.localFolders.any { it.enabled } -> AppScreen.Home
-            else -> AppScreen.SignIn
+    private fun trackBackgroundSyncJob(job: Job): Job {
+        backgroundSyncJobs += job
+        job.invokeOnCompletion {
+            backgroundSyncJobs -= job
         }
+        return job
     }
 
     private fun CatalogSnapshot.hasBrowseableContent(): Boolean =
@@ -358,8 +358,7 @@ class AppState(
             mutableMessage.value = "That Plex code is not approved yet."
             return@launch
         }
-        detailStack.clear()
-        mutableScreen.value = AppScreen.ServerPicker
+        requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.ServerPicker))
         mutableServers.value = servers
         mutableLibraries.value = emptyList()
         mutableLibrariesLoading.value = false
@@ -376,11 +375,10 @@ class AppState(
         }.getOrNull()
         mutableBusy.value = false
         if (server == null) return@launch
-        detailStack.clear()
         mutableServers.value = listOf(server)
         mutableLibraries.value = emptyList()
         mutableLibrariesLoading.value = true
-        mutableScreen.value = AppScreen.LibraryPicker
+        requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.LibraryPicker))
         runCatching {
             mutableLibraries.value = dependencies.sessionRepository.libraries(server)
         }.onFailure { error ->
@@ -406,15 +404,13 @@ class AppState(
         }.getOrNull()
         mutableBusy.value = false
         if (server == null) return@launch
-        detailStack.clear()
         mutableServers.value = listOf(server)
         mutableLibraries.value = emptyList()
         if (type.skipsLibraryPicker()) {
             mutableLibrariesLoading.value = false
             runCatching {
                 dependencies.sessionRepository.selectLibrary(type.defaultLibrarySelection(), syncMode ?: JellyfinSyncMode.Quick)
-                detailStack.clear()
-                mutableScreen.value = AppScreen.Home
+                requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.Browse()))
                 mutableMessage.value = if ((syncMode ?: JellyfinSyncMode.Quick) == JellyfinSyncMode.Full) {
                     "Starting full ${type.displayName} sync…"
                 } else {
@@ -427,7 +423,7 @@ class AppState(
             return@launch
         }
         mutableLibrariesLoading.value = true
-        mutableScreen.value = AppScreen.LibraryPicker
+        requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.LibraryPicker))
         val libraries = runCatching {
             dependencies.sessionRepository.libraries(server)
         }.onFailure { error ->
@@ -438,8 +434,7 @@ class AppState(
         if (type.autoSelectSingleLibrary() && libraries.size == 1) {
             runCatching {
                 dependencies.sessionRepository.selectLibrary(libraries.single())
-                detailStack.clear()
-                mutableScreen.value = AppScreen.Home
+                requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.Browse()))
                 mutableMessage.value = "Loading ${type.displayName}…"
                 refreshCatalogSuspended(catalogMessage = "${type.displayName} ready.")
             }.onFailure { error ->
@@ -522,11 +517,10 @@ class AppState(
         mutableBusy.value = false
         if (server == null) return@launch
         mutableJellyfinQuickConnect.value = null
-        detailStack.clear()
         mutableServers.value = listOf(server)
         mutableLibraries.value = emptyList()
         mutableLibrariesLoading.value = true
-        mutableScreen.value = AppScreen.LibraryPicker
+        requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.LibraryPicker))
         runCatching {
             mutableLibraries.value = dependencies.sessionRepository.libraries(server)
         }.onFailure { error ->
@@ -537,16 +531,14 @@ class AppState(
     }
 
     fun loadServers() = scope.launch {
-        detailStack.clear()
         mutableLibrariesLoading.value = false
-        mutableScreen.value = AppScreen.ServerPicker
+        requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.ServerPicker))
         refreshServers()
     }
 
     fun returnToServerPicker() = scope.launch {
-        detailStack.clear()
         mutableLibrariesLoading.value = false
-        mutableScreen.value = AppScreen.ServerPicker
+        requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.ServerPicker))
         refreshServers()
     }
 
@@ -572,8 +564,7 @@ class AppState(
             mutableLibrariesLoading.value = false
             mutableMessage.value = it.message ?: "Couldn't select ${session.value.providerLabel()} server."
         }.getOrNull() ?: return@launch
-        detailStack.clear()
-        mutableScreen.value = AppScreen.LibraryPicker
+        requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.LibraryPicker))
         runCatching {
             mutableLibraries.value = dependencies.sessionRepository.libraries(resolved)
         }.onFailure {
@@ -592,8 +583,7 @@ class AppState(
         }
         runCatching {
             dependencies.sessionRepository.selectLibrary(library, jellyfinSyncMode)
-            detailStack.clear()
-            mutableScreen.value = AppScreen.Home
+            requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.Browse()))
             mutableMessage.value = if (session.value.isJellyfin() && (jellyfinSyncMode ?: session.value?.jellyfinSyncMode) == JellyfinSyncMode.Full) {
                 "Starting full Jellyfin sync…"
             } else {
@@ -644,17 +634,18 @@ class AppState(
 
     private fun warmPlaylistTracksInBackground() {
         if (!session.value.supportsRemotePlaylists()) return
-        scope.launch {
+        trackBackgroundSyncJob(scope.launch {
             runCatching {
                 dependencies.catalogRepository.warmPlaylistTracks(session.value)
             }.onFailure { error ->
+                if (error is CancellationException) throw error
                 PhoebeLog.d("AppState") { "playlist warm failed: ${error.message}" }
             }
-        }
+        })
     }
 
     private fun cacheDownloadedArtworkInBackground() {
-        scope.launch {
+        trackBackgroundSyncJob(scope.launch {
             runCatching {
                 dependencies.catalogRepository.cacheDownloadedArtwork()
             }.onSuccess { cached ->
@@ -662,9 +653,10 @@ class AppState(
                     PhoebeLog.d("AppState") { "cached artwork for $cached downloaded tracks" }
                 }
             }.onFailure { error ->
+                if (error is CancellationException) throw error
                 PhoebeLog.d("AppState") { "downloaded artwork cache failed: ${error.message}" }
             }
-        }
+        })
     }
 
     private suspend fun ensureLikedSongsPlaylistIfPossible(): Playlist? {
@@ -682,8 +674,11 @@ class AppState(
             mutableMessage.value = "Couldn't create Liked Songs yet."
             return@launch
         }
-        detailStack.clear()
-        mutableScreen.value = AppScreen.PlaylistDetail(playlist)
+        requestNavigation(
+            PhoebeNavigationCommand.ReplaceAll(
+                listOf(PhoebeRoute.Browse(), PhoebeRoute.PlaylistDetail(playlist.id)),
+            ),
+        )
         syncLikedSongsInBackground()
     }
 
@@ -691,12 +686,15 @@ class AppState(
         refreshCatalogSuspended()
     }
 
-    fun loadJellyfinLibraryPage(kind: JellyfinLibraryPageKind, pageIndex: Int) = scope.launch {
-        runCatching {
-            dependencies.catalogRepository.loadJellyfinLibraryPage(session.value, kind, pageIndex)
-        }.onFailure { error ->
-            mutableMessage.value = error.message ?: "Couldn't load that Jellyfin page."
-        }
+    fun loadJellyfinLibraryPage(kind: JellyfinLibraryPageKind, pageIndex: Int) {
+        trackBackgroundSyncJob(scope.launch {
+            runCatching {
+                dependencies.catalogRepository.loadJellyfinLibraryPage(session.value, kind, pageIndex)
+            }.onFailure { error ->
+                if (error is CancellationException) throw error
+                mutableMessage.value = error.message ?: "Couldn't load that Jellyfin page."
+            }
+        })
     }
 
     fun refreshPlexPlayHistory() = startRemotePlayHistorySync(showMessage = true)
@@ -710,8 +708,14 @@ class AppState(
             return
         }
         playHistorySyncJob?.cancel()
-        playHistorySyncJob = scope.launch {
+        val job = scope.launch {
             syncRemotePlayHistory(showMessage = showMessage)
+        }
+        playHistorySyncJob = job
+        job.invokeOnCompletion {
+            if (playHistorySyncJob == job) {
+                playHistorySyncJob = null
+            }
         }
     }
 
@@ -725,6 +729,15 @@ class AppState(
         catalogRefreshJob = null
     }
 
+    private fun cancelActiveSyncWork(): List<Job> {
+        val jobs = (listOfNotNull(catalogRefreshJob, playHistorySyncJob) + backgroundSyncJobs.toList()).distinct()
+        catalogRefreshJob = null
+        playHistorySyncJob = null
+        backgroundSyncJobs.clear()
+        jobs.forEach { it.cancel() }
+        return jobs
+    }
+
     private suspend fun syncRemotePlayHistory(showMessage: Boolean): Any? {
         return runCatching {
             val currentSession = session.value
@@ -732,6 +745,7 @@ class AppState(
                 runCatching {
                     dependencies.catalogRepository.warmPlexHistoryTracks(currentSession)
                 }.onFailure { error ->
+                    if (error is CancellationException) throw error
                     PhoebeLog.d("AppState") { "Plex history track warm failed: ${error.message}" }
                 }
                 dependencies.plexPlayHistorySyncer.sync(currentSession, catalog.value)
@@ -764,80 +778,11 @@ class AppState(
 
     fun setTab(tab: LibraryTab) {
         mutableTab.value = tab
-        dismissDetailsToHome()
+        requestNavigation(PhoebeNavigationCommand.ReplaceRoot(defaultRoute()))
     }
 
-    fun open(screen: AppScreen) {
-        when (screen) {
-            AppScreen.SignIn, AppScreen.ServerPicker, AppScreen.LibraryPicker, AppScreen.Home -> {
-                detailStack.clear()
-                mutableScreen.value = screen
-            }
-            AppScreen.Player -> {
-                val cur = mutableScreen.value
-                if (cur != AppScreen.Player) {
-                    detailStack.addLast(cur)
-                    mutableScreen.value = screen
-                }
-            }
-            is AppScreen.ArtistDetail,
-            is AppScreen.AlbumDetail,
-            is AppScreen.SongDetail,
-            is AppScreen.Lyrics,
-            is AppScreen.Collections,
-            is AppScreen.CollectionItems,
-            is AppScreen.RecentlyAdded,
-            is AppScreen.PlayHistory,
-            AppScreen.FavoritePlaylists,
-            AppScreen.FavoriteArtists,
-            AppScreen.FavoriteAlbums,
-            is AppScreen.PlaylistDetail,
-            -> {
-                val cur = mutableScreen.value
-                if (cur != screen) {
-                    detailStack.addLast(cur)
-                    mutableScreen.value = screen
-                }
-                when (screen) {
-                    is AppScreen.ArtistDetail -> scope.launch {
-                        runCatching {
-                            dependencies.catalogRepository.ensureTracksForArtistAlbums(session.value, screen.artist.title)
-                        }
-                    }
-                    is AppScreen.AlbumDetail -> scope.launch {
-                        runCatching {
-                            dependencies.catalogRepository.tracksForAlbum(session.value, screen.album)
-                        }.onFailure {
-                            mutableMessage.value = it.message ?: "Couldn't load album tracks."
-                        }
-                    }
-                    is AppScreen.PlaylistDetail -> scope.launch {
-                        runCatching {
-                            dependencies.catalogRepository.tracksForPlaylist(session.value, screen.playlist)
-                        }.onFailure {
-                            mutableMessage.value = it.message ?: "Couldn't load playlist tracks."
-                        }
-                    }
-                    is AppScreen.Collections -> scope.launch {
-                        if (!session.value.supportsCollectionEntry(screen.entry)) return@launch
-                        runCatching {
-                            dependencies.catalogRepository.ensureCollectionValues(session.value, screen.entry)
-                        }.onFailure {
-                            mutableMessage.value = it.message ?: "Couldn't load collections."
-                        }
-                    }
-                    is AppScreen.CollectionItems -> scope.launch {
-                        if (!session.value.supportsCollectionEntry(screen.entry)) return@launch
-                        runCatching {
-                            dependencies.catalogRepository.ensureCollectionItems(session.value, screen.entry, screen.value)
-                        }.onFailure {
-                            mutableMessage.value = it.message ?: "Couldn't load collection."
-                        }
-                    }
-                    else -> Unit
-                }
-            }
-        }
+    fun open(route: PhoebeRoute) {
+        requestNavigation(PhoebeNavigationCommand.Open(route))
     }
 
     fun prefetchHomeArtistStats(artist: Artist) {
@@ -854,6 +799,56 @@ class AppState(
         scope.launch {
             runCatching {
                 dependencies.catalogRepository.tracksForAlbum(session.value, album)
+            }
+        }
+    }
+
+    fun loadArtistDetail(artist: Artist) {
+        scope.launch {
+            runCatching {
+                dependencies.catalogRepository.ensureTracksForArtistAlbums(session.value, artist.title)
+            }
+        }
+    }
+
+    fun loadAlbumDetail(album: Album) {
+        scope.launch {
+            runCatching {
+                dependencies.catalogRepository.tracksForAlbum(session.value, album)
+            }.onFailure {
+                mutableMessage.value = it.message ?: "Couldn't load album tracks."
+            }
+        }
+    }
+
+    fun loadPlaylistDetail(playlist: Playlist) {
+        scope.launch {
+            runCatching {
+                dependencies.catalogRepository.tracksForPlaylist(session.value, playlist)
+            }.onFailure {
+                mutableMessage.value = it.message ?: "Couldn't load playlist tracks."
+            }
+        }
+    }
+
+    fun loadCollectionValues(entry: CollectionEntry) {
+        scope.launch {
+            if (!session.value.supportsCollectionEntry(entry)) return@launch
+            runCatching {
+                dependencies.catalogRepository.ensureCollectionValues(session.value, entry)
+            }.onFailure {
+                mutableMessage.value = it.message ?: "Couldn't load collections."
+            }
+        }
+    }
+
+    fun loadCollectionItems(entry: CollectionEntry, value: String) {
+        scope.launch {
+            if (!session.value.supportsCollectionEntry(entry)) return@launch
+            runCatching {
+                dependencies.catalogRepository.ensureCollectionItems(session.value, entry, value)
+            }.onFailure {
+                mutableMessage.value = it.message ?: "Couldn't load collection."
             }
         }
     }
@@ -914,7 +909,7 @@ class AppState(
         }
         mutableDecadeMixNotice.value = null
         playTracks(firstTracks, 0)
-        open(AppScreen.Player)
+        open(PhoebeRoute.Player)
         mutableMessage.value = "Playing ${firstTracks.size} songs from the ${decade}s."
         scope.launch {
             val initialIds = firstTracks.map { it.id }.toSet()
@@ -964,7 +959,7 @@ class AppState(
                 return@launch
             }
             playTracks(tracks, 0)
-            open(AppScreen.Player)
+            open(PhoebeRoute.Player)
             mutableMessage.value = "Playing ${station.title}."
         } finally {
             mutableRadioStartingIds.update { it - radioId }
@@ -998,7 +993,7 @@ class AppState(
             }
             mutableArtistRadioAvailability.update { it + (artist.id to ArtistRadioAvailability.Available) }
             playTracks(tracks, 0)
-            open(AppScreen.Player)
+            open(PhoebeRoute.Player)
             mutableMessage.value = "Playing ${artist.title} Radio."
         } finally {
             mutableRadioStartingIds.update { it - artist.id }
@@ -1034,7 +1029,7 @@ class AppState(
         }
         playTracks(tracks.shuffled(), 0)
         dependencies.audioPlayer.setShuffle(true)
-        open(AppScreen.Player)
+        open(PhoebeRoute.Player)
         mutableMessage.value = "Shuffling ${playlist.title}."
     }
 
@@ -1043,56 +1038,15 @@ class AppState(
     }
 
     fun popDetail() {
-        mutableScreen.value = detailStack.removeLastOrNull() ?: defaultBrowseScreen()
+        requestNavigation(PhoebeNavigationCommand.Pop)
     }
 
-    fun canHandleBack(screenSnapshot: AppScreen = mutableScreen.value): Boolean =
-        when (screenSnapshot) {
-            AppScreen.SignIn, AppScreen.Home -> false
-            AppScreen.Player, AppScreen.ServerPicker, AppScreen.LibraryPicker -> true
-            is AppScreen.ArtistDetail,
-            is AppScreen.AlbumDetail,
-            is AppScreen.SongDetail,
-            is AppScreen.Lyrics,
-            is AppScreen.Collections,
-            is AppScreen.CollectionItems,
-            is AppScreen.RecentlyAdded,
-            is AppScreen.PlayHistory,
-            AppScreen.FavoritePlaylists,
-            AppScreen.FavoriteArtists,
-            AppScreen.FavoriteAlbums,
-            is AppScreen.PlaylistDetail,
-            -> true
-        }
-
     fun handleBack() {
-        when (mutableScreen.value) {
-            AppScreen.SignIn, AppScreen.Home -> Unit
-            AppScreen.Player -> popDetail()
-            AppScreen.ServerPicker -> {
-                detailStack.clear()
-                mutableScreen.value = AppScreen.SignIn
-            }
-            AppScreen.LibraryPicker -> returnToServerPicker()
-            is AppScreen.ArtistDetail,
-            is AppScreen.AlbumDetail,
-            is AppScreen.SongDetail,
-            is AppScreen.Lyrics,
-            is AppScreen.Collections,
-            is AppScreen.CollectionItems,
-            is AppScreen.RecentlyAdded,
-            is AppScreen.PlayHistory,
-            AppScreen.FavoritePlaylists,
-            AppScreen.FavoriteArtists,
-            AppScreen.FavoriteAlbums,
-            is AppScreen.PlaylistDetail,
-            -> popDetail()
-        }
+        requestNavigation(PhoebeNavigationCommand.Pop)
     }
 
     fun dismissDetailsToHome() {
-        detailStack.clear()
-        mutableScreen.value = defaultBrowseScreen()
+        requestNavigation(PhoebeNavigationCommand.ReplaceRoot(defaultRoute()))
     }
 
     fun backHome() {
@@ -1164,14 +1118,30 @@ class AppState(
         }
     }
 
+    fun setCollectionMixContext(entry: CollectionEntry?, value: String?) {
+        activeCollectionMix = if (
+            entry != null &&
+            value != null &&
+            session.value.supportsCollectionEntry(entry) &&
+            (entry.facet == CollectionFacet.Mood || entry.facet == CollectionFacet.Style) &&
+            value.isNotBlank()
+        ) {
+            CollectionMix(entry.facet, value.trim())
+        } else {
+            null
+        }
+    }
+
     private fun collectionMixFromDetailStack(): CollectionMix? {
-        val screens = detailStack.toList() + mutableScreen.value
-        val items = screens.filterIsInstance<AppScreen.CollectionItems>().lastOrNull() ?: return null
-        if (!session.value.supportsCollectionEntry(items.entry)) return null
-        if (items.entry.facet != CollectionFacet.Mood && items.entry.facet != CollectionFacet.Style) return null
-        val value = items.value.trim()
+        val mix = activeCollectionMix ?: return null
+        if (!session.value.supportsCollectionEntry(CollectionEntry(CollectionTarget.Albums, mix.facet)) &&
+            !session.value.supportsCollectionEntry(CollectionEntry(CollectionTarget.Artists, mix.facet))
+        ) {
+            return null
+        }
+        val value = mix.value.trim()
         if (value.isBlank()) return null
-        return CollectionMix(items.entry.facet, value)
+        return mix.copy(value = value)
     }
 
     private suspend fun appendCollectionMix(
@@ -1558,7 +1528,7 @@ class AppState(
     }
 
     private fun syncLikedSongsInBackground(track: Track? = null, liked: Boolean? = null) {
-        scope.launch {
+        trackBackgroundSyncJob(scope.launch {
             runCatching {
                 if (track != null && liked != null) {
                     dependencies.catalogRepository.syncLikedTrackChange(session.value, track, liked)
@@ -1566,10 +1536,11 @@ class AppState(
                     dependencies.catalogRepository.syncLikedSongsPlaylist(session.value)
                 }
             }.onFailure { error ->
+                if (error is CancellationException) throw error
                 PhoebeLog.d("AppState") { "Liked Songs Plex sync failed: ${error.message}" }
                 mutableMessage.value = "Liked Songs updated locally. Plex sync will retry later."
             }
-        }
+        })
     }
 
     fun copyPlaylistIntoPlaylist(
@@ -1747,8 +1718,8 @@ class AppState(
         dependencies.mediaSourcesRepository.addLocalFolder(rootUri, label)
         refreshCatalogSuspended(catalogMessage = null)
         mutableMessage.value = "Added local music folder."
-        if (defaultBrowseScreen() == AppScreen.Home) {
-            mutableScreen.value = AppScreen.Home
+        if (defaultRoute() is PhoebeRoute.Browse) {
+            requestNavigation(PhoebeNavigationCommand.ReplaceRoot(defaultRoute()))
         }
     }
 
@@ -1756,41 +1727,43 @@ class AppState(
         dependencies.mediaSourcesRepository.removeLocalFolder(id)
         refreshCatalogSuspended(catalogMessage = null)
         mutableMessage.value = "Removed local folder."
-        if (defaultBrowseScreen() == AppScreen.SignIn) {
-            detailStack.clear()
-            mutableScreen.value = AppScreen.SignIn
+        if (defaultRoute() == PhoebeRoute.SignIn) {
+            requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.SignIn))
         }
     }
 
     fun setLocalFolderEnabled(id: String, enabled: Boolean) = scope.launch {
         dependencies.mediaSourcesRepository.setLocalFolderEnabled(id, enabled)
         refreshCatalogSuspended(catalogMessage = null)
-        if (defaultBrowseScreen() == AppScreen.SignIn) {
-            detailStack.clear()
-            mutableScreen.value = AppScreen.SignIn
+        if (defaultRoute() == PhoebeRoute.SignIn) {
+            requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.SignIn))
         }
     }
 
     fun signOut() {
-        cancelCatalogRefresh()
-        cancelRemotePlayHistorySync()
+        val syncJobs = cancelActiveSyncWork()
         mutableMusicAssistantRemotePlayback.value = null
         dependencies.castController.disconnect()
         dependencies.audioPlayer.clearQueue()
         mutableBusy.value = true
-        detailStack.clear()
         mutablePin.value = null
         mutableLibraries.value = emptyList()
         mutableLibrariesLoading.value = false
-        mutableScreen.value = AppScreen.SignIn
+        requestNavigation(PhoebeNavigationCommand.ReplaceRoot(PhoebeRoute.SignIn))
         mutableMessage.value = "Signing out…"
         scope.launch {
-            runCatching {
+            try {
+                syncJobs.joinAll()
                 dependencies.sessionRepository.signOut()
                 dependencies.deleteDatabaseDataForSignOut()
-            }.onFailure { mutableMessage.value = it.message ?: "Something went sideways." }
-            mutableMessage.value = "Signed out."
-            mutableBusy.value = false
+                mutableMessage.value = "Signed out."
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                mutableMessage.value = error.message ?: "Something went sideways."
+            } finally {
+                mutableBusy.value = false
+            }
         }
     }
 

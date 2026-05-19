@@ -152,6 +152,7 @@ import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.isLocalMediaPlayback
 import com.phoebe.app.domain.isRemoteLibraryTrack
 import com.phoebe.app.domain.supportsPlexPlaylists
+import com.phoebe.app.navigation.BrowseSection
 import com.phoebe.app.platform.createPlatformHttpClient
 import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.platform.prefersReducedArtworkEffects
@@ -167,14 +168,7 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.yield
 import kotlin.math.max
 
-internal enum class DesktopSection {
-    Home,
-    Search,
-    Library,
-    Lyrics,
-    Playlists,
-    Settings,
-}
+internal typealias DesktopSection = BrowseSection
 
 internal enum class PhoebeIcon {
     Home,

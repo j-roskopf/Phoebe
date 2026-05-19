@@ -79,17 +79,7 @@ fun App(
     }
     val scope = rememberCoroutineScope()
     val state = remember(readyDependencies, scope) { AppState(readyDependencies, scope) }
-    val session by state.session.collectAsState()
-    val mediaSources by state.mediaSources.collectAsState()
     val player by state.player.collectAsState()
-
-    // Keep navigation in sync when session / local folders appear after async restore.
-    // Catalog refresh is handled by explicit user actions (manual refresh, post sign-in library
-    // pick, folder add/remove, sign-out). Startup restores the cached catalog without kicking off
-    // a full Plex rebuild.
-    LaunchedEffect(session, mediaSources) {
-        state.reconcileBrowseScreenIfNeeded()
-    }
 
     var useLightAppearance by remember(readyDependencies) { mutableStateOf(false) }
     var appearanceTintId by remember(readyDependencies) { mutableStateOf(PhoebeTintOption.Purple.id) }
