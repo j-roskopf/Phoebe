@@ -211,10 +211,14 @@ class JellyfinClientTest {
         val server = PlexServer("jellyfin:test", "Jellyfin", "https://jellyfin.example", owned = true)
         val library = MusicLibrary("music", "Music")
         val starts = mutableListOf<String?>()
+        val limits = mutableListOf<String?>()
+        val fields = mutableListOf<String?>()
         val engine = MockEngine { request ->
             when (request.url.encodedPath) {
                 "/Items" -> {
                     starts += request.url.parameters["startIndex"]
+                    limits += request.url.parameters["limit"]
+                    fields += request.url.parameters["fields"]
                     respondJson(
                         """
                         {
@@ -235,7 +239,13 @@ class JellyfinClientTest {
 
         assertEquals(250, page.total)
         assertEquals(listOf("track-101"), page.items.map { it.id })
-        assertEquals(listOf<String?>(JellyfinClient.JellyfinPageSize.toString()), starts)
+        assertEquals(listOf<String?>(JellyfinClient.QuickCatalogPageSize.toString()), starts)
+        assertEquals(listOf<String?>(JellyfinClient.QuickCatalogPageSize.toString()), limits)
+        val requestedFields = fields.single().orEmpty()
+        assertFalse(requestedFields.contains("Path"))
+        assertFalse(requestedFields.contains("MediaSources"))
+        assertTrue(requestedFields.contains("UserData"))
+        assertTrue(requestedFields.contains("AlbumArtist"))
     }
 
     @Test

@@ -114,7 +114,7 @@ class EmbyClientTest {
     }
 
     @Test
-    fun embyPagedCatalogRequestsUseOneThousandItemLimit() = runTest {
+    fun embyQuickCatalogPagesUseOneHundredItemLimit() = runTest {
         val starts = mutableListOf<String?>()
         val limits = mutableListOf<String?>()
         val engine = MockEngine { request ->
@@ -139,8 +139,39 @@ class EmbyClientTest {
 
         val page = client.trackPage(server, MusicLibrary("music", "Music"), "token", "user-1", pageIndex = 1)
 
-        assertEquals(JellyfinClient.EmbyPageSize, page.pageSize)
-        assertEquals(listOf<String?>(JellyfinClient.EmbyPageSize.toString()), starts)
+        assertEquals(JellyfinClient.QuickCatalogPageSize, page.pageSize)
+        assertEquals(listOf<String?>(JellyfinClient.QuickCatalogPageSize.toString()), starts)
+        assertEquals(listOf<String?>(JellyfinClient.QuickCatalogPageSize.toString()), limits)
+    }
+
+    @Test
+    fun embyFullCatalogSyncUsesOneThousandItemLimit() = runTest {
+        val starts = mutableListOf<String?>()
+        val limits = mutableListOf<String?>()
+        val engine = MockEngine { request ->
+            starts += request.url.parameters["startIndex"]
+            limits += request.url.parameters["limit"]
+            when (request.url.encodedPath) {
+                "/emby/Items" -> respondJson(
+                    """
+                    {
+                      "Items": [
+                        { "Id": "track-1", "Type": "Audio", "Name": "Track 1", "Album": "Album", "RunTimeTicks": 10000000 }
+                      ],
+                      "TotalRecordCount": 1
+                    }
+                    """.trimIndent(),
+                )
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val client = EmbyClient(testHttpClient(engine))
+        val server = com.phoebe.app.domain.PlexServer("emby:test", "Emby", "https://emby.example/emby", owned = true)
+
+        val tracks = client.tracks(server, MusicLibrary("music", "Music"), "token", "user-1")
+
+        assertEquals(listOf("track-1"), tracks.map { it.id })
+        assertEquals(listOf<String?>("0"), starts)
         assertEquals(listOf<String?>(JellyfinClient.EmbyPageSize.toString()), limits)
     }
 

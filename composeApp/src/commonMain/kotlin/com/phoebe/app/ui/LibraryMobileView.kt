@@ -99,9 +99,16 @@ internal fun LibraryMobileView(
     val artistTotal = catalog.remotePageInfo.artistTotal
     val albumTotal = catalog.remotePageInfo.albumTotal
     val trackTotal = catalog.remotePageInfo.trackTotal
-    val artistPage = remember(sortedArtists, jellyfinPagination, pageIndex, artistTotal) { libraryPage(sortedArtists, jellyfinPagination, pageIndex, artistTotal) }
-    val albumPage = remember(sortedAlbums, jellyfinPagination, pageIndex, albumTotal) { libraryPage(sortedAlbums, jellyfinPagination, pageIndex, albumTotal) }
-    val trackPage = remember(sortedTracks, jellyfinPagination, pageIndex, trackTotal) { libraryPage(sortedTracks, jellyfinPagination, pageIndex, trackTotal) }
+    val remotePageSize = remoteLibraryPageSize(catalog, jellyfinPagination)
+    val artistPage = remember(sortedArtists, jellyfinPagination, pageIndex, artistTotal, remotePageSize) {
+        libraryPage(sortedArtists, jellyfinPagination, pageIndex, artistTotal, pageSize = remotePageSize)
+    }
+    val albumPage = remember(sortedAlbums, jellyfinPagination, pageIndex, albumTotal, remotePageSize) {
+        libraryPage(sortedAlbums, jellyfinPagination, pageIndex, albumTotal, pageSize = remotePageSize)
+    }
+    val trackPage = remember(sortedTracks, jellyfinPagination, pageIndex, trackTotal, remotePageSize) {
+        libraryPage(sortedTracks, jellyfinPagination, pageIndex, trackTotal, pageSize = remotePageSize)
+    }
     LaunchedEffect(filter, sortedArtists.size, sortedAlbums.size, sortedTracks.size) {
         val pageCount = when (filter) {
             LibraryFilterTab.Artists -> artistPage.pageCount

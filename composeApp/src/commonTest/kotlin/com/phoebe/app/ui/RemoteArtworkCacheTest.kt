@@ -4,11 +4,16 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ImageBitmapConfig
 import androidx.compose.ui.graphics.colorspace.ColorSpace
 import androidx.compose.ui.graphics.colorspace.ColorSpaces
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.test.runTest
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class RemoteArtworkCacheTest {
     @AfterTest
@@ -57,6 +62,27 @@ class RemoteArtworkCacheTest {
         assertEquals(64, RemoteArtworkCache.cached("art", 64)?.width)
         assertEquals(256, RemoteArtworkCache.cached("art", 256)?.width)
         assertEquals(2, RemoteArtworkCache.stats().imageCount)
+    }
+
+    @Test
+    fun handlesConcurrentTouchesAndEvictions() = runTest {
+        RemoteArtworkCache.configureLimitsForTest(maxEntries = 8, maxEstimatedBytes = Long.MAX_VALUE)
+        val image = testImageBitmap(10, 10)
+
+        coroutineScope {
+            repeat(24) { worker ->
+                launch(Dispatchers.Default) {
+                    repeat(200) { index ->
+                        val url = "art-${(worker + index) % 32}"
+                        RemoteArtworkCache.putForTest(url, 128, image)
+                        RemoteArtworkCache.cached(url, 128)
+                        RemoteArtworkCache.stats()
+                    }
+                }
+            }
+        }
+
+        assertTrue(RemoteArtworkCache.stats().imageCount <= 8)
     }
 }
 

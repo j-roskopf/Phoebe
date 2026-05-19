@@ -1,5 +1,7 @@
 full instrumentation tests - verify playback
 
+actual nav framework / screen support
+
 jellyfin / navidrome / emby
 -finalize support
 

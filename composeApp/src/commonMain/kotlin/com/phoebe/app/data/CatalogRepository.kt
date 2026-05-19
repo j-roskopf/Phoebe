@@ -77,6 +77,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import kotlinx.serialization.Serializable
 import kotlin.random.Random
+import kotlin.time.TimeSource
 
 data class DownloadBatchResult(
     val total: Int = 0,
@@ -599,6 +600,7 @@ class CatalogRepository(
         val remoteClient = if (session?.providerType?.catalogPrefix == "emby") embyClient else jellyfinClient
         val remotePrefix = session?.providerType?.catalogPrefix ?: "jellyfin"
         val remoteLabel = session?.providerType?.name ?: "Jellyfin"
+        val refreshMark = TimeSource.Monotonic.markNow()
         PhoebeLog.d("CatalogRepository") {
             "refreshAggregated start → $remotePrefix=${session?.selectedServer?.name ?: "none"}, " +
                 "localFolders=${mediaSourcesRepository.state.value.localFolders.count { it.enabled }}"
@@ -627,7 +629,13 @@ class CatalogRepository(
                     var remoteRaw = CatalogSnapshot()
                     var merged = CatalogMerge.merge(CatalogSnapshot(), localRaw).copy(downloads = previous.downloads)
 
-                    suspend fun publishJellyfinProgress(raw: CatalogSnapshot, message: String, persistProgress: Boolean = true) {
+                    suspend fun publishJellyfinProgress(
+                        raw: CatalogSnapshot,
+                        message: String,
+                        persistProgress: Boolean = false,
+                        phase: CatalogSyncPhase = CatalogSyncPhase.LoadingSongs,
+                    ) {
+                        val progressMark = TimeSource.Monotonic.markNow()
                         remoteRaw = raw
                         val currentMerged = mutableCatalog.value
                         val newMerged = CatalogMerge.merge(
@@ -641,25 +649,38 @@ class CatalogRepository(
                         )
                         mutableCatalog.value = merged
                         mutableCatalogSyncState.value = CatalogSyncState(
-                            phase = CatalogSyncPhase.LoadingSongs,
+                            phase = phase,
                             message = message,
                             loadedAlbums = merged.albums.size,
                             loadedTracks = merged.tracksByParent.values.sumOf { it.size },
                             blocking = false,
                         )
                         if (persistProgress) {
+                            val persistMark = TimeSource.Monotonic.markNow()
                             persistAsync(merged)
+                            PhoebeLog.d("CatalogRepository") {
+                                "refreshAggregated $remoteLabel progress persist elapsedMs=${persistMark.elapsedNow().inWholeMilliseconds}"
+                            }
+                        }
+                        PhoebeLog.d("CatalogRepository") {
+                            "refreshAggregated $remoteLabel progress mergePublish elapsedMs=${progressMark.elapsedNow().inWholeMilliseconds}"
                         }
                         yield()
                     }
 
                     if (server != null && library != null && token != null && userId != null && session.jellyfinSyncMode == JellyfinSyncMode.Quick) {
+                        val quickSyncMark = TimeSource.Monotonic.markNow()
                         mutableCatalogSyncState.value = CatalogSyncState(
                             phase = CatalogSyncPhase.LoadingLibrary,
                             message = "Loading first $remoteLabel pages…",
                             blocking = mutableCatalog.value.isNotEmpty().not(),
                         )
+                        val artistFetchMark = TimeSource.Monotonic.markNow()
                         val artistPage = remoteClient.artistPage(server, library, token, userId, pageIndex = 0)
+                        PhoebeLog.d("CatalogRepository") {
+                            "refreshAggregated $remoteLabel quick artist fetch count=${artistPage.items.size} total=${artistPage.total} elapsedMs=${artistFetchMark.elapsedNow().inWholeMilliseconds}"
+                        }
+                        val artistMergeMark = TimeSource.Monotonic.markNow()
                         val pageInfoAfterArtists = CatalogPageInfo(
                             pageSize = artistPage.pageSize,
                             artistTotal = artistPage.total,
@@ -669,8 +690,16 @@ class CatalogRepository(
                             CatalogSnapshot(artists = artistPage.items, remotePageInfo = pageInfoAfterArtists),
                             "Loaded first $remoteLabel artist page…",
                         )
+                        PhoebeLog.d("CatalogRepository") {
+                            "refreshAggregated $remoteLabel quick artist merge elapsedMs=${artistMergeMark.elapsedNow().inWholeMilliseconds}"
+                        }
 
+                        val albumFetchMark = TimeSource.Monotonic.markNow()
                         val albumPage = remoteClient.albumPage(server, library, token, userId, pageIndex = 0)
+                        PhoebeLog.d("CatalogRepository") {
+                            "refreshAggregated $remoteLabel quick album fetch count=${albumPage.items.size} total=${albumPage.total} elapsedMs=${albumFetchMark.elapsedNow().inWholeMilliseconds}"
+                        }
+                        val albumMergeMark = TimeSource.Monotonic.markNow()
                         val pageInfoAfterAlbums = pageInfoAfterArtists.copy(
                             albumTotal = albumPage.total,
                             loadedAlbumPages = if (albumPage.items.isNotEmpty()) setOf(0) else emptySet(),
@@ -684,8 +713,16 @@ class CatalogRepository(
                             ),
                             "Loaded first $remoteLabel album page…",
                         )
+                        PhoebeLog.d("CatalogRepository") {
+                            "refreshAggregated $remoteLabel quick album enrichMerge elapsedMs=${albumMergeMark.elapsedNow().inWholeMilliseconds}"
+                        }
 
+                        val trackFetchMark = TimeSource.Monotonic.markNow()
                         val trackPage = remoteClient.trackPage(server, library, token, userId, pageIndex = 0)
+                        PhoebeLog.d("CatalogRepository") {
+                            "refreshAggregated $remoteLabel quick track fetch count=${trackPage.items.size} total=${trackPage.total} elapsedMs=${trackFetchMark.elapsedNow().inWholeMilliseconds}"
+                        }
+                        val trackMergeMark = TimeSource.Monotonic.markNow()
                         val albumsById = albumPage.items.associateBy { it.id }
                         val tracks = trackPage.items.map { track ->
                             val album = track.parentAlbumId?.let(albumsById::get)
@@ -715,8 +752,15 @@ class CatalogRepository(
                             ),
                             "Loaded first $remoteLabel song page…",
                         )
+                        PhoebeLog.d("CatalogRepository") {
+                            "refreshAggregated $remoteLabel quick track enrichMerge elapsedMs=${trackMergeMark.elapsedNow().inWholeMilliseconds}"
+                        }
 
+                        val playlistFetchMark = TimeSource.Monotonic.markNow()
                         val playlists = remoteClient.playlists(server, library, token, userId)
+                        PhoebeLog.d("CatalogRepository") {
+                            "refreshAggregated $remoteLabel quick playlist fetch count=${playlists.size} elapsedMs=${playlistFetchMark.elapsedNow().inWholeMilliseconds}"
+                        }
                         remoteRaw = CatalogSnapshot(
                             artists = enrichedArtists,
                             albums = albumPage.items,
@@ -724,6 +768,9 @@ class CatalogRepository(
                             tracksByParent = tracksByAlbum,
                             remotePageInfo = pageInfoAfterTracks,
                         )
+                        PhoebeLog.d("CatalogRepository") {
+                            "refreshAggregated $remoteLabel quick totalBeforePersist elapsedMs=${quickSyncMark.elapsedNow().inWholeMilliseconds}"
+                        }
                     } else if (server != null && library != null && token != null && userId != null) {
                         mutableCatalogSyncState.value = CatalogSyncState(
                             phase = CatalogSyncPhase.LoadingLibrary,
@@ -731,14 +778,20 @@ class CatalogRepository(
                             blocking = mutableCatalog.value.isNotEmpty().not(),
                         )
                         var albumsLoaded = 0
+                        val currentAlbums = mutableListOf<Album>()
                         val albums = remoteClient.albums(server, library, token, userId) { page ->
                             albumsLoaded += page.size
-                            mutableCatalogSyncState.value = CatalogSyncState(
-                                phase = CatalogSyncPhase.LoadingLibrary,
+                            currentAlbums += page
+                            val partialAlbums = currentAlbums.toList()
+                            val partialArtists = enrichArtistAlbumCountsOnly(
+                                enrichArtistArtwork(jellyfinArtistsFromAlbums(partialAlbums), partialAlbums),
+                                partialAlbums,
+                            )
+                            publishJellyfinProgress(
+                                CatalogSnapshot(artists = partialArtists, albums = partialAlbums),
                                 message = "Loaded $albumsLoaded $remoteLabel albums…",
-                                loadedAlbums = albumsLoaded,
-                                loadedTracks = mutableCatalog.value.tracksByParent.values.sumOf { it.size },
-                                blocking = false,
+                                persistProgress = false,
+                                phase = CatalogSyncPhase.LoadingLibrary,
                             )
                         }
                         val enrichedArtists = enrichArtistAlbumCountsOnly(
@@ -754,7 +807,6 @@ class CatalogRepository(
                         val albumsById = albums.associateBy { it.id }
                         var currentTracksByAlbum = emptyMap<String, List<Track>>()
                         var totalTracksLoaded = 0
-                        var totalTracksPublished = 0
                         remoteClient.tracks(server, library, token, userId, includeMediaDetails = false) { page ->
                             val enrichedPage = page.map { track ->
                                 val album = track.parentAlbumId?.let(albumsById::get)
@@ -775,19 +827,6 @@ class CatalogRepository(
                             }
                             currentTracksByAlbum = nextMap
 
-                            val shouldPublishProgress =
-                                totalTracksPublished == 0 ||
-                                    totalTracksLoaded - totalTracksPublished >= JellyfinFullSyncProgressTrackInterval
-                            if (shouldPublishProgress) {
-                                publishJellyfinProgress(
-                                    CatalogSnapshot(artists = enrichedArtists, albums = albums, tracksByParent = currentTracksByAlbum),
-                                    "Loaded $totalTracksLoaded $remoteLabel songs…",
-                                    persistProgress = false,
-                                )
-                                totalTracksPublished = totalTracksLoaded
-                            }
-                        }
-                        if (totalTracksPublished != totalTracksLoaded) {
                             publishJellyfinProgress(
                                 CatalogSnapshot(artists = enrichedArtists, albums = albums, tracksByParent = currentTracksByAlbum),
                                 "Loaded $totalTracksLoaded $remoteLabel songs…",
@@ -816,7 +855,11 @@ class CatalogRepository(
                         loadedTracks = merged.tracksByParent.values.sumOf { it.size },
                         blocking = false,
                     )
+                    val persistMark = TimeSource.Monotonic.markNow()
                     persistAsync(merged)
+                    PhoebeLog.d("CatalogRepository") {
+                        "refreshAggregated $remoteLabel persist elapsedMs=${persistMark.elapsedNow().inWholeMilliseconds}"
+                    }
                     mutableCatalogSyncState.value = CatalogSyncState(
                         phase = CatalogSyncPhase.Complete,
                         message = "Library refreshed.",
@@ -836,7 +879,7 @@ class CatalogRepository(
         }
         PhoebeLog.d("CatalogRepository") {
             "refreshAggregated complete → ${snapshot.albums.size} albums, " +
-                "${snapshot.tracksByParent.values.sumOf { it.size }} tracks"
+                "${snapshot.tracksByParent.values.sumOf { it.size }} tracks, elapsedMs=${refreshMark.elapsedNow().inWholeMilliseconds}"
         }
     }
 
@@ -846,6 +889,7 @@ class CatalogRepository(
             loadAdapterLibraryPage(session, kind, pageIndex)
             return
         }
+        val totalMark = TimeSource.Monotonic.markNow()
         val remoteClient = if (session.providerType.catalogPrefix == "emby") embyClient else jellyfinClient
         val remotePrefix = session.providerType.catalogPrefix
         val remoteLabel = session.providerType.name
@@ -873,7 +917,12 @@ class CatalogRepository(
 
             val updated = when (kind) {
                 JellyfinLibraryPageKind.Artists -> {
+                    val fetchMark = TimeSource.Monotonic.markNow()
                     val page = remoteClient.artistPage(server, library, token, userId, pageIndex)
+                    PhoebeLog.d("CatalogRepository") {
+                        "loadJellyfinLibraryPage $remoteLabel artists page=${pageIndex + 1} fetch count=${page.items.size} total=${page.total} elapsedMs=${fetchMark.elapsedNow().inWholeMilliseconds}"
+                    }
+                    val mergeMark = TimeSource.Monotonic.markNow()
                     val prefixed = CatalogMerge.withPrefix(remotePrefix, CatalogSnapshot(artists = page.items)).artists
                     current.copy(
                         artists = (current.artists + prefixed).distinctBy { it.id },
@@ -882,10 +931,19 @@ class CatalogRepository(
                             artistTotal = page.total,
                             loadedArtistPages = info.loadedArtistPages + pageIndex,
                         ),
-                    )
+                    ).also {
+                        PhoebeLog.d("CatalogRepository") {
+                            "loadJellyfinLibraryPage $remoteLabel artists page=${pageIndex + 1} merge elapsedMs=${mergeMark.elapsedNow().inWholeMilliseconds}"
+                        }
+                    }
                 }
                 JellyfinLibraryPageKind.Albums -> {
+                    val fetchMark = TimeSource.Monotonic.markNow()
                     val page = remoteClient.albumPage(server, library, token, userId, pageIndex)
+                    PhoebeLog.d("CatalogRepository") {
+                        "loadJellyfinLibraryPage $remoteLabel albums page=${pageIndex + 1} fetch count=${page.items.size} total=${page.total} elapsedMs=${fetchMark.elapsedNow().inWholeMilliseconds}"
+                    }
+                    val mergeMark = TimeSource.Monotonic.markNow()
                     val prefixed = CatalogMerge.withPrefix(remotePrefix, CatalogSnapshot(albums = page.items)).albums
                     val nextAlbums = (current.albums + prefixed).distinctBy { it.id }
                     current.copy(
@@ -896,10 +954,19 @@ class CatalogRepository(
                             albumTotal = page.total,
                             loadedAlbumPages = info.loadedAlbumPages + pageIndex,
                         ),
-                    )
+                    ).also {
+                        PhoebeLog.d("CatalogRepository") {
+                            "loadJellyfinLibraryPage $remoteLabel albums page=${pageIndex + 1} enrichMerge elapsedMs=${mergeMark.elapsedNow().inWholeMilliseconds}"
+                        }
+                    }
                 }
                 JellyfinLibraryPageKind.Tracks -> {
+                    val fetchMark = TimeSource.Monotonic.markNow()
                     val page = remoteClient.trackPage(server, library, token, userId, pageIndex)
+                    PhoebeLog.d("CatalogRepository") {
+                        "loadJellyfinLibraryPage $remoteLabel tracks page=${pageIndex + 1} fetch count=${page.items.size} total=${page.total} elapsedMs=${fetchMark.elapsedNow().inWholeMilliseconds}"
+                    }
+                    val mergeMark = TimeSource.Monotonic.markNow()
                     val rawTracksByAlbum = page.items
                         .groupBy { it.parentAlbumId?.takeIf { id -> id.isNotBlank() } ?: jellyfinAlbumIdByTitle(emptyList(), it) }
                         .filterKeys { it.isNotBlank() }
@@ -911,12 +978,18 @@ class CatalogRepository(
                             trackTotal = page.total,
                             loadedTrackPages = info.loadedTrackPages + pageIndex,
                         ),
-                    )
+                    ).also {
+                        PhoebeLog.d("CatalogRepository") {
+                            "loadJellyfinLibraryPage $remoteLabel tracks page=${pageIndex + 1} merge elapsedMs=${mergeMark.elapsedNow().inWholeMilliseconds}"
+                        }
+                    }
                 }
             }
 
             mutableCatalog.value = updated
-            persistAsync(updated)
+            PhoebeLog.d("CatalogRepository") {
+                "loadJellyfinLibraryPage $remoteLabel ${kind.name.lowercase()} page=${pageIndex + 1} persist=skipped elapsedMs=${totalMark.elapsedNow().inWholeMilliseconds}"
+            }
             mutableCatalogSyncState.value = CatalogSyncState(
                 phase = CatalogSyncPhase.Complete,
                 message = "Loaded $remoteLabel ${kind.name.lowercase()} page ${pageIndex + 1}.",

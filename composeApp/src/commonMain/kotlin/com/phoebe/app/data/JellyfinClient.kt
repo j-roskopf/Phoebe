@@ -25,6 +25,7 @@ import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlin.time.TimeSource
 
 open class JellyfinClient(
     private val httpClient: HttpClient,
@@ -34,10 +35,10 @@ open class JellyfinClient(
         val items: List<T>,
         val total: Int,
         val pageIndex: Int,
-        val pageSize: Int = JellyfinPageSize,
+        val pageSize: Int = QuickCatalogPageSize,
     )
 
-    private val pageSize: Int
+    private val fullSyncPageSize: Int
         get() = if (family == EmbyFamily.Emby) EmbyPageSize else JellyfinPageSize
 
     suspend fun authenticate(serverUrl: String, username: String, password: String): JellyfinAuthResult {
@@ -97,12 +98,14 @@ open class JellyfinClient(
     }
 
     suspend fun artistPage(server: PlexServer, library: MusicLibrary, token: String, userId: String, pageIndex: Int): JellyfinItemPage<Artist> {
+        val pageSize = QuickCatalogPageSize
         val scoped = pagedItems(
             server = server,
             token = token,
             path = "/Artists/AlbumArtists",
             label = "albumArtists scoped:${library.key} page:$pageIndex",
             startIndex = pageIndex * pageSize,
+            limit = pageSize,
             maxPages = 1,
         ) {
             parameter("userId", userId)
@@ -121,6 +124,7 @@ open class JellyfinClient(
                 path = "/Artists/AlbumArtists",
                 label = "albumArtists unscoped page:$pageIndex",
                 startIndex = pageIndex * pageSize,
+                limit = pageSize,
                 maxPages = 1,
             ) {
                 parameter("userId", userId)
@@ -194,12 +198,14 @@ open class JellyfinClient(
     }.Items.map { it.toAlbum(server, token) }
 
     suspend fun albumPage(server: PlexServer, library: MusicLibrary, token: String, userId: String, pageIndex: Int): JellyfinItemPage<Album> {
+        val pageSize = QuickCatalogPageSize
         val scoped = pagedItems(
             server = server,
             token = token,
             path = "/Items",
             label = "albums scoped:${library.key} page:$pageIndex",
             startIndex = pageIndex * pageSize,
+            limit = pageSize,
             maxPages = 1,
         ) {
             parameter("userId", userId)
@@ -219,6 +225,7 @@ open class JellyfinClient(
                 path = "/Items",
                 label = "albums unscoped page:$pageIndex",
                 startIndex = pageIndex * pageSize,
+                limit = pageSize,
                 maxPages = 1,
             ) {
                 parameter("userId", userId)
@@ -254,19 +261,21 @@ open class JellyfinClient(
         }
 
     suspend fun trackPage(server: PlexServer, library: MusicLibrary, token: String, userId: String, pageIndex: Int): JellyfinItemPage<Track> {
+        val pageSize = QuickCatalogPageSize
         val scoped = pagedItems(
             server = server,
             token = token,
             path = "/Items",
             label = "tracks scoped:${library.key} page:$pageIndex",
             startIndex = pageIndex * pageSize,
+            limit = pageSize,
             maxPages = 1,
         ) {
             parameter("userId", userId)
             parameter("parentId", library.key)
             parameter("recursive", true)
             parameter("includeItemTypes", "Audio")
-            parameter("fields", JellyfinFields)
+            parameter("fields", JellyfinFastTrackFields)
             parameter("enableUserData", true)
             parameter("sortBy", "AlbumArtist,Album,ParentIndexNumber,IndexNumber,SortName")
         }
@@ -279,12 +288,13 @@ open class JellyfinClient(
                 path = "/Items",
                 label = "tracks unscoped page:$pageIndex",
                 startIndex = pageIndex * pageSize,
+                limit = pageSize,
                 maxPages = 1,
             ) {
                 parameter("userId", userId)
                 parameter("recursive", true)
                 parameter("includeItemTypes", "Audio")
-                parameter("fields", JellyfinFields)
+                parameter("fields", JellyfinFastTrackFields)
                 parameter("enableUserData", true)
                 parameter("sortBy", "AlbumArtist,Album,ParentIndexNumber,IndexNumber,SortName")
             }
@@ -578,6 +588,7 @@ open class JellyfinClient(
         path: String,
         label: String,
         startIndex: Int = 0,
+        limit: Int = fullSyncPageSize,
         maxPages: Int? = null,
         onPage: suspend (List<JellyfinItemDto>, Int?) -> Unit = { _, _ -> },
         block: io.ktor.client.request.HttpRequestBuilder.() -> Unit,
@@ -587,13 +598,14 @@ open class JellyfinClient(
         var total: Int? = null
         var pagesLoaded = 0
         while (true) {
-            val limit = pageSize
             PhoebeLog.d("JellyfinClient") { "pagedItems $label request start=$start limit=$limit" }
+            val requestMark = TimeSource.Monotonic.markNow()
             val page = items(server, token, path) {
                 parameter("startIndex", start)
                 parameter("limit", limit)
                 block()
             }
+            val requestElapsedMs = requestMark.elapsedNow().inWholeMilliseconds
             if (total == null) {
                 total = page.TotalRecordCount
                 PhoebeLog.d("JellyfinClient") {
@@ -601,7 +613,7 @@ open class JellyfinClient(
                 }
             }
             PhoebeLog.d("JellyfinClient") {
-                "pagedItems $label page=${pagesLoaded + 1} start=$start loaded=${page.Items.size} total=${total ?: "unknown"}"
+                "pagedItems $label page=${pagesLoaded + 1} start=$start limit=$limit loaded=${page.Items.size} total=${total ?: "unknown"} requestDecodeMs=$requestElapsedMs"
             }
             if (page.Items.isEmpty()) break
             all += page.Items
@@ -667,6 +679,7 @@ open class JellyfinClient(
 
     companion object {
         const val JellyfinLikedSongsPlaylistId = "jellyfin:liked-songs"
+        const val QuickCatalogPageSize = 100
         const val JellyfinPageSize = 500
         const val EmbyPageSize = 1000
         private const val JellyfinFields =

@@ -87,34 +87,46 @@ internal enum class SongFileFilter { All, Lossless, Lossy }
 
 internal enum class LibraryViewMode { Grid, List }
 
-private const val JellyfinLibraryPageSize = 100
+private const val DefaultJellyfinLibraryPageSize = 100
 
 internal data class LibraryPage<T>(
     val items: List<T>,
     val pageIndex: Int,
     val pageCount: Int,
     val totalCount: Int,
+    val pageSize: Int = DefaultJellyfinLibraryPageSize,
 ) {
-    val firstItemNumber: Int get() = if (totalCount == 0) 0 else pageIndex * JellyfinLibraryPageSize + 1
-    val lastItemNumber: Int get() = (pageIndex * JellyfinLibraryPageSize + items.size).coerceAtMost(totalCount)
+    val firstItemNumber: Int get() = if (totalCount == 0) 0 else pageIndex * pageSize + 1
+    val lastItemNumber: Int get() = (pageIndex * pageSize + items.size).coerceAtMost(totalCount)
 }
 
-internal fun <T> libraryPage(items: List<T>, enabled: Boolean, pageIndex: Int, totalCountOverride: Int? = null): LibraryPage<T> {
+internal fun remoteLibraryPageSize(catalog: CatalogSnapshot, enabled: Boolean): Int =
+    if (enabled) catalog.remotePageInfo.pageSize.coerceAtLeast(1) else DefaultJellyfinLibraryPageSize
+
+internal fun <T> libraryPage(
+    items: List<T>,
+    enabled: Boolean,
+    pageIndex: Int,
+    totalCountOverride: Int? = null,
+    pageSize: Int = DefaultJellyfinLibraryPageSize,
+): LibraryPage<T> {
+    val activePageSize = pageSize.coerceAtLeast(1)
     val totalCount = totalCountOverride ?: items.size
     if (!enabled) {
-        return LibraryPage(items = items, pageIndex = 0, pageCount = 1, totalCount = totalCount)
+        return LibraryPage(items = items, pageIndex = 0, pageCount = 1, totalCount = totalCount, pageSize = activePageSize)
     }
-    if (totalCount <= JellyfinLibraryPageSize) {
-        return LibraryPage(items = items.take(JellyfinLibraryPageSize), pageIndex = 0, pageCount = 1, totalCount = totalCount)
+    if (totalCount <= activePageSize) {
+        return LibraryPage(items = items.take(activePageSize), pageIndex = 0, pageCount = 1, totalCount = totalCount, pageSize = activePageSize)
     }
-    val pageCount = ((totalCount + JellyfinLibraryPageSize - 1) / JellyfinLibraryPageSize).coerceAtLeast(1)
+    val pageCount = ((totalCount + activePageSize - 1) / activePageSize).coerceAtLeast(1)
     val safeIndex = pageIndex.coerceIn(0, pageCount - 1)
-    val start = safeIndex * JellyfinLibraryPageSize
+    val start = safeIndex * activePageSize
     return LibraryPage(
-        items = items.drop(start).take(JellyfinLibraryPageSize),
+        items = items.drop(start).take(activePageSize),
         pageIndex = safeIndex,
         pageCount = pageCount,
         totalCount = totalCount,
+        pageSize = activePageSize,
     )
 }
 
@@ -479,9 +491,16 @@ internal fun LibraryDesktopView(
     val artistTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.artistTotal else null
     val albumTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.albumTotal else null
     val trackTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.trackTotal else null
-    val artistPage = remember(visibleArtists, jellyfinPagination, pageIndex, artistTotal) { libraryPage(visibleArtists, jellyfinPagination, pageIndex, artistTotal) }
-    val albumPage = remember(visibleAlbums, jellyfinPagination, pageIndex, albumTotal) { libraryPage(visibleAlbums, jellyfinPagination, pageIndex, albumTotal) }
-    val trackPage = remember(visibleTracks, jellyfinPagination, pageIndex, trackTotal) { libraryPage(visibleTracks, jellyfinPagination, pageIndex, trackTotal) }
+    val remotePageSize = remoteLibraryPageSize(catalog, jellyfinPagination)
+    val artistPage = remember(visibleArtists, jellyfinPagination, pageIndex, artistTotal, remotePageSize) {
+        libraryPage(visibleArtists, jellyfinPagination, pageIndex, artistTotal, pageSize = remotePageSize)
+    }
+    val albumPage = remember(visibleAlbums, jellyfinPagination, pageIndex, albumTotal, remotePageSize) {
+        libraryPage(visibleAlbums, jellyfinPagination, pageIndex, albumTotal, pageSize = remotePageSize)
+    }
+    val trackPage = remember(visibleTracks, jellyfinPagination, pageIndex, trackTotal, remotePageSize) {
+        libraryPage(visibleTracks, jellyfinPagination, pageIndex, trackTotal, pageSize = remotePageSize)
+    }
     LaunchedEffect(filter, searchQuery, visibleArtists.size, visibleAlbums.size, visibleTracks.size) {
         val pageCount = when (filter) {
             LibraryFilterTab.Artists -> artistPage.pageCount
