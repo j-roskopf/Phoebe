@@ -248,6 +248,7 @@ internal fun DesktopPlayer(
     onClearDecadeMixNotice: () -> Unit = {},
     radioStations: List<PlexRadioStation> = emptyList(),
     onPlayRadioStation: (PlexRadioStation) -> Unit = {},
+    onPlayPersonalMix: () -> Unit = {},
     onPopDetail: () -> Unit,
     onToggle: () -> Unit,
     onPrevious: () -> Unit,
@@ -562,7 +563,6 @@ internal fun DesktopPlayer(
                                         val homeListState = RetainedLazyListStates.remember("desktop-home")
                                         DesktopHomeScreen(
                                         state = homeUiState,
-                                        catalog = catalog,
                                         catalogRefreshing = catalogRefreshing,
                                         listState = homeListState,
                                         modifier = Modifier.fillMaxSize(),
@@ -589,11 +589,11 @@ internal fun DesktopPlayer(
                                         radioStations = radioStations,
                                         radioStartingIds = radioStartingIds,
                                         onPlayRadioStation = onPlayRadioStation,
+                                        onPlayPersonalMix = onPlayPersonalMix,
                                         onPlayTracks = onPlayTracks,
                                         onAddToUpNext = onAddToUpNext,
                                         onDownload = onDownload,
                                         homeSections = libraryUi.homeSections,
-                                        personalMixPreferences = libraryUi.personalMix,
                                         supportedCollectionEntries = supportedCollectionEntries,
                                     )
                                     }

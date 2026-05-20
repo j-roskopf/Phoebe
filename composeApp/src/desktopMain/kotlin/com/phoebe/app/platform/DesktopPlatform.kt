@@ -226,6 +226,10 @@ actual fun catalogTrackPrefetchAlbumCount(): Int = 24
 
 actual fun catalogTrackPrefetchParallelism(): Int = 6
 
+actual fun deferCachedTrackHydrationOnStartup(): Boolean = false
+
+actual fun deferPlexTrackIndexOnRefresh(): Boolean = false
+
 actual fun isDebugBuild(): Boolean =
     System.getProperty("phoebe.debug")?.toBooleanStrictOrNull() ?: false
 

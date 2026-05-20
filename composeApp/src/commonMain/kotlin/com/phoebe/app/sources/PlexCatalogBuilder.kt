@@ -18,6 +18,7 @@ import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -114,6 +115,144 @@ class PlexCatalogBuilder(
         )
     }
 
+    suspend fun buildMetadataCatalogProgressively(
+        server: PlexServer,
+        library: MusicLibrary,
+        token: String,
+        firstAlbumPageSize: Int = 96,
+        albumPageSize: Int = 256,
+        albumPageParallelism: Int = 2,
+        onProgress: suspend (message: String, loadedAlbums: Int, totalAlbums: Int?) -> Unit = { _, _, _ -> },
+        onPartial: suspend (snapshot: CatalogSnapshot, message: String, loadedAlbums: Int, totalAlbums: Int?) -> Unit = { _, _, _, _ -> },
+    ): CatalogSnapshot = coroutineScope {
+        onProgress("Loading Plex playlists…", 0, null)
+        val playlistsDeferred = async { fetchPlaylistsOrEmpty(server, token, onProgress) }
+        val firstPageDeferred = async {
+            plexClient.albumsPage(server, library, token, start = 0, size = firstAlbumPageSize)
+        }
+        val playlists = playlistsDeferred.await()
+        if (playlists.isNotEmpty()) {
+            onPartial(CatalogSnapshot(playlists = playlists), "Loaded Plex playlists…", 0, null)
+        }
+
+        onProgress("Loading first Plex albums…", 0, null)
+        val firstPage = firstPageDeferred.await()
+        val albumsById = linkedMapOf<String, Album>()
+        firstPage.albums.forEach { albumsById[it.id] = it }
+        var totalAlbums = firstPage.totalSize
+        if (albumsById.isNotEmpty()) {
+            onPartial(
+                progressiveAlbumSnapshot(albumsById.values.toList(), playlists),
+                totalAlbums?.let { "Loaded first ${albumsById.size} of $it Plex albums…" }
+                    ?: "Loaded first ${albumsById.size} Plex albums…",
+                albumsById.size,
+                totalAlbums,
+            )
+        }
+
+        val artistsDeferred = async { fetchArtistsOrEmpty(server, library, token) }
+        var nextOffset = firstPage.nextOffset
+        var hasMore = firstPage.hasMore
+        val knownTotal = totalAlbums
+        if (knownTotal != null && hasMore) {
+            val offsets = generateSequence(nextOffset) { it + albumPageSize }
+                .takeWhile { it < knownTotal }
+                .toList()
+            offsets
+                .chunked(albumPageParallelism.coerceAtLeast(1))
+                .forEach { chunk ->
+                    onProgress(
+                        "Loading Plex albums ${albumsById.size} of $knownTotal…",
+                        albumsById.size,
+                        totalAlbums,
+                    )
+                    val pages = chunk.map { offset ->
+                        async { plexClient.albumsPage(server, library, token, start = offset, size = albumPageSize) }
+                    }
+                    pages.forEach { deferred ->
+                        val page = deferred.await()
+                        page.albums.forEach { albumsById[it.id] = it }
+                        totalAlbums = page.totalSize ?: totalAlbums
+                        nextOffset = page.nextOffset
+                        hasMore = page.hasMore
+                        onPartial(
+                            progressiveAlbumSnapshot(albumsById.values.toList(), playlists),
+                            totalAlbums?.let { "Loaded ${albumsById.size} of $it Plex albums…" }
+                                ?: "Loaded ${albumsById.size} Plex albums…",
+                            albumsById.size,
+                            totalAlbums,
+                        )
+                        yield()
+                    }
+                }
+        } else {
+            while (hasMore) {
+                onProgress(
+                    totalAlbums?.let { "Loading Plex albums ${albumsById.size} of $it…" } ?: "Loading Plex albums…",
+                    albumsById.size,
+                    totalAlbums,
+                )
+                val page = plexClient.albumsPage(server, library, token, start = nextOffset, size = albumPageSize)
+                page.albums.forEach { albumsById[it.id] = it }
+                totalAlbums = page.totalSize ?: totalAlbums
+                nextOffset = page.nextOffset
+                hasMore = page.hasMore
+                onPartial(
+                    progressiveAlbumSnapshot(albumsById.values.toList(), playlists),
+                    totalAlbums?.let { "Loaded ${albumsById.size} of $it Plex albums…" }
+                        ?: "Loaded ${albumsById.size} Plex albums…",
+                    albumsById.size,
+                    totalAlbums,
+                )
+                yield()
+            }
+        }
+
+        val rawAlbums = albumsById.values.toList()
+        onProgress("Loading Plex artists…", rawAlbums.size, totalAlbums)
+        val artists = artistsDeferred.await()
+        val artistsResolved = enrichArtistAlbumCountsOnly(
+            enrichArtistArtwork(artists, rawAlbums).ifEmpty { artistShellFromAlbums(rawAlbums) },
+            rawAlbums,
+        )
+        CatalogSnapshot(
+            artists = artistsResolved,
+            albums = rawAlbums,
+            playlists = playlists,
+            tracksByParent = emptyMap(),
+            downloads = emptyList(),
+        )
+    }
+
+    private suspend fun fetchPlaylistsOrEmpty(
+        server: PlexServer,
+        token: String,
+        onProgress: suspend (message: String, loadedAlbums: Int, totalAlbums: Int?) -> Unit,
+    ): List<Playlist> {
+        return try {
+            plexClient.playlists(server, token)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            onProgress("Plex playlists unavailable, loading albums…", 0, null)
+            emptyList()
+        }
+    }
+
+    private suspend fun fetchArtistsOrEmpty(
+        server: PlexServer,
+        library: MusicLibrary,
+        token: String,
+    ): List<Artist> {
+        return try {
+            plexClient.artists(server, library, token)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
     suspend fun prefetchAlbumTracks(
         server: PlexServer,
         albums: List<Album>,
@@ -175,6 +314,30 @@ class PlexCatalogBuilder(
             playlists = playlistsEnriched,
         )
     }
+
+    private fun progressiveAlbumSnapshot(albums: List<Album>, playlists: List<Playlist>): CatalogSnapshot =
+        CatalogSnapshot(
+            artists = enrichArtistAlbumCountsOnly(artistShellFromAlbums(albums), albums),
+            albums = albums,
+            playlists = playlists,
+            tracksByParent = emptyMap(),
+            downloads = emptyList(),
+        )
+
+    private fun artistShellFromAlbums(albums: List<Album>): List<Artist> =
+        albums.groupBy { it.artist }.values.map { list ->
+            val first = list.first()
+            Artist(
+                id = "album-artist-${first.id}",
+                title = first.artist,
+                thumbUrl = first.thumbUrl,
+                albumCount = list.size,
+                genre = first.genre,
+                mood = first.mood,
+                style = first.style,
+                rating = first.rating,
+            )
+        }
 
     private suspend fun enrichAlbumArtwork(albums: List<Album>, tracksByParent: Map<String, List<Track>>): List<Album> = coroutineScope {
         val budget = LookupBudget(6)

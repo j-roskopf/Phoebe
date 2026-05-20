@@ -202,10 +202,12 @@ import com.phoebe.app.sources.rememberPickLocalFolder
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlin.math.abs
 import kotlin.math.max
@@ -347,17 +349,7 @@ fun PhoebeRoot(
     val catalogHasContent = catalog.artists.isNotEmpty() ||
         catalog.albums.isNotEmpty() ||
         catalog.playlists.isNotEmpty()
-    val activeCatalogSurfaceHasContent = remember(catalog, screen, browseSection, selectedPlaylistId, libraryFilter) {
-        catalogHasContentForSurface(
-            catalog = catalog,
-            screen = screen,
-            browseSection = browseSection,
-            selectedPlaylistId = selectedPlaylistId,
-            libraryFilter = libraryFilter,
-        )
-    }
-    val catalogRefreshing = catalogSyncState.showGlobalProgress ||
-        ((catalogWorkActive || catalogSyncState.isActive) && !activeCatalogSurfaceHasContent)
+    val catalogRefreshing = catalogWorkActive || catalogSyncState.isActive
 
     val nowPlaying = remember(currentTrack?.id, player.isPlaying, player.isBuffering) {
         NowPlayingIndicatorState(
@@ -395,14 +387,40 @@ fun PhoebeRoot(
     LaunchedEffect(lastPlayedByTrack) {
         nowMs = currentTimeMs()
     }
-    val homeUiState = remember(catalog, playHistory, randomArtistSeed, randomAlbumSeed, nowMs) {
-        deriveHomeUiState(
-            catalog = catalog,
-            playHistory = playHistory,
-            randomArtistSeed = randomArtistSeed,
-            randomAlbumSeed = randomAlbumSeed,
-            nowMs = nowMs,
-        )
+    val homeUiState by produceState(
+        initialValue = HomeUiState(),
+        catalog,
+        playHistory,
+        randomArtistSeed,
+        randomAlbumSeed,
+        nowMs,
+    ) {
+        delay(50L)
+        value = withContext(Dispatchers.Default) {
+            deriveHomeUiState(
+                catalog = catalog,
+                playHistory = playHistory,
+                randomArtistSeed = randomArtistSeed,
+                randomAlbumSeed = randomAlbumSeed,
+                nowMs = nowMs,
+            )
+        }
+    }
+    val personalMixCatalog = rememberUpdatedState(catalog)
+    val personalMixHomeUiState = rememberUpdatedState(homeUiState)
+    val personalMixPreferences = rememberUpdatedState(libraryUi.personalMix)
+    val playPersonalMix = remember(state) {
+        {
+            val tracks = personalMix(
+                catalog = personalMixCatalog.value,
+                state = personalMixHomeUiState.value,
+                preferences = personalMixPreferences.value,
+            )
+            if (tracks.isNotEmpty()) {
+                state.playTracks(tracks, 0)
+                state.open(AppScreen.Player)
+            }
+        }
     }
     LaunchedEffect(screen, browseSection, catalog.albums, catalog.tracksByParent.keys, session?.selectedServer, nowMs) {
         if (screen == AppScreen.Home && browseSection == DesktopSection.Home) {
@@ -982,6 +1000,7 @@ fun PhoebeRoot(
                         radioStations = radioStations,
                         radioStartingIds = radioStartingIds,
                         onPlayRadioStation = state::playRadioStation,
+                        onPlayPersonalMix = playPersonalMix,
                         onPlayTracks = { tracks, index ->
                             state.playTracks(tracks, index)
                             state.open(AppScreen.Player)
@@ -1113,6 +1132,7 @@ fun PhoebeRoot(
                     radioStations = radioStations,
                     radioStartingIds = radioStartingIds,
                     onPlayRadioStation = state::playRadioStation,
+                    onPlayPersonalMix = playPersonalMix,
                     onPopDetail = state::popDetail,
                     onToggle = state::togglePlayPause,
                     onPrevious = state::previous,
@@ -1300,61 +1320,6 @@ private fun PlaybackFailureSnackbar(
                 }
             }
         }
-    }
-}
-
-private fun catalogHasContentForSurface(
-    catalog: CatalogSnapshot,
-    screen: AppScreen,
-    browseSection: DesktopSection,
-    selectedPlaylistId: String?,
-    libraryFilter: LibraryFilterTab,
-): Boolean {
-    selectedPlaylistId?.let { return catalog.tracksByParent[it].orEmpty().isNotEmpty() }
-    return when (screen) {
-        is AppScreen.AlbumDetail -> catalog.tracksByParent[screen.album.id].orEmpty().isNotEmpty()
-        is AppScreen.ArtistDetail -> catalogAlbumsForArtist(catalog, screen.artist.title).isNotEmpty() ||
-            catalogTracksForArtist(catalog, screen.artist.title).isNotEmpty()
-        is AppScreen.PlaylistDetail -> catalog.tracksByParent[screen.playlist.id].orEmpty().isNotEmpty()
-        is AppScreen.SongDetail -> true
-        is AppScreen.Lyrics -> true
-        is AppScreen.RecentlyAdded -> catalog.tracksByParent.values.any { it.isNotEmpty() } ||
-            catalog.albums.isNotEmpty() ||
-            catalog.artists.isNotEmpty()
-        is AppScreen.PlayHistory -> true
-        AppScreen.FavoritePlaylists -> catalog.playlists.any { it.favorite }
-        AppScreen.FavoriteArtists -> catalog.artists.any { it.favorite }
-        AppScreen.FavoriteAlbums -> catalog.albums.any { it.favorite }
-        is AppScreen.Collections -> when (screen.entry.target) {
-            CollectionTarget.Artists -> catalog.artists.isNotEmpty()
-            CollectionTarget.Albums -> catalog.albums.isNotEmpty()
-        }
-        is AppScreen.CollectionItems -> when (screen.entry.target) {
-            CollectionTarget.Artists -> catalog.artists.isNotEmpty()
-            CollectionTarget.Albums -> catalog.albums.isNotEmpty()
-        }
-        AppScreen.Home -> when (browseSection) {
-            DesktopSection.Home -> catalog.artists.isNotEmpty() ||
-                catalog.albums.isNotEmpty() ||
-                catalog.playlists.isNotEmpty() ||
-                catalog.tracksByParent.values.any { it.isNotEmpty() }
-            DesktopSection.Search -> catalog.tracksByParent.values.any { it.isNotEmpty() } ||
-                catalog.artists.isNotEmpty() ||
-                catalog.albums.isNotEmpty()
-            DesktopSection.Library -> when (libraryFilter) {
-                LibraryFilterTab.Artists -> catalog.artists.isNotEmpty()
-                LibraryFilterTab.Albums -> catalog.albums.isNotEmpty()
-                LibraryFilterTab.Songs -> catalog.tracksByParent.values.any { it.isNotEmpty() }
-            }
-            DesktopSection.Lyrics -> true
-            DesktopSection.Playlists -> catalog.playlists.isNotEmpty()
-            DesktopSection.Settings -> true
-        }
-        AppScreen.SignIn,
-        AppScreen.ServerPicker,
-        AppScreen.LibraryPicker,
-        AppScreen.Player,
-        -> true
     }
 }
 

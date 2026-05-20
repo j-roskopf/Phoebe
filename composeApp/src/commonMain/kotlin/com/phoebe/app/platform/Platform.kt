@@ -43,6 +43,12 @@ expect fun catalogTrackPrefetchAlbumCount(): Int
 /** Maximum number of catalog prefetch requests to transform at once. */
 expect fun catalogTrackPrefetchParallelism(): Int
 
+/** Whether startup should publish the cached catalog shell before hydrating every cached track. */
+expect fun deferCachedTrackHydrationOnStartup(): Boolean
+
+/** Whether a Plex refresh should finish before the whole-library track index is complete. */
+expect fun deferPlexTrackIndexOnRefresh(): Boolean
+
 expect class DownloadNotifier() {
     suspend fun notifyDownloadFinished(title: String, body: String): Boolean
 }

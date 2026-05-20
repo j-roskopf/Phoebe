@@ -41,7 +41,7 @@ import java.net.SocketTimeoutException
 actual fun createPlatformHttpClient(): HttpClient = HttpClient(OkHttp) {
     install(HttpTimeout) {
         requestTimeoutMillis = 60_000
-        connectTimeoutMillis = 15_000
+        connectTimeoutMillis = 5_000
         socketTimeoutMillis = 60_000
     }
     install(ContentNegotiation) {
@@ -349,6 +349,10 @@ actual fun prefersReducedArtworkEffects(): Boolean = false
 actual fun catalogTrackPrefetchAlbumCount(): Int = 0
 
 actual fun catalogTrackPrefetchParallelism(): Int = 1
+
+actual fun deferCachedTrackHydrationOnStartup(): Boolean = true
+
+actual fun deferPlexTrackIndexOnRefresh(): Boolean = true
 
 actual fun isDebugBuild(): Boolean = BuildConfig.DEBUG
 

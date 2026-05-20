@@ -48,6 +48,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -66,22 +67,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.phoebe.app.data.catalogAlbumGenre
-import com.phoebe.app.data.catalogAlbumTrackStatsLoading
-import com.phoebe.app.data.catalogAlbumsForArtist
-import com.phoebe.app.data.catalogArtistAlbumCountLoading
-import com.phoebe.app.data.catalogArtistGenre
-import com.phoebe.app.data.catalogArtistTrackStatsLoading
-import com.phoebe.app.data.catalogTracksForAlbum
-import com.phoebe.app.data.catalogTracksForArtist
 import com.phoebe.app.domain.Album
 import com.phoebe.app.domain.Artist
-import com.phoebe.app.domain.CatalogSnapshot
+import com.phoebe.app.domain.CatalogSyncPhase
+import com.phoebe.app.domain.CatalogSyncState
 import com.phoebe.app.domain.CollectionEntry
 import com.phoebe.app.domain.CollectionFacet
 import com.phoebe.app.domain.CollectionTarget
 import com.phoebe.app.domain.HomeSection
-import com.phoebe.app.domain.PersonalMixPreferences
 import com.phoebe.app.domain.Playlist
 import com.phoebe.app.domain.PlexRadioStation
 import com.phoebe.app.domain.Track
@@ -91,7 +84,6 @@ import kotlinx.coroutines.launch
 @Composable
 internal fun DesktopHomeScreen(
     state: HomeUiState,
-    catalog: CatalogSnapshot,
     catalogRefreshing: Boolean = false,
     listState: LazyListState = rememberLazyListState(),
     modifier: Modifier = Modifier,
@@ -118,11 +110,11 @@ internal fun DesktopHomeScreen(
     radioStations: List<PlexRadioStation> = emptyList(),
     radioStartingIds: Set<String> = emptySet(),
     onPlayRadioStation: (PlexRadioStation) -> Unit = {},
+    onPlayPersonalMix: () -> Unit = {},
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     homeSections: List<HomeSection> = HomeSection.defaultOrder,
-    personalMixPreferences: PersonalMixPreferences = PersonalMixPreferences.Default,
     supportedCollectionEntries: Set<CollectionEntry> = allCollectionEntries().toSet(),
 ) {
     var showDecadeMix by remember { mutableStateOf(false) }
@@ -148,12 +140,7 @@ internal fun DesktopHomeScreen(
     val sharedKeyForPlayedTrack: (Track) -> String? = { track ->
         if (sharedPlayedTrackKeys[track.id] == 1) "song:${track.id}" else null
     }
-    val desktopVisibleArtists = remember(state.recentlyAddedArtists, state.favoriteArtists) {
-        (state.recentlyAddedArtists + state.favoriteArtists).distinctBy { it.id }
-    }
-    val artistThumbs = remember(desktopVisibleArtists, catalog.albums) {
-        artistThumbsFor(desktopVisibleArtists, catalog.albums)
-    }
+    val artistThumbs = state.artistThumbs
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize().padding(
@@ -173,7 +160,7 @@ internal fun DesktopHomeScreen(
         normalizedHomeSections(homeSections).forEach { section ->
             when (section) {
                 HomeSection.Mixes -> item("mixes") {
-                    DesktopMixesPanel(catalog, state, personalMixPreferences, radioStations, radioStartingIds, onPlayTracks, onPlayRadioStation, onClearDecadeMixNotice) {
+                    DesktopMixesPanel(onPlayPersonalMix, radioStations, radioStartingIds, onPlayRadioStation, onClearDecadeMixNotice) {
                         showDecadeMix = true
                     }
                 }
@@ -184,13 +171,13 @@ internal fun DesktopHomeScreen(
                     }
                 }
                 HomeSection.Favorites -> {
-                    item("favorite-playlists") { DesktopFavoritePlaylistsPanel(state.favoritePlaylists, onPlaylist, onFavoritePlaylists) }
-                    item("favorite-artists") { DesktopFavoriteArtistsPanel(catalog.artists.filter { it.favorite }.sortedBy { it.title.lowercase() }, artistThumbs, onArtist, onFavoriteArtists) }
-                    item("favorite-albums") { DesktopFavoriteAlbumsPanel(catalog.albums.filter { it.favorite }.sortedBy { it.title.lowercase() }, onAlbum, onFavoriteAlbums) }
+                    item("favorite-playlists") { DesktopFavoritePlaylistsPanel(state.favoritePlaylists, onPlaylist, onFavoritePlaylists, totalCount = state.favoritePlaylistCount) }
+                    item("favorite-artists") { DesktopFavoriteArtistsPanel(state.favoriteArtists, artistThumbs, onArtist, onFavoriteArtists, totalCount = state.favoriteArtistCount) }
+                    item("favorite-albums") { DesktopFavoriteAlbumsPanel(state.favoriteAlbums, onAlbum, onFavoriteAlbums, totalCount = state.favoriteAlbumCount) }
                 }
-                HomeSection.FavoritePlaylists -> item("favorite-playlists") { DesktopFavoritePlaylistsPanel(state.favoritePlaylists, onPlaylist, onFavoritePlaylists) }
-                HomeSection.FavoriteArtists -> item("favorite-artists") { DesktopFavoriteArtistsPanel(catalog.artists.filter { it.favorite }.sortedBy { it.title.lowercase() }, artistThumbs, onArtist, onFavoriteArtists) }
-                HomeSection.FavoriteAlbums -> item("favorite-albums") { DesktopFavoriteAlbumsPanel(catalog.albums.filter { it.favorite }.sortedBy { it.title.lowercase() }, onAlbum, onFavoriteAlbums) }
+                HomeSection.FavoritePlaylists -> item("favorite-playlists") { DesktopFavoritePlaylistsPanel(state.favoritePlaylists, onPlaylist, onFavoritePlaylists, totalCount = state.favoritePlaylistCount) }
+                HomeSection.FavoriteArtists -> item("favorite-artists") { DesktopFavoriteArtistsPanel(state.favoriteArtists, artistThumbs, onArtist, onFavoriteArtists, totalCount = state.favoriteArtistCount) }
+                HomeSection.FavoriteAlbums -> item("favorite-albums") { DesktopFavoriteAlbumsPanel(state.favoriteAlbums, onAlbum, onFavoriteAlbums, totalCount = state.favoriteAlbumCount) }
                 HomeSection.Recents -> {
                     item("recent-songs") { DesktopRecentSongsPanel(state.recentlyAddedTracks, onRecentSongs, onPlayTracks) }
                     item("recent-artists") { DesktopRecentArtistsPanel(state.recentlyAddedArtists, artistThumbs, onRecentArtists, onArtist) }
@@ -203,7 +190,7 @@ internal fun DesktopHomeScreen(
                     DesktopPlayedPanels(state, onPlayTracks, onAddToUpNext, onDownload, onMostPlayed, onRecentlyPlayed, playedPanelMaxRows, sharedKeyForPlayedTrack)
                 }
                 HomeSection.Random -> item("random") {
-                    DesktopRandomPanels(state, catalog, catalogRefreshing, onArtist, onAlbum, onRefreshArtists, onRefreshAlbums, onPrefetchArtist, onPrefetchAlbum)
+                    DesktopRandomPanels(state, catalogRefreshing, onArtist, onAlbum, onRefreshArtists, onRefreshAlbums, onPrefetchArtist, onPrefetchAlbum)
                 }
             }
         }
@@ -213,7 +200,6 @@ internal fun DesktopHomeScreen(
 @Composable
 internal fun MobileHomeScreen(
     state: HomeUiState,
-    catalog: CatalogSnapshot,
     catalogRefreshing: Boolean = false,
     listState: LazyListState = rememberLazyListState(),
     modifier: Modifier = Modifier,
@@ -239,11 +225,11 @@ internal fun MobileHomeScreen(
     radioStations: List<PlexRadioStation> = emptyList(),
     radioStartingIds: Set<String> = emptySet(),
     onPlayRadioStation: (PlexRadioStation) -> Unit = {},
+    onPlayPersonalMix: () -> Unit = {},
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     homeSections: List<HomeSection> = HomeSection.defaultOrder,
-    personalMixPreferences: PersonalMixPreferences = PersonalMixPreferences.Default,
     supportedCollectionEntries: Set<CollectionEntry> = allCollectionEntries().toSet(),
 ) {
     var showDecadeMix by remember { mutableStateOf(false) }
@@ -266,12 +252,7 @@ internal fun MobileHomeScreen(
     val randomArtists = remember(state.randomArtists) { state.randomArtists.take(10) }
     val randomAlbums = remember(state.randomAlbums) { state.randomAlbums.take(10) }
     val playedPanelMaxRows = 3
-    val visibleArtists = remember(recentArtists, randomArtists, state.favoriteArtists) {
-        (recentArtists + randomArtists + state.favoriteArtists).distinctBy { it.id }
-    }
-    val artistThumbs = remember(visibleArtists, catalog.albums) {
-        artistThumbsFor(visibleArtists, catalog.albums)
-    }
+    val artistThumbs = state.artistThumbs
     LazyColumn(
         state = listState,
         modifier = modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -283,19 +264,19 @@ internal fun MobileHomeScreen(
         normalizedHomeSections(homeSections).forEach { section ->
             when (section) {
                 HomeSection.Mixes -> item("mix") {
-                    MobileMixesSection(catalog, state, personalMixPreferences, radioStations, radioStartingIds, onPlayTracks, onPlayRadioStation, onClearDecadeMixNotice) {
+                    MobileMixesSection(onPlayPersonalMix, radioStations, radioStartingIds, onPlayRadioStation, onClearDecadeMixNotice) {
                         showDecadeMix = true
                     }
                 }
                 HomeSection.Collections -> item("collections") { MobileCollectionsSection(supportedCollectionEntries, onCollections) }
                 HomeSection.Favorites -> {
-                    item("favorite-playlists") { MobileFavoritePlaylistsSection(state.favoritePlaylists, onPlaylist, onFavoritePlaylists) }
-                    item("favorite-artists") { MobileFavoriteArtistsSection(catalog.artists.filter { it.favorite }.sortedBy { it.title.lowercase() }, artistThumbs, onArtist, onFavoriteArtists) }
-                    item("favorite-albums") { MobileFavoriteAlbumsSection(catalog.albums.filter { it.favorite }.sortedBy { it.title.lowercase() }, onAlbum, onFavoriteAlbums) }
+                    item("favorite-playlists") { MobileFavoritePlaylistsSection(state.favoritePlaylists, onPlaylist, onFavoritePlaylists, totalCount = state.favoritePlaylistCount) }
+                    item("favorite-artists") { MobileFavoriteArtistsSection(state.favoriteArtists, artistThumbs, onArtist, onFavoriteArtists, totalCount = state.favoriteArtistCount) }
+                    item("favorite-albums") { MobileFavoriteAlbumsSection(state.favoriteAlbums, onAlbum, onFavoriteAlbums, totalCount = state.favoriteAlbumCount) }
                 }
-                HomeSection.FavoritePlaylists -> item("favorite-playlists") { MobileFavoritePlaylistsSection(state.favoritePlaylists, onPlaylist, onFavoritePlaylists) }
-                HomeSection.FavoriteArtists -> item("favorite-artists") { MobileFavoriteArtistsSection(catalog.artists.filter { it.favorite }.sortedBy { it.title.lowercase() }, artistThumbs, onArtist, onFavoriteArtists) }
-                HomeSection.FavoriteAlbums -> item("favorite-albums") { MobileFavoriteAlbumsSection(catalog.albums.filter { it.favorite }.sortedBy { it.title.lowercase() }, onAlbum, onFavoriteAlbums) }
+                HomeSection.FavoritePlaylists -> item("favorite-playlists") { MobileFavoritePlaylistsSection(state.favoritePlaylists, onPlaylist, onFavoritePlaylists, totalCount = state.favoritePlaylistCount) }
+                HomeSection.FavoriteArtists -> item("favorite-artists") { MobileFavoriteArtistsSection(state.favoriteArtists, artistThumbs, onArtist, onFavoriteArtists, totalCount = state.favoriteArtistCount) }
+                HomeSection.FavoriteAlbums -> item("favorite-albums") { MobileFavoriteAlbumsSection(state.favoriteAlbums, onAlbum, onFavoriteAlbums, totalCount = state.favoriteAlbumCount) }
                 HomeSection.Recents -> {
                     item("recent-songs") { MobileRecentSongsSection(recentTracks, onRecentSongs, onPlayTracks) }
                     item("recent-artists") { MobileRecentArtistsSection(recentArtists, artistThumbs, onRecentArtists, onArtist) }
@@ -343,24 +324,6 @@ private fun normalizedHomeSections(sections: List<HomeSection>): List<HomeSectio
         }
         .filterNot { it == HomeSection.Favorites || it == HomeSection.Recents }
         .let { (it + HomeSection.defaultOrder).distinct() }
-
-private fun artistThumbsFor(artists: List<Artist>, albums: List<Album>): Map<String, String> {
-    val artistNames = artists.map { it.title.lowercase() }.toSet()
-    val albumThumbByArtist = buildMap {
-        albums.asSequence()
-            .filter { album -> album.thumbUrl != null && album.artist.lowercase() in artistNames }
-            .forEach { album ->
-                val artistName = album.artist.lowercase()
-                if (artistName !in this) put(artistName, album.thumbUrl!!)
-            }
-    }
-    return buildMap {
-        artists.forEach { artist ->
-            val thumb = artist.thumbUrl ?: albumThumbByArtist[artist.title.lowercase()]
-            if (thumb != null) put(artist.id, thumb)
-        }
-    }
-}
 
 @Composable
 private fun MobileCollectionsSection(
@@ -452,12 +415,13 @@ private fun MobileFavoritePlaylistsSection(
     playlists: List<Playlist>,
     onPlaylist: (Playlist) -> Unit,
     onViewAll: () -> Unit,
+    totalCount: Int = playlists.size,
 ) {
     if (playlists.isEmpty()) {
         SectionLabel("FAVORITE PLAYLISTS", PhoebeUi.mutedText)
         HomeEmptyState("Favorite playlists will appear here.")
     } else {
-        SectionHeader("FAVORITE PLAYLISTS", if (playlists.size > 10) "View all" else null, onViewAll)
+        SectionHeader("FAVORITE PLAYLISTS", if (totalCount > 10) "View all" else null, onViewAll)
         LazyRow(
             Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -482,12 +446,13 @@ private fun MobileFavoriteArtistsSection(
     artistThumbs: Map<String, String>,
     onArtist: (Artist) -> Unit,
     onViewAll: () -> Unit,
+    totalCount: Int = artists.size,
 ) {
     if (artists.isEmpty()) {
         SectionLabel("FAVORITE ARTISTS", PhoebeUi.mutedText)
         HomeEmptyState("Favorite artists will appear here.")
     } else {
-        SectionHeader("FAVORITE ARTISTS", if (artists.size > 10) "View all" else null, onViewAll)
+        SectionHeader("FAVORITE ARTISTS", if (totalCount > 10) "View all" else null, onViewAll)
         LazyRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             items(artists.take(10), key = { "artist:${it.id}" }, contentType = { "mobile-favorite-artist" }) { artist ->
                 MobileArtistTile(artist, artistThumbs[artist.id], "artist:${artist.id}") {
@@ -503,12 +468,13 @@ private fun MobileFavoriteAlbumsSection(
     albums: List<Album>,
     onAlbum: (Album) -> Unit,
     onViewAll: () -> Unit,
+    totalCount: Int = albums.size,
 ) {
     if (albums.isEmpty()) {
         SectionLabel("FAVORITE ALBUMS", PhoebeUi.mutedText)
         HomeEmptyState("Favorite albums will appear here.")
     } else {
-        SectionHeader("FAVORITE ALBUMS", if (albums.size > 10) "View all" else null, onViewAll)
+        SectionHeader("FAVORITE ALBUMS", if (totalCount > 10) "View all" else null, onViewAll)
         LazyRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             items(albums.take(10), key = { "album:${it.id}" }, contentType = { "mobile-favorite-album" }) { album ->
                 HomeArtworkTile(album.title, album.artist, album.thumbUrl, modifier = Modifier.width(92.dp), maxDecodeDimension = 180, sharedKey = "album:${album.id}") {
@@ -549,12 +515,9 @@ private fun MobileRecentlyPlayedSection(
 
 @Composable
 private fun DesktopMixesPanel(
-    catalog: CatalogSnapshot,
-    state: HomeUiState,
-    personalMixPreferences: PersonalMixPreferences,
+    onPlayPersonalMix: () -> Unit,
     radioStations: List<PlexRadioStation>,
     radioStartingIds: Set<String>,
-    onPlayTracks: (List<Track>, Int) -> Unit,
     onPlayRadioStation: (PlexRadioStation) -> Unit,
     onClearDecadeMixNotice: () -> Unit,
     onShowDecadeMix: () -> Unit,
@@ -571,10 +534,8 @@ private fun DesktopMixesPanel(
                     "Recent favorites, familiar anchors, and a little discovery",
                     PhoebeIcon.Person,
                     Modifier.width(260.dp),
-                ) {
-                    val tracks = personalMix(catalog, state, personalMixPreferences)
-                    if (tracks.isNotEmpty()) onPlayTracks(tracks, 0)
-                }
+                    onClick = onPlayPersonalMix,
+                )
             }
             item("decade-mix", contentType = "mix-action") {
                 HomeActionCard(
@@ -605,12 +566,9 @@ private fun DesktopMixesPanel(
 
 @Composable
 private fun MobileMixesSection(
-    catalog: CatalogSnapshot,
-    state: HomeUiState,
-    personalMixPreferences: PersonalMixPreferences,
+    onPlayPersonalMix: () -> Unit,
     radioStations: List<PlexRadioStation>,
     radioStartingIds: Set<String>,
-    onPlayTracks: (List<Track>, Int) -> Unit,
     onPlayRadioStation: (PlexRadioStation) -> Unit,
     onClearDecadeMixNotice: () -> Unit,
     onShowDecadeMix: () -> Unit,
@@ -618,10 +576,7 @@ private fun MobileMixesSection(
     SectionLabel("CREATE A MIX", PhoebeUi.mutedText)
     LazyRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(9.dp)) {
         item("personal-mix", contentType = "mobile-mix-action") {
-            MobileActionCard("Personal", PhoebeIcon.Person, Modifier.width(126.dp)) {
-                val tracks = personalMix(catalog, state, personalMixPreferences)
-                if (tracks.isNotEmpty()) onPlayTracks(tracks, 0)
-            }
+            MobileActionCard("Personal", PhoebeIcon.Person, Modifier.width(126.dp), onClick = onPlayPersonalMix)
         }
         item("decade-mix", contentType = "mobile-mix-action") {
             MobileActionCard("Decade", PhoebeIcon.Calendar, Modifier.width(126.dp)) {
@@ -707,6 +662,7 @@ private fun DesktopFavoritePlaylistsPanel(
     playlists: List<Playlist>,
     onPlaylist: (Playlist) -> Unit,
     onViewAll: () -> Unit,
+    totalCount: Int = playlists.size,
 ) {
     HomePanel(Modifier.fillMaxWidth()) {
         if (playlists.isEmpty()) {
@@ -716,7 +672,7 @@ private fun DesktopFavoritePlaylistsPanel(
             val displayPlaylists = remember(playlists) { playlists.take(10) }
             DesktopFavoriteScrollableRow(
                 title = "FAVORITE PLAYLISTS",
-                showViewAll = playlists.size > 10,
+                showViewAll = totalCount > 10,
                 onViewAll = onViewAll,
             ) {
                 items(displayPlaylists, key = { "playlist:${it.id}" }, contentType = { "favorite-playlist" }) { playlist ->
@@ -733,6 +689,7 @@ private fun DesktopFavoriteArtistsPanel(
     artistThumbs: Map<String, String>,
     onArtist: (Artist) -> Unit,
     onViewAll: () -> Unit,
+    totalCount: Int = artists.size,
 ) {
     HomePanel(Modifier.fillMaxWidth()) {
         if (artists.isEmpty()) {
@@ -742,7 +699,7 @@ private fun DesktopFavoriteArtistsPanel(
             val displayArtists = remember(artists) { artists.take(10) }
             DesktopFavoriteScrollableRow(
                 title = "FAVORITE ARTISTS",
-                showViewAll = artists.size > 10,
+                showViewAll = totalCount > 10,
                 onViewAll = onViewAll,
                 horizontalGap = 12.dp,
             ) {
@@ -759,6 +716,7 @@ private fun DesktopFavoriteAlbumsPanel(
     albums: List<Album>,
     onAlbum: (Album) -> Unit,
     onViewAll: () -> Unit,
+    totalCount: Int = albums.size,
 ) {
     HomePanel(Modifier.fillMaxWidth()) {
         if (albums.isEmpty()) {
@@ -768,7 +726,7 @@ private fun DesktopFavoriteAlbumsPanel(
             val displayAlbums = remember(albums) { albums.take(10) }
             DesktopFavoriteScrollableRow(
                 title = "FAVORITE ALBUMS",
-                showViewAll = albums.size > 10,
+                showViewAll = totalCount > 10,
                 onViewAll = onViewAll,
             ) {
                 items(displayAlbums, key = { "album:${it.id}" }, contentType = { "favorite-album" }) { album ->
@@ -789,6 +747,12 @@ private fun DesktopFavoriteScrollableRow(
 ) {
     val rowState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val canScrollPrevious by remember(rowState) {
+        derivedStateOf { rowState.canScrollBackward }
+    }
+    val canScrollNext by remember(rowState) {
+        derivedStateOf { rowState.canScrollForward }
+    }
     val scrollDistance = {
         (rowState.layoutInfo.viewportSize.width * 0.86f).coerceAtLeast(240f)
     }
@@ -797,8 +761,8 @@ private fun DesktopFavoriteScrollableRow(
         title = title,
         action = if (showViewAll) "View all" else null,
         onAction = onViewAll,
-        canScrollPrevious = rowState.canScrollBackward,
-        canScrollNext = rowState.canScrollForward,
+        canScrollPrevious = canScrollPrevious,
+        canScrollNext = canScrollNext,
         onPrevious = {
             scope.launch { rowState.animateScrollBy(-scrollDistance()) }
         },
@@ -849,7 +813,6 @@ private fun DesktopPlayedPanels(
 @Composable
 private fun DesktopRandomPanels(
     state: HomeUiState,
-    catalog: CatalogSnapshot,
     catalogRefreshing: Boolean,
     onArtist: (Artist) -> Unit,
     onAlbum: (Album) -> Unit,
@@ -862,13 +825,13 @@ private fun DesktopRandomPanels(
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         if (maxWidth < 820.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                RandomArtistPanel(state.randomArtists.firstOrNull(), catalog, catalogRefreshing, onArtist, onRefreshArtists, onPrefetchArtist, Modifier.fillMaxWidth().height(randomPanelHeight))
-                RandomAlbumPanel(state.randomAlbums.firstOrNull(), catalog, catalogRefreshing, onAlbum, onRefreshAlbums, onPrefetchAlbum, Modifier.fillMaxWidth().height(randomPanelHeight))
+                RandomArtistPanel(state.randomArtists.firstOrNull(), state.randomArtistStats, catalogRefreshing, onArtist, onRefreshArtists, onPrefetchArtist, Modifier.fillMaxWidth().height(randomPanelHeight))
+                RandomAlbumPanel(state.randomAlbums.firstOrNull(), state.randomAlbumStats, catalogRefreshing, onAlbum, onRefreshAlbums, onPrefetchAlbum, Modifier.fillMaxWidth().height(randomPanelHeight))
             }
         } else {
             Row(Modifier.fillMaxWidth().height(randomPanelHeight), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                RandomArtistPanel(state.randomArtists.firstOrNull(), catalog, catalogRefreshing, onArtist, onRefreshArtists, onPrefetchArtist, Modifier.weight(1f).fillMaxHeight())
-                RandomAlbumPanel(state.randomAlbums.firstOrNull(), catalog, catalogRefreshing, onAlbum, onRefreshAlbums, onPrefetchAlbum, Modifier.weight(1f).fillMaxHeight())
+                RandomArtistPanel(state.randomArtists.firstOrNull(), state.randomArtistStats, catalogRefreshing, onArtist, onRefreshArtists, onPrefetchArtist, Modifier.weight(1f).fillMaxHeight())
+                RandomAlbumPanel(state.randomAlbums.firstOrNull(), state.randomAlbumStats, catalogRefreshing, onAlbum, onRefreshAlbums, onPrefetchAlbum, Modifier.weight(1f).fillMaxHeight())
             }
         }
     }
@@ -1311,7 +1274,7 @@ private fun MobileArtistTile(
 @Composable
 private fun RandomArtistPanel(
     artist: Artist?,
-    catalog: CatalogSnapshot,
+    stats: HomeFeaturedArtistStats?,
     catalogRefreshing: Boolean,
     onArtist: (Artist) -> Unit,
     onRefresh: () -> Unit,
@@ -1329,7 +1292,7 @@ private fun RandomArtistPanel(
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 FeaturedArtistCard(
                     artist = artist,
-                    catalog = catalog,
+                    stats = stats?.takeIf { it.artistId == artist.id },
                     catalogRefreshing = catalogRefreshing,
                     modifier = Modifier.fillMaxWidth(0.92f),
                     onClick = { onArtist(artist) },
@@ -1342,7 +1305,7 @@ private fun RandomArtistPanel(
 @Composable
 private fun RandomAlbumPanel(
     album: Album?,
-    catalog: CatalogSnapshot,
+    stats: HomeFeaturedAlbumStats?,
     catalogRefreshing: Boolean,
     onAlbum: (Album) -> Unit,
     onRefresh: () -> Unit,
@@ -1360,7 +1323,7 @@ private fun RandomAlbumPanel(
             Box(Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
                 FeaturedAlbumCard(
                     album = album,
-                    catalog = catalog,
+                    stats = stats?.takeIf { it.albumId == album.id },
                     catalogRefreshing = catalogRefreshing,
                     modifier = Modifier.fillMaxWidth(0.92f),
                     onClick = { onAlbum(album) },
@@ -1373,33 +1336,23 @@ private fun RandomAlbumPanel(
 @Composable
 private fun FeaturedArtistCard(
     artist: Artist,
-    catalog: CatalogSnapshot,
+    stats: HomeFeaturedArtistStats?,
     catalogRefreshing: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val syncState = LocalCatalogSyncState.current
-    val albums = remember(catalog, artist.title) { catalogAlbumsForArtist(catalog, artist.title) }
-    val artistThumbUrl = remember(artist.thumbUrl, albums) {
-        artist.thumbUrl ?: albums.firstNotNullOfOrNull { it.thumbUrl }
-    }
-    val tracks = remember(catalog, artist.title) { catalogTracksForArtist(catalog, artist.title) }
-    val albumsLoading = remember(catalog, artist, syncState) { catalogArtistAlbumCountLoading(catalog, artist, syncState) }
-    val trackStatsLoading = remember(catalog, artist, syncState, catalogRefreshing) {
-        catalogArtistTrackStatsLoading(catalog, artist, syncState, catalogRefreshing)
-    }
-    val genre = remember(catalog, artist.title, trackStatsLoading) {
-        if (trackStatsLoading) null else catalogArtistGenre(catalog, artist.title)
-    }
-    val totalDuration = remember(tracks) { tracks.sumOf { it.durationMs } }
-    val playHistory = LocalPlayHistory.current
     val nowMs = LocalNowMs.current
-    val lastPlayed = remember(tracks, playHistory.byTrack, playHistory.byArtist, artist.title) {
-        resolveArtistLastPlayed(artist.title, tracks, playHistory)
-    }
-    val lastPlayedLabel = remember(lastPlayed, nowMs) { formatLastPlayed(lastPlayed, nowMs) }
-    val albumWord = if (albums.size == 1) "album" else "albums"
-    val songWord = if (tracks.size == 1) "song" else "songs"
+    val albumsLoading = homeArtistAlbumCountLoading(stats, syncState)
+    val trackStatsLoading = homeArtistTrackStatsLoading(stats, syncState, catalogRefreshing)
+    val artistThumbUrl = stats?.artworkUrl ?: artist.thumbUrl
+    val albumCount = stats?.albumCount ?: artist.albumCount
+    val trackCount = stats?.trackCount ?: artist.songCount
+    val genre = stats?.genre.takeUnless { trackStatsLoading }
+    val totalDuration = stats?.totalDurationMs ?: 0L
+    val lastPlayedLabel = remember(stats?.lastPlayedMs, nowMs) { formatLastPlayed(stats?.lastPlayedMs, nowMs) }
+    val albumWord = if (albumCount == 1) "album" else "albums"
+    val songWord = if (trackCount == 1) "song" else "songs"
 
     Row(
         modifier
@@ -1444,13 +1397,13 @@ private fun FeaturedArtistCard(
         }
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             HomeArtistStat(
-                value = "${albums.size} $albumWord",
+                value = "$albumCount $albumWord",
                 label = "Albums",
                 icon = PhoebeIcon.Library,
                 loading = albumsLoading,
             )
             HomeArtistStat(
-                value = "${tracks.size} $songWord",
+                value = "$trackCount $songWord",
                 label = "Songs",
                 icon = PhoebeIcon.Music,
                 loading = trackStatsLoading,
@@ -1515,24 +1468,48 @@ private fun HomeStatLoadingBar(modifier: Modifier = Modifier) {
     )
 }
 
+private fun homeArtistAlbumCountLoading(
+    stats: HomeFeaturedArtistStats?,
+    sync: CatalogSyncState,
+): Boolean =
+    stats?.hasAlbums != true && sync.isActive && sync.phase <= CatalogSyncPhase.LoadingLibrary
+
+private fun homeArtistTrackStatsLoading(
+    stats: HomeFeaturedArtistStats?,
+    sync: CatalogSyncState,
+    catalogRefreshing: Boolean,
+): Boolean {
+    if (stats?.hasTracks == true) return false
+    if (stats?.hasAlbums != true) {
+        return sync.isActive &&
+            (sync.phase == CatalogSyncPhase.LoadingSongs || sync.phase == CatalogSyncPhase.LoadingLibrary)
+    }
+    if (!stats.hasPendingTrackStats) return false
+    return (sync.isActive && sync.phase == CatalogSyncPhase.LoadingSongs) || catalogRefreshing
+}
+
+private fun homeAlbumTrackStatsLoading(
+    stats: HomeFeaturedAlbumStats?,
+    sync: CatalogSyncState,
+    catalogRefreshing: Boolean,
+): Boolean =
+    stats?.tracksLoaded != true &&
+        ((sync.isActive && sync.phase == CatalogSyncPhase.LoadingSongs) || catalogRefreshing)
+
 @Composable
 private fun FeaturedAlbumCard(
     album: Album,
-    catalog: CatalogSnapshot,
+    stats: HomeFeaturedAlbumStats?,
     catalogRefreshing: Boolean,
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
     val syncState = LocalCatalogSyncState.current
-    val tracks = remember(catalog, album.id) { catalogTracksForAlbum(catalog, album.id) }
-    val trackStatsLoading = remember(catalog, album, syncState, catalogRefreshing) {
-        catalogAlbumTrackStatsLoading(catalog, album, syncState, catalogRefreshing)
-    }
-    val genre = remember(catalog, album.id, trackStatsLoading) {
-        if (trackStatsLoading) null else catalogAlbumGenre(catalog, album.id)
-    }
-    val duration = remember(tracks) { tracks.sumOf { it.durationMs } }
-    val songWord = if (tracks.size == 1) "song" else "songs"
+    val trackStatsLoading = homeAlbumTrackStatsLoading(stats, syncState, catalogRefreshing)
+    val genre = stats?.genre.takeUnless { trackStatsLoading }
+    val duration = stats?.totalDurationMs ?: 0L
+    val trackCount = stats?.trackCount ?: 0
+    val songWord = if (trackCount == 1) "song" else "songs"
 
     Row(
         modifier
@@ -1586,7 +1563,7 @@ private fun FeaturedAlbumCard(
                 HomeArtistStat(year.toString(), "Release year", PhoebeIcon.Grid)
             }
             HomeArtistStat(
-                value = "${tracks.size} $songWord",
+                value = "$trackCount $songWord",
                 label = "Tracks",
                 icon = PhoebeIcon.Music,
                 loading = trackStatsLoading,

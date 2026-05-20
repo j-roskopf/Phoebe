@@ -109,6 +109,10 @@ actual fun catalogTrackPrefetchAlbumCount(): Int = 6
 
 actual fun catalogTrackPrefetchParallelism(): Int = 2
 
+actual fun deferCachedTrackHydrationOnStartup(): Boolean = false
+
+actual fun deferPlexTrackIndexOnRefresh(): Boolean = false
+
 actual fun isDebugBuild(): Boolean = wasmDebugBuildEnabled()
 
 @OptIn(ExperimentalWasmJsInterop::class)

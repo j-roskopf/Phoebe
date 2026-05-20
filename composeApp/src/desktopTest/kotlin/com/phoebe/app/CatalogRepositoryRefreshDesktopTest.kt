@@ -348,6 +348,71 @@ class CatalogRepositoryRefreshDesktopTest {
     }
 
     @Test
+    fun deferredRestorePublishesShellAndUsesCachedParentTracksOnDemand() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        db.transaction {
+            db.catalogQueries.upsertArtist("plex:artist1", "Artist One", null, 1, 1, 0, 41L, null, null, null, null, 0)
+            db.catalogQueries.upsertAlbum("plex:a1", "Album One", "Artist One", null, null, 0, 41L, null, null, null, null, 0)
+            db.catalogQueries.upsertTrack(
+                id = "plex:t1",
+                title = "Cached Song",
+                artist = "Artist One",
+                album = "Album One",
+                durationMs = 10,
+                streamUrl = "https://plex.example/t1?X-Plex-Token=token",
+                downloadUrl = "https://plex.example/t1?X-Plex-Token=token&download=1",
+                thumbUrl = null,
+                localArtworkUri = null,
+                localUri = null,
+                year = null,
+                genre = null,
+                mood = null,
+                style = null,
+                filepath = null,
+                audioCodec = null,
+                bitrateKbps = null,
+                dateAddedMs = 41L,
+                rating = null,
+                parentAlbumId = "a1",
+            )
+            db.catalogQueries.upsertTrackParent("plex:a1", "plex:t1", 0)
+        }
+        var albumTrackRequests = 0
+        val engine = MockEngine { request ->
+            if (request.url.encodedPath == "/library/metadata/a1/children") {
+                albumTrackRequests += 1
+            }
+            respond("", HttpStatusCode.NotFound)
+        }
+        val http = testHttpClient(engine)
+        val media = MediaSourcesRepository(db, PlatformStorage())
+        val repo = CatalogRepository(
+            plexClient = PlexClient(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+            deferCachedTrackHydration = true,
+        )
+
+        repo.restoreCachedCatalog()
+
+        assertEquals(listOf("Album One"), repo.catalog.value.albums.map { it.title })
+        assertTrue(repo.catalog.value.tracksByParent.isEmpty())
+        assertTrue(repo.cachedTrackHydrationPending.value)
+
+        val tracks = repo.tracksForAlbum(testSession(), repo.catalog.value.albums.single())
+
+        assertEquals(listOf("plex:t1"), tracks.map { it.id })
+        assertEquals(0, albumTrackRequests)
+
+        assertTrue(repo.hydrateCachedTracksFromDatabase())
+        assertFalse(repo.cachedTrackHydrationPending.value)
+        assertEquals(listOf("plex:t1"), repo.catalog.value.tracksByParent["plex:a1"].orEmpty().map { it.id })
+    }
+
+    @Test
     fun refreshIndexesPagedTracksIntoAlbumParentsAndRestoresThem() = runTest {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d

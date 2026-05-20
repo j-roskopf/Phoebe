@@ -231,10 +231,8 @@ class CatalogBrowseTree(
         albums().filter { it.artist.equals(artistTitle, ignoreCase = true) }
 
     private fun tracksForParent(parentId: String): List<Track> {
-        val trackRows = database.catalogQueries.selectAllTracks().executeAsList()
-        val tracksById = trackRows.associate { it.id to it.toTrack() }
         return database.catalogQueries.selectTracksForParent(parentId).executeAsList()
-            .mapNotNull { tracksById[it.id] }
+            .map { it.toTrack() }
     }
 
     private fun com.phoebe.app.db.TrackRow.toTrack(): Track =

@@ -25,7 +25,6 @@ class PlexPlayHistorySyncer(
             .filter { it.isPlexLibraryTrack() }
             .distinctBy { it.id }
             .associateBy { it.id }
-        if (tracksById.isEmpty()) return PlexPlayHistorySyncResult.Skipped
 
         val latestImported = playHistoryRepository.maxImportedPlexPlayedAt(server.id)
         val minViewedAtMs = latestImported?.minus(IncrementalLookbackMs)?.coerceAtLeast(0L)
@@ -48,7 +47,7 @@ class PlexPlayHistorySyncer(
                 for (entry in page.entries) {
                     if (entry.type != null && entry.type != PlexTrackTypeName) continue
                     if (entry.librarySectionId != null && entry.librarySectionId != library.key) continue
-                    val track = tracksById["plex:${entry.ratingKey}"] ?: continue
+                    val track = tracksById["plex:${entry.ratingKey}"] ?: entry.toHistoryTrack()
                     if (playHistoryRepository.importPlexPlay(
                             track = track.withPlexHistoryFallbacks(entry),
                             serverId = server.id,
@@ -125,6 +124,17 @@ class PlexPlayHistorySyncer(
         copy(
             artist = artist.ifBlank { entry.artist },
             album = album.ifBlank { entry.album },
+        )
+
+    private fun PlexPlaybackHistoryEntry.toHistoryTrack(): Track =
+        Track(
+            id = "plex:$ratingKey",
+            title = title.ifBlank { "Unknown track" },
+            artist = artist.ifBlank { "Unknown Artist" },
+            album = album.ifBlank { "Unknown Album" },
+            durationMs = 0L,
+            streamUrl = "",
+            downloadUrl = "",
         )
 
     companion object {

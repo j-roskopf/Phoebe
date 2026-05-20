@@ -588,7 +588,6 @@ internal fun PhoebeMobileScreenshotScenario(
             )
             PhoebeScreenshotScenario.HomePlayedRows -> MobileHomeScreen(
                 state = deriveHomeUiState(fixture.catalog, fixture.playHistory, randomArtistSeed = 7, randomAlbumSeed = 11, nowMs = fixture.nowMs),
-                catalog = fixture.catalog,
                 radioStations = fixture.radioStations,
                 homeSections = listOf(HomeSection.Played, HomeSection.Random),
                 listState = rememberLazyListState(),

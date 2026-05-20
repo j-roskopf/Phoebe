@@ -200,10 +200,11 @@ class AppState(
                 refreshServers()
             }
             dependencies.catalogRepository.restoreCachedCatalog()
-            if (appSettings.value.scanLibraryOnLaunch) {
+            val cachedTrackHydrationDeferred = dependencies.catalogRepository.cachedTrackHydrationPending.value
+            if (appSettings.value.scanLibraryOnLaunch && mediaSources.value.localFolders.any { it.enabled }) {
                 launch {
                     delay(500)
-                    refreshCatalogSuspended()
+                    scanLocalFoldersOnLaunch()
                 }
             }
             if (session.value.isEmbyFamily() &&
@@ -212,9 +213,14 @@ class AppState(
             ) {
                 refreshCatalogSuspended(catalogMessage = "Library refreshed.")
             }
-            cacheDownloadedArtworkInBackground()
-            warmPlaylistTracksInBackground()
-            syncRemotePlayHistoryInBackground()
+            if (cachedTrackHydrationDeferred) {
+                launch {
+                    hydrateCachedTracksAfterStartup()
+                    runPostRestoreBackgroundWork()
+                }
+            } else {
+                runPostRestoreBackgroundWork()
+            }
             ensureLikedSongsPlaylistIfPossible()
             if (session.value?.token?.isNotBlank() == true && session.value?.selectedServer != null && session.value.isPlex()) {
                 launch { dependencies.sessionRepository.refreshSelectedServerConnections() }
@@ -230,6 +236,33 @@ class AppState(
         recordPlaybackHistory()
         surfacePlaybackFailures()
         dependencies.plexPlaybackReporter.start(scope)
+    }
+
+    private suspend fun hydrateCachedTracksAfterStartup() {
+        delay(500)
+        try {
+            dependencies.catalogRepository.hydrateCachedTracksFromDatabase()
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            PhoebeLog.d("AppState") { "cached track hydration failed: ${error.message}" }
+        }
+    }
+
+    private fun runPostRestoreBackgroundWork() {
+        cacheDownloadedArtworkInBackground()
+        warmPlaylistTracksInBackground()
+        syncRemotePlayHistoryInBackground()
+    }
+
+    private suspend fun scanLocalFoldersOnLaunch() {
+        try {
+            dependencies.catalogRepository.refreshLocalFoldersOnly(session.value)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            PhoebeLog.d("AppState") { "startup local folder scan failed: ${error.message}" }
+        }
     }
 
     private fun bindAppSettingsToPlayback() {
@@ -618,6 +651,9 @@ class AppState(
      */
     suspend fun refreshCatalogSuspended(catalogMessage: String? = "Library refreshed.") {
         cancelRemotePlayHistorySync()
+        if (session.value.isPlex()) {
+            startRemotePlayHistorySync(showMessage = false, warmTracks = false)
+        }
         val currentJob = currentCoroutineContext()[Job]
         catalogRefreshJob?.takeIf { it != currentJob }?.cancel()
         catalogRefreshJob = currentJob
@@ -626,8 +662,10 @@ class AppState(
                 dependencies.catalogRepository.refreshAggregated(session.value)
                 ensureLikedSongsPlaylistIfPossible()
             }
+            if (playHistorySyncJob?.isActive != true) {
+                syncRemotePlayHistoryInBackground()
+            }
             warmPlaylistTracksInBackground()
-            syncRemotePlayHistoryInBackground()
             cacheDownloadedArtworkInBackground()
             if (catalogMessage != null) mutableMessage.value = catalogMessage
         } catch (error: CancellationException) {
@@ -703,7 +741,7 @@ class AppState(
 
     private fun syncRemotePlayHistoryInBackground() = startRemotePlayHistorySync(showMessage = false)
 
-    private fun startRemotePlayHistorySync(showMessage: Boolean) {
+    private fun startRemotePlayHistorySync(showMessage: Boolean, warmTracks: Boolean = true) {
         val currentSession = session.value
         if (!currentSession.isPlex() && !currentSession.isEmbyFamily()) {
             if (showMessage) mutableMessage.value = "${currentSession.providerLabel()} play history sync is handled from playback progress."
@@ -711,7 +749,7 @@ class AppState(
         }
         playHistorySyncJob?.cancel()
         playHistorySyncJob = scope.launch {
-            syncRemotePlayHistory(showMessage = showMessage)
+            syncRemotePlayHistory(showMessage = showMessage, warmTracks = warmTracks)
         }
     }
 
@@ -725,14 +763,16 @@ class AppState(
         catalogRefreshJob = null
     }
 
-    private suspend fun syncRemotePlayHistory(showMessage: Boolean): Any? {
+    private suspend fun syncRemotePlayHistory(showMessage: Boolean, warmTracks: Boolean = true): Any? {
         return runCatching {
             val currentSession = session.value
             if (currentSession.isPlex()) {
-                runCatching {
-                    dependencies.catalogRepository.warmPlexHistoryTracks(currentSession)
-                }.onFailure { error ->
-                    PhoebeLog.d("AppState") { "Plex history track warm failed: ${error.message}" }
+                if (warmTracks) {
+                    runCatching {
+                        dependencies.catalogRepository.warmPlexHistoryTracks(currentSession)
+                    }.onFailure { error ->
+                        PhoebeLog.d("AppState") { "Plex history track warm failed: ${error.message}" }
+                    }
                 }
                 dependencies.plexPlayHistorySyncer.sync(currentSession, catalog.value)
             } else {
@@ -844,7 +884,7 @@ class AppState(
         if (!session.value.canUsePlexBackgroundFetches()) return
         scope.launch {
             runCatching {
-                dependencies.catalogRepository.ensureTracksForArtistAlbums(session.value, artist.title)
+                dependencies.catalogRepository.ensureTracksForArtistAlbums(session.value, artist.title, prioritize = false)
             }
         }
     }
@@ -853,7 +893,7 @@ class AppState(
         if (!session.value.canUsePlexBackgroundFetches()) return
         scope.launch {
             runCatching {
-                dependencies.catalogRepository.tracksForAlbum(session.value, album)
+                dependencies.catalogRepository.tracksForAlbum(session.value, album, prioritize = false)
             }
         }
     }

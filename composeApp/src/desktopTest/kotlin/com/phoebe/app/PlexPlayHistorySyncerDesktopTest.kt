@@ -99,15 +99,16 @@ class PlexPlayHistorySyncerDesktopTest {
         val first = assertIs<PlexPlayHistorySyncResult.Synced>(syncer.sync(session, catalog))
         val second = assertIs<PlexPlayHistorySyncResult.Synced>(syncer.sync(session, catalog))
 
-        assertEquals(1, first.imported)
+        assertEquals(2, first.imported)
         assertEquals(3, first.seen)
         assertEquals(0, second.imported)
         assertEquals(listOf<String?>("0", "2", "0"), starts)
         assertEquals(null, viewedAtFilters[0])
         assertEquals(null, viewedAtFilters[1])
-        assertEquals("viewedAt>=1699999400", viewedAtFilters[2])
-        val counts = repo.playCountsByTrack.first { it["plex:t1"] == 1L }
+        assertEquals("viewedAt>=1699999500", viewedAtFilters[2])
+        val counts = repo.playCountsByTrack.first { it["plex:t1"] == 1L && it["plex:missing"] == 1L }
         assertEquals(1L, counts["plex:t1"])
+        assertEquals(1L, counts["plex:missing"])
     }
 
     @Test
@@ -141,7 +142,7 @@ class PlexPlayHistorySyncerDesktopTest {
 
         assertEquals(PlexPlayHistorySyncer.MaxPages, requestCount)
         assertEquals(PlexPlayHistorySyncer.MaxPages, result.seen)
-        assertEquals(0, result.imported)
+        assertEquals(PlexPlayHistorySyncer.MaxPages, result.imported)
     }
 
     @Test

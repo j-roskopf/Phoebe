@@ -242,7 +242,8 @@ private class AndroidAudioPlayer : SimpleAudioPlayer() {
         crossfadeJob = scope.launch {
             var incoming: ExoPlayer? = null
             var incomingOwnedByPlayback = false
-            AndroidPlaybackBridge.suppressServiceEndedCallback = true
+            var suppressingServiceEndedCallback = false
+            var fallbackToNormalPlayback = false
             try {
                 val outgoingOwnedByPlayback = ownedCrossfadePlayer()
                 val outgoing: Player = outgoingOwnedByPlayback ?: controller ?: return@launch
@@ -265,6 +266,8 @@ private class AndroidAudioPlayer : SimpleAudioPlayer() {
                 val fadeDurationMs = remainingMs
                     .coerceAtMost(durationMs)
                     .coerceAtLeast(CrossfadeMinimumFadeMs)
+                AndroidPlaybackBridge.suppressServiceEndedCallback = true
+                suppressingServiceEndedCallback = true
                 fadeVolumes(outgoing, incoming, fadeDurationMs, baseVolume, generation)
                 if (!isPlayRequestCurrent(generation)) return@launch
                 if (outgoingOwnedByPlayback == null && controller !== outgoing) return@launch
@@ -293,13 +296,19 @@ private class AndroidAudioPlayer : SimpleAudioPlayer() {
                 throw error
             } catch (error: Throwable) {
                 PhoebeLog.d("AndroidAudioPlayer") { "android crossfade failed: ${error.message}" }
+                fallbackToNormalPlayback = suppressingServiceEndedCallback
             } finally {
-                AndroidPlaybackBridge.suppressServiceEndedCallback = false
+                if (suppressingServiceEndedCallback) {
+                    AndroidPlaybackBridge.suppressServiceEndedCallback = false
+                }
                 if (!incomingOwnedByPlayback) {
                     incoming?.release()
                     if (crossfadePlayer === incoming) crossfadePlayer = null
                 }
                 if (crossfadeGeneration == generation) crossfadeGeneration = -1
+                if (fallbackToNormalPlayback && isPlayRequestCurrent(generation)) {
+                    scope.launch { play(queue, targetIndex) }
+                }
             }
         }
         return true
@@ -728,7 +737,7 @@ private class AndroidAudioPlayer : SimpleAudioPlayer() {
         const val BufferProbeReportIntervalMs = 1_000L
         const val FallbackBitrateKbps = 256
         const val CrossfadeSteps = 24
-        const val CrossfadePrepareTimeoutMs = 5_000L
+        const val CrossfadePrepareTimeoutMs = 1_500L
         const val CrossfadeMinimumFadeMs = 500L
     }
 }

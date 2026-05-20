@@ -1,5 +1,9 @@
 package com.phoebe.app.ui
 
+import androidx.compose.runtime.Immutable
+import com.phoebe.app.data.catalogAlbumsForArtist
+import com.phoebe.app.data.catalogTracksForAlbum
+import com.phoebe.app.data.catalogTracksForArtist
 import com.phoebe.app.domain.Album
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.CatalogSnapshot
@@ -12,6 +16,7 @@ internal const val RecentlyAddedWindowMs = 7L * 24L * 60L * 60L * 1000L
 internal const val HeavyRotationWindowMs = 14L * 24L * 60L * 60L * 1000L
 private const val HeavyRotationMinimumRecentPlays = 2L
 
+@Immutable
 internal data class HomeUiState(
     val recentlyAddedTracks: List<Track> = emptyList(),
     val recentlyAddedArtists: List<Artist> = emptyList(),
@@ -22,15 +27,59 @@ internal data class HomeUiState(
     val favoriteArtists: List<Artist> = emptyList(),
     val favoriteAlbums: List<Album> = emptyList(),
     val favoritePlaylists: List<Playlist> = emptyList(),
+    val favoriteArtistCount: Int = 0,
+    val favoriteAlbumCount: Int = 0,
+    val favoritePlaylistCount: Int = 0,
     val randomArtists: List<Artist> = emptyList(),
     val randomAlbums: List<Album> = emptyList(),
+    val artistThumbs: Map<String, String> = emptyMap(),
+    val randomArtistStats: HomeFeaturedArtistStats? = null,
+    val randomAlbumStats: HomeFeaturedAlbumStats? = null,
 )
 
+@Immutable
 internal data class HomePlayedTrack(
     val track: Track,
     val lastPlayedMs: Long? = null,
     val playCount: Long = 0L,
 )
+
+@Immutable
+internal data class HomeFeaturedArtistStats(
+    val artistId: String,
+    val artworkUrl: String?,
+    val albumCount: Int,
+    val trackCount: Int,
+    val totalDurationMs: Long,
+    val genre: String?,
+    val lastPlayedMs: Long?,
+    val hasAlbums: Boolean,
+    val hasTracks: Boolean,
+    val hasPendingTrackStats: Boolean,
+)
+
+@Immutable
+internal data class HomeFeaturedAlbumStats(
+    val albumId: String,
+    val trackCount: Int,
+    val totalDurationMs: Long,
+    val genre: String?,
+    val tracksLoaded: Boolean,
+)
+
+private data class HomeTrackIndex(
+    val tracksById: Map<String, Track>,
+    val recentlyAddedTracks: List<Track>,
+)
+
+private data class MostPlayedScore(
+    val playCount: Long,
+    val lastPlayedMs: Long,
+) : Comparable<MostPlayedScore> {
+    override fun compareTo(other: MostPlayedScore): Int =
+        playCount.compareTo(other.playCount).takeIf { it != 0 }
+            ?: lastPlayedMs.compareTo(other.lastPlayedMs)
+}
 
 internal fun deriveHomeUiState(
     catalog: CatalogSnapshot,
@@ -43,59 +92,225 @@ internal fun deriveHomeUiState(
     val cutoffMs = nowMs - RecentlyAddedWindowMs
     val albumAddedByTitle = albumAddedByTitle(catalog)
     val artistAddedByTitle = artistAddedByTitle(catalog)
-    val tracks = catalog.tracksByParent.values
-        .asSequence()
-        .flatten()
-        .distinctBy { it.id }
-        .toList()
-    val tracksById = tracks.associateBy { it.id }
-    val recentTracks = tracks
-        .filter { effectiveTrackDateAdded(it, albumAddedByTitle) >= cutoffMs }
-        .sortedByDescending { effectiveTrackDateAdded(it, albumAddedByTitle) }
-        .take(limit)
-    val recentArtists = catalog.artists
-        .filter { artist -> recentlyAddedAt(artist, artistAddedByTitle) >= cutoffMs }
-        .sortedByDescending { artist ->
-            recentlyAddedAt(artist, artistAddedByTitle)
-        }
-        .take(limit)
-    val recentAlbums = catalog.albums
-        .filter { (it.dateAddedMs ?: Long.MIN_VALUE) >= cutoffMs }
-        .sortedByDescending { it.dateAddedMs ?: 0L }
-        .take(limit)
-    val recentlyPlayed = playHistory.byTrack.entries
-        .sortedByDescending { it.value }
+    val trackIndex = homeTrackIndex(catalog, albumAddedByTitle, cutoffMs, limit)
+    val tracksById = trackIndex.tracksById
+    val recentArtists = topBy(
+        catalog.artists.asSequence().filter { artist -> recentlyAddedAt(artist, artistAddedByTitle) >= cutoffMs },
+        limit = limit,
+        descending = true,
+    ) { artist ->
+        recentlyAddedAt(artist, artistAddedByTitle)
+    }
+    val recentAlbums = topBy(
+        catalog.albums.asSequence().filter { (it.dateAddedMs ?: Long.MIN_VALUE) >= cutoffMs },
+        limit = limit,
+        descending = true,
+    ) { album ->
+        album.dateAddedMs ?: 0L
+    }
+    val recentlyPlayed = topBy(
+        playHistory.byTrack.entries.asSequence(),
+        limit = limit,
+        descending = true,
+    ) { it.value }
         .mapNotNull { (trackId, playedAt) ->
             tracksById[trackId]?.let { HomePlayedTrack(it, lastPlayedMs = playedAt, playCount = playHistory.playCountByTrack[trackId] ?: 0L) }
         }
-        .take(limit)
-    val mostPlayed = playHistory.playCountByTrack.entries
-        .filter { it.value > 0L }
-        .sortedWith(compareByDescending<Map.Entry<String, Long>> { it.value }.thenByDescending { playHistory.byTrack[it.key] ?: 0L })
+    val mostPlayed = topBy(
+        playHistory.playCountByTrack.entries.asSequence().filter { it.value > 0L },
+        limit = limit,
+        descending = true,
+    ) { entry ->
+        MostPlayedScore(
+            playCount = entry.value,
+            lastPlayedMs = playHistory.byTrack[entry.key] ?: 0L,
+        )
+    }
         .mapNotNull { (trackId, count) ->
             tracksById[trackId]?.let { HomePlayedTrack(it, lastPlayedMs = playHistory.byTrack[trackId], playCount = count) }
         }
-        .take(limit)
     val heavyRotation = heavyRotationTracks(
         playHistory = playHistory,
         tracksById = tracksById,
         nowMs = nowMs,
         limit = limit,
     )
+    val favoriteArtists = topBy(catalog.artists.asSequence().filter { it.favorite }, limit = limit) { it.title.lowercase() }
+    val favoriteAlbums = topBy(catalog.albums.asSequence().filter { it.favorite }, limit = limit) { it.title.lowercase() }
+    val favoritePlaylists = topBy(catalog.playlists.asSequence().filter { it.favorite }, limit = limit) { it.title.lowercase() }
+    val randomArtists = deterministicSample(catalog.artists, randomArtistSeed, limit)
+    val randomAlbums = deterministicSample(catalog.albums, randomAlbumSeed, limit)
+    val randomArtistStats = randomArtists.firstOrNull()?.let { artist ->
+        homeFeaturedArtistStats(artist, catalog, playHistory)
+    }
+    val randomAlbumStats = randomAlbums.firstOrNull()?.let { album ->
+        homeFeaturedAlbumStats(album, catalog)
+    }
 
     return HomeUiState(
-        recentlyAddedTracks = recentTracks,
+        recentlyAddedTracks = trackIndex.recentlyAddedTracks,
         recentlyAddedArtists = recentArtists,
         recentlyAddedAlbums = recentAlbums,
         heavyRotationTracks = heavyRotation,
         recentlyPlayedTracks = recentlyPlayed,
         mostPlayedTracks = mostPlayed,
-        favoriteArtists = catalog.artists.filter { it.favorite }.sortedBy { it.title.lowercase() }.take(limit),
-        favoriteAlbums = catalog.albums.filter { it.favorite }.sortedBy { it.title.lowercase() }.take(limit),
-        favoritePlaylists = catalog.playlists.filter { it.favorite }.sortedBy { it.title.lowercase() }.take(limit),
-        randomArtists = catalog.artists.shuffled(Random(randomArtistSeed)).take(limit),
-        randomAlbums = catalog.albums.shuffled(Random(randomAlbumSeed)).take(limit),
+        favoriteArtists = favoriteArtists,
+        favoriteAlbums = favoriteAlbums,
+        favoritePlaylists = favoritePlaylists,
+        favoriteArtistCount = catalog.artists.count { it.favorite },
+        favoriteAlbumCount = catalog.albums.count { it.favorite },
+        favoritePlaylistCount = catalog.playlists.count { it.favorite },
+        randomArtists = randomArtists,
+        randomAlbums = randomAlbums,
+        artistThumbs = artistThumbsForHome(
+            artists = (recentArtists + favoriteArtists + randomArtists).distinctBy { it.id },
+            albums = catalog.albums,
+        ),
+        randomArtistStats = randomArtistStats,
+        randomAlbumStats = randomAlbumStats,
     )
+}
+
+private fun homeFeaturedArtistStats(
+    artist: Artist,
+    catalog: CatalogSnapshot,
+    playHistory: PlayHistorySnapshot,
+): HomeFeaturedArtistStats {
+    val albums = catalogAlbumsForArtist(catalog, artist.title)
+    val tracks = catalogTracksForArtist(catalog, artist.title)
+    return HomeFeaturedArtistStats(
+        artistId = artist.id,
+        artworkUrl = artist.thumbUrl ?: albums.firstNotNullOfOrNull { it.thumbUrl },
+        albumCount = albums.size,
+        trackCount = tracks.size,
+        totalDurationMs = tracks.sumOf { it.durationMs },
+        genre = mostFrequentGenre(tracks),
+        lastPlayedMs = resolveArtistLastPlayed(artist.title, tracks, playHistory),
+        hasAlbums = albums.isNotEmpty(),
+        hasTracks = tracks.isNotEmpty(),
+        hasPendingTrackStats = albums.any { !catalog.tracksByParent.containsKey(it.id) },
+    )
+}
+
+private fun homeFeaturedAlbumStats(
+    album: Album,
+    catalog: CatalogSnapshot,
+): HomeFeaturedAlbumStats {
+    val tracks = catalogTracksForAlbum(catalog, album.id)
+    return HomeFeaturedAlbumStats(
+        albumId = album.id,
+        trackCount = tracks.size,
+        totalDurationMs = tracks.sumOf { it.durationMs },
+        genre = mostFrequentGenre(tracks),
+        tracksLoaded = catalog.tracksByParent.containsKey(album.id),
+    )
+}
+
+private fun mostFrequentGenre(tracks: List<Track>): String? {
+    val tally = LinkedHashMap<String, Int>()
+    tracks.asSequence()
+        .mapNotNull { it.genre }
+        .filter { it.isNotBlank() }
+        .forEach { genre ->
+            tally[genre] = (tally[genre] ?: 0) + 1
+        }
+    return tally.maxByOrNull { it.value }?.key
+}
+
+private fun homeTrackIndex(
+    catalog: CatalogSnapshot,
+    albumAddedByTitle: Map<String, Long>,
+    cutoffMs: Long,
+    limit: Int,
+): HomeTrackIndex {
+    val tracksById = linkedMapOf<String, Track>()
+    val recentlyAdded = mutableListOf<Pair<Track, Long>>()
+    catalog.tracksByParent.values.forEach { parentTracks ->
+        parentTracks.forEach { track ->
+            if (track.id !in tracksById) {
+                tracksById[track.id] = track
+                val addedAt = effectiveTrackDateAdded(track, albumAddedByTitle)
+                if (addedAt >= cutoffMs) {
+                    insertBounded(recentlyAdded, track, addedAt, limit, descending = true)
+                }
+            }
+        }
+    }
+    return HomeTrackIndex(
+        tracksById = tracksById,
+        recentlyAddedTracks = recentlyAdded.map { it.first },
+    )
+}
+
+private inline fun <T, S : Comparable<S>> topBy(
+    items: Sequence<T>,
+    limit: Int,
+    descending: Boolean = false,
+    crossinline selector: (T) -> S,
+): List<T> {
+    if (limit <= 0) return emptyList()
+    val top = mutableListOf<Pair<T, S>>()
+    items.forEach { item ->
+        insertBounded(top, item, selector(item), limit, descending)
+    }
+    return top.map { it.first }
+}
+
+private fun <T, S : Comparable<S>> insertBounded(
+    top: MutableList<Pair<T, S>>,
+    item: T,
+    score: S,
+    limit: Int,
+    descending: Boolean,
+) {
+    if (limit <= 0) return
+    if (top.size == limit) {
+        val boundary = top.last().second
+        val belongs = if (descending) score > boundary else score < boundary
+        if (!belongs) return
+    }
+    val insertAt = top.indexOfFirst { (_, existing) ->
+        if (descending) score > existing else score < existing
+    }.takeIf { it >= 0 } ?: top.size
+    top.add(insertAt, item to score)
+    if (top.size > limit) top.removeAt(top.lastIndex)
+}
+
+private fun <T> deterministicSample(items: List<T>, seed: Int, limit: Int): List<T> {
+    if (limit <= 0 || items.isEmpty()) return emptyList()
+    if (items.size <= limit) return items
+    val random = Random(seed)
+    val sample = ArrayList<T>(limit)
+    items.forEachIndexed { index, item ->
+        if (index < limit) {
+            sample += item
+        } else {
+            val replacementIndex = random.nextInt(index + 1)
+            if (replacementIndex < limit) {
+                sample[replacementIndex] = item
+            }
+        }
+    }
+    return sample
+}
+
+private fun artistThumbsForHome(artists: List<Artist>, albums: List<Album>): Map<String, String> {
+    if (artists.isEmpty()) return emptyMap()
+    val artistNames = artists.map { it.title.lowercase() }.toSet()
+    val albumThumbByArtist = buildMap {
+        albums.asSequence()
+            .filter { album -> album.thumbUrl != null && album.artist.lowercase() in artistNames }
+            .forEach { album ->
+                val artistName = album.artist.lowercase()
+                if (artistName !in this) put(artistName, album.thumbUrl!!)
+            }
+    }
+    return buildMap {
+        artists.forEach { artist ->
+            val thumb = artist.thumbUrl ?: albumThumbByArtist[artist.title.lowercase()]
+            if (thumb != null) put(artist.id, thumb)
+        }
+    }
 }
 
 private fun heavyRotationTracks(

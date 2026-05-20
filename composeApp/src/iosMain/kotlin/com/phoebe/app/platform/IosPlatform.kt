@@ -227,6 +227,10 @@ actual fun catalogTrackPrefetchAlbumCount(): Int = 6
 
 actual fun catalogTrackPrefetchParallelism(): Int = 2
 
+actual fun deferCachedTrackHydrationOnStartup(): Boolean = false
+
+actual fun deferPlexTrackIndexOnRefresh(): Boolean = false
+
 internal actual fun platformLog(tag: String, message: String) {
     println("[$tag] $message")
 }

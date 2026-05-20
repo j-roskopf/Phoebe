@@ -428,6 +428,7 @@ internal fun MobileBrowseShell(
     radioStations: List<PlexRadioStation> = emptyList(),
     radioStartingIds: Set<String> = emptySet(),
     onPlayRadioStation: (PlexRadioStation) -> Unit = {},
+    onPlayPersonalMix: () -> Unit = {},
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
@@ -566,7 +567,6 @@ internal fun MobileBrowseShell(
                     val homeListState = RetainedLazyListStates.remember("mobile-home")
                     MobileHomeScreen(
                     state = homeUiState,
-                    catalog = catalog,
                     catalogRefreshing = catalogRefreshing,
                     listState = homeListState,
                     modifier = Modifier.fillMaxSize(),
@@ -592,11 +592,11 @@ internal fun MobileBrowseShell(
                     radioStations = radioStations,
                     radioStartingIds = radioStartingIds,
                     onPlayRadioStation = onPlayRadioStation,
+                    onPlayPersonalMix = onPlayPersonalMix,
                     onPlayTracks = onPlayTracks,
                     onAddToUpNext = onAddToUpNext,
                     onDownload = onDownload,
                     homeSections = libraryUi.homeSections,
-                    personalMixPreferences = libraryUi.personalMix,
                     supportedCollectionEntries = supportedCollectionEntries,
                 )
                 }

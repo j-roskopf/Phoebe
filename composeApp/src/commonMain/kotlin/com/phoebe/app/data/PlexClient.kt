@@ -36,8 +36,10 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.withTimeoutOrNull
 
 class PlexClient(
@@ -179,7 +181,46 @@ class PlexClient(
 
     suspend fun albums(server: PlexServer, library: MusicLibrary, token: String): List<Album> {
         val response = plexGet<PlexMediaContainerResponse>(server, token, "/library/sections/${library.key}/albums?includeCollections=1")
-        val fromDirectories = response.mediaContainer.directories.mapNotNull {
+        return response.toAlbums(server, token)
+    }
+
+    suspend fun albumsPage(
+        server: PlexServer,
+        library: MusicLibrary,
+        token: String,
+        start: Int,
+        size: Int,
+    ): PlexAlbumPage {
+        val response: PlexMediaContainerResponse = withFastReachableBase(server) { base ->
+            val response = httpClient.get("$base/library/sections/${library.key}/albums") {
+                plexServerAuth(token)
+                header(HttpHeaders.Accept, "application/json")
+                header("X-Plex-Container-Start", start.toString())
+                header("X-Plex-Container-Size", size.toString())
+                parameter("X-Plex-Container-Start", start)
+                parameter("X-Plex-Container-Size", size)
+                parameter("includeCollections", 1)
+            }
+            if (!response.status.isSuccess()) {
+                val body = response.bodyAsText()
+                error("Plex album page failed (${response.status.value}) via $base: ${body.take(200)}")
+            }
+            response.body()
+        }
+        val container = response.mediaContainer
+        val albums = response.toAlbums(server, token)
+        val offset = container.offset ?: start
+        val totalSize = container.totalSize ?: responseHeaderTotalSizeFallback(offset, container.size, albums.size, size)
+        return PlexAlbumPage(
+            albums = albums,
+            offset = offset,
+            size = container.size.takeIf { it > 0 } ?: albums.size,
+            totalSize = totalSize,
+        )
+    }
+
+    private fun PlexMediaContainerResponse.toAlbums(server: PlexServer, token: String): List<Album> {
+        val fromDirectories = mediaContainer.directories.mapNotNull {
             val id = it.ratingKey ?: it.key.ratingKeyFromMetadataPath()
             id?.let { albumId ->
                 Album(
@@ -197,7 +238,7 @@ class PlexClient(
                 )
             }
         }
-        val fromMetadata = response.mediaContainer.metadata.map {
+        val fromMetadata = mediaContainer.metadata.map {
             Album(
                 id = it.ratingKey,
                 title = it.title,
@@ -611,6 +652,7 @@ class PlexClient(
         token: String,
         start: Int,
         size: Int,
+        sort: String = "lastViewedAt:desc",
     ): List<PlexTrackPlaybackStat> {
         val response: PlexMediaContainerResponse = withReachableBase(server) { base ->
             val response = httpClient.get("$base/library/sections/${library.key}/all") {
@@ -621,7 +663,7 @@ class PlexClient(
                 parameter("X-Plex-Container-Start", start)
                 parameter("X-Plex-Container-Size", size)
                 parameter("type", PlexTrackType)
-                parameter("sort", "lastViewedAt:desc")
+                parameter("sort", sort)
             }
             if (!response.status.isSuccess()) {
                 val body = response.bodyAsText()
@@ -1368,7 +1410,7 @@ class PlexClient(
     }
 
     private suspend inline fun <reified T> plexGet(server: PlexServer, token: String, path: String): T =
-        withReachableBase(server) { base ->
+        withFastReachableBase(server) { base ->
             val response = httpClient.get("$base$path") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1379,6 +1421,47 @@ class PlexClient(
             }
             response.body()
         }
+
+    private suspend fun <T> withFastReachableBase(
+        server: PlexServer,
+        block: suspend (base: String) -> T,
+    ): T {
+        val cached = apiBaseCache[server.id]
+        if (!cached.isNullOrBlank()) {
+            runCatching { block(cached) }
+                .onSuccess { return it }
+                .onFailure {
+                    PhoebeLog.d("PlexClient") { "cached Plex base failed for '${server.name}' via $cached: ${it.message}" }
+                }
+        }
+
+        val candidates = server.reachableBaseUris(cached)
+            .filter { it != cached }
+            .ifEmpty { server.reachableBaseUris(cached) }
+        if (candidates.isEmpty()) {
+            throw IllegalStateException("Could not reach Plex server '${server.name}'")
+        }
+
+        return supervisorScope {
+            val results = Channel<Pair<String, Result<T>>>(capacity = candidates.size)
+            val jobs = candidates.map { base ->
+                launch {
+                    results.trySend(base to runCatching { block(base) })
+                }
+            }
+            var lastError: Throwable? = null
+            repeat(candidates.size) {
+                val (base, result) = results.receive()
+                if (result.isSuccess) {
+                    jobs.forEach { it.cancel() }
+                    apiBaseCache[server.id] = base
+                    return@supervisorScope result.getOrThrow()
+                }
+                lastError = result.exceptionOrNull()
+            }
+            throw lastError ?: IllegalStateException("Could not reach Plex server '${server.name}'")
+        }
+    }
 
     private suspend fun metadataDetails(server: PlexServer, ratingKey: String, token: String): List<PlexMetadataDto> {
         val response = plexGet<PlexMediaContainerResponse>(server, token, "/library/metadata/$ratingKey")
@@ -1865,6 +1948,21 @@ data class PlexTrackPage(
     val hasMore: Boolean
         get() = when {
             tracks.isEmpty() -> false
+            totalSize != null -> nextOffset < totalSize
+            else -> size > 0
+        }
+}
+
+data class PlexAlbumPage(
+    val albums: List<Album>,
+    val offset: Int,
+    val size: Int,
+    val totalSize: Int?,
+) {
+    val nextOffset: Int get() = offset + size
+    val hasMore: Boolean
+        get() = when {
+            albums.isEmpty() -> false
             totalSize != null -> nextOffset < totalSize
             else -> size > 0
         }

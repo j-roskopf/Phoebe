@@ -53,6 +53,8 @@ import com.phoebe.app.domain.supportsRemoteRatings
 import com.phoebe.app.platform.PlatformStorage
 import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.catalogTrackPrefetchParallelism
+import com.phoebe.app.platform.deferCachedTrackHydrationOnStartup
+import com.phoebe.app.platform.deferPlexTrackIndexOnRefresh
 import com.phoebe.app.sources.CatalogMerge
 import com.phoebe.app.sources.LocalFolderMusicSourcePlugin
 import com.phoebe.app.sources.PlexCatalogBuilder
@@ -62,11 +64,14 @@ import io.ktor.client.call.body
 import io.ktor.client.request.get
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -121,6 +126,8 @@ class CatalogRepository(
     private val storage: PlatformStorage,
     private val httpClient: HttpClient,
     private val mediaSourcesRepository: MediaSourcesRepository,
+    private val deferCachedTrackHydration: Boolean = deferCachedTrackHydrationOnStartup(),
+    private val deferPlexTrackIndex: Boolean = deferPlexTrackIndexOnRefresh(),
 ) {
     private val json = PlexClient.PlexJson
     private val mutableCatalog = MutableStateFlow(CatalogSnapshot())
@@ -128,7 +135,11 @@ class CatalogRepository(
     private val catalogMergeMutex = Mutex()
     private val downloadMutex = Mutex()
     private val persistenceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var plexTrackIndexJob: Job? = null
+    private var plexTrackIndexTarget: PlexTrackIndexTarget? = null
     val catalog: StateFlow<CatalogSnapshot> = mutableCatalog
+    private val mutableCachedTrackHydrationPending = MutableStateFlow(false)
+    val cachedTrackHydrationPending: StateFlow<Boolean> = mutableCachedTrackHydrationPending
 
     private val mutableCatalogRefreshing = MutableStateFlow(false)
     val catalogRefreshing: StateFlow<Boolean> = mutableCatalogRefreshing
@@ -192,15 +203,18 @@ class CatalogRepository(
         PhoebeLog.d("CatalogRepository") { "restoreCachedCatalog start" }
         val cachedShell = withContext(Dispatchers.Default) { readCatalogShellFromDatabase() }
         if (cachedShell.isNotEmpty()) {
-            mutableCatalog.value = cachedShell
-            val cachedTracks = withContext(Dispatchers.Default) { readTracksFromDatabase() }
-            if (cachedTracks.isNotEmpty()) {
-                val hydrated = mutableCatalog.value.copy(
-                    tracksByParent = cachedTracks.tracksByParent,
-                    downloads = cachedTracks.downloads,
-                )
-                mutableCatalog.value = removeMissingLocalArtworkReferences(hydrated)
+            val downloads = withContext(Dispatchers.Default) { readDownloadsFromDatabase() }
+            val shell = removeMissingLocalArtworkReferences(cachedShell.copy(downloads = downloads))
+            mutableCatalog.value = shell
+            if (deferCachedTrackHydration) {
+                mutableCachedTrackHydrationPending.value = true
+                PhoebeLog.d("CatalogRepository") {
+                    "restoreCachedCatalog from DB shell → ${shell.albums.size} albums, " +
+                        "${shell.playlists.size} playlists; cached track hydration deferred"
+                }
+                return
             }
+            hydrateCachedTracksFromDatabase()
             PhoebeLog.d("CatalogRepository") {
                 "restoreCachedCatalog from DB → ${mutableCatalog.value.albums.size} albums, " +
                     "${mutableCatalog.value.tracksByParent.values.sumOf { it.size }} tracks"
@@ -226,6 +240,35 @@ class CatalogRepository(
         }
     }
 
+    suspend fun hydrateCachedTracksFromDatabase(): Boolean {
+        val shouldHydrate = mutableCachedTrackHydrationPending.value || mutableCatalog.value.tracksByParent.isEmpty()
+        if (!shouldHydrate) return false
+        mutableCachedTrackHydrationPending.value = true
+        return try {
+            val cachedTracks = withContext(Dispatchers.Default) { readTracksFromDatabase() }
+            if (cachedTracks.isNotEmpty()) {
+                catalogMergeMutex.withLock {
+                    val current = mutableCatalog.value
+                    val cachedTracksByParent = cachedTracks.tracksByParent
+                        .filterKeys { it in current.trackParentIds() }
+                    val hydrated = current.copy(
+                        tracksByParent = mergeTrackParents(current.tracksByParent, cachedTracksByParent),
+                        downloads = if (current.downloads.isNotEmpty()) current.downloads else cachedTracks.downloads,
+                    )
+                    mutableCatalog.value = removeMissingLocalArtworkReferences(hydrated)
+                }
+                PhoebeLog.d("CatalogRepository") {
+                    "hydrated cached tracks → ${mutableCatalog.value.tracksByParent.values.sumOf { it.size }} tracks"
+                }
+                true
+            } else {
+                false
+            }
+        } finally {
+            mutableCachedTrackHydrationPending.value = false
+        }
+    }
+
     suspend fun refreshAggregated(session: PlexSession?) {
         if (session.isEmbyFamily()) {
             refreshJellyfinAggregated(session)
@@ -242,6 +285,8 @@ class CatalogRepository(
         var stalePlaylists: List<Playlist> = emptyList()
         var persistSnapshot = true
         var foregroundRefreshing = false
+        var deferTrackIndexForRefresh = false
+        var localTracksToPersist: Map<String, List<Track>> = emptyMap()
         val snapshot = refreshMutex.withLock {
             pushCatalogRefreshing()
             foregroundRefreshing = true
@@ -263,6 +308,7 @@ class CatalogRepository(
                 val server = session?.selectedServer
                 val library = session?.selectedLibrary
                 val token = session.serverAuthToken()
+                deferTrackIndexForRefresh = deferPlexTrackIndex && server != null && library != null && token != null
                 val plexBuilder = PlexCatalogBuilder(plexClient, httpClient)
 
                 val (plexRawMetadata, localRaw) = coroutineScope {
@@ -270,22 +316,67 @@ class CatalogRepository(
                     if (server == null || library == null || token == null) {
                         CatalogSnapshot() to localDeferred.await()
                     } else {
-                        val metadata = plexBuilder.buildMetadataCatalog(server, library, token)
+                        val metadata = if (deferTrackIndexForRefresh) {
+                            plexBuilder.buildMetadataCatalogProgressively(
+                                server = server,
+                                library = library,
+                                token = token,
+                                onProgress = { message, loadedAlbums, _ ->
+                                    mutableCatalogSyncState.value = CatalogSyncState(
+                                        phase = CatalogSyncPhase.LoadingLibrary,
+                                        message = message,
+                                        loadedAlbums = loadedAlbums,
+                                        loadedTracks = mutableCatalog.value.tracksByParent.values.sumOf { it.size },
+                                        blocking = mutableCatalog.value.isNotEmpty().not(),
+                                    )
+                                },
+                                onPartial = { partial, message, loadedAlbums, _ ->
+                                    if (partial.isNotEmpty()) {
+                                        publishPlexMetadataPartial(
+                                            raw = partial,
+                                            previous = mutableCatalog.value,
+                                            session = session,
+                                            message = message,
+                                        )
+                                        mutableCatalogSyncState.value = mutableCatalogSyncState.value.copy(
+                                            loadedAlbums = loadedAlbums.coerceAtLeast(partial.albums.size),
+                                            loadedTracks = mutableCatalog.value.tracksByParent.values.sumOf { it.size },
+                                            blocking = false,
+                                        )
+                                        yield()
+                                    }
+                                },
+                            )
+                        } else {
+                            plexBuilder.buildMetadataCatalog(server, library, token)
+                        }
                         PhoebeLog.d("PlexCollections") {
                             "refresh metadata skipped collection discovery"
                         }
                         if (metadata.isNotEmpty()) {
                             publishPlexMetadataPartial(
                                 raw = metadata,
-                                previous = previous,
+                                previous = mutableCatalog.value,
                                 session = session,
-                                message = "Loaded Plex metadata…",
+                                message = if (deferTrackIndexForRefresh) {
+                                    "Loaded Plex library shape…"
+                                } else {
+                                    "Loaded Plex metadata…"
+                                },
                             )
+                            if (deferTrackIndexForRefresh) {
+                                mutableCatalogSyncState.value = mutableCatalogSyncState.value.copy(
+                                    loadedAlbums = metadata.albums.size,
+                                    loadedTracks = mutableCatalog.value.tracksByParent.values.sumOf { it.size },
+                                    blocking = false,
+                                )
+                            }
                             yield()
                         }
                         metadata to localDeferred.await()
                     }
                 }
+                localTracksToPersist = localRaw.tracksByParent
 
                 val metadataMerged = CatalogMerge.merge(
                     CatalogSnapshot(),
@@ -294,7 +385,7 @@ class CatalogRepository(
                 )
                 val reconciled = reconcileMergedSnapshot(
                     merged = metadataMerged,
-                    previous = previous,
+                    previous = mutableCatalog.value,
                     session = session,
                 )
                 stalePlaylists = reconciled.stalePlaylists
@@ -311,6 +402,35 @@ class CatalogRepository(
                 yield()
 
                 if (server != null && library != null && token != null) {
+                    mutableCatalogSyncState.value = CatalogSyncState(
+                        phase = CatalogSyncPhase.LoadingSongs,
+                        message = "Prioritizing played songs…",
+                        loadedAlbums = mutableCatalog.value.albums.size,
+                        loadedTracks = mutableCatalog.value.tracksByParent.values.sumOf { it.size },
+                        blocking = false,
+                    )
+                    runCatching {
+                        warmPlexHistoryTracks(
+                            session = session,
+                            maxRecentEntries = PlexInitialHistoryWarmEntries,
+                            maxMostPlayedEntries = PlexInitialHistoryWarmEntries,
+                        )
+                    }.onFailure { error ->
+                        PhoebeLog.d("CatalogRepository") {
+                            "initial Plex history warm failed: ${error.message}"
+                        }
+                    }
+                    mutableCatalogSyncState.value = CatalogSyncState(
+                        phase = CatalogSyncPhase.LoadingSongs,
+                        message = "Loaded played songs, indexing library…",
+                        loadedAlbums = mutableCatalog.value.albums.size,
+                        loadedTracks = mutableCatalog.value.tracksByParent.values.sumOf { it.size },
+                        blocking = false,
+                    )
+                    yield()
+                }
+
+                if (server != null && library != null && token != null && !deferTrackIndexForRefresh) {
                     val indexed = runCatching {
                         indexPlexTrackPages(server, library, token)
                     }.onFailure { error ->
@@ -348,7 +468,7 @@ class CatalogRepository(
                     blocking = false,
                 )
                 val finalSnapshot = plexBuilder.enrichWithTrackArtwork(mutableCatalog.value)
-                    .copy(downloads = previous.downloads)
+                    .copy(downloads = mutableCatalog.value.downloads)
                 persistSnapshot = finalSnapshot != previous || stalePlaylists.isNotEmpty()
                 yield()
                 mutableCatalog.value = finalSnapshot
@@ -375,22 +495,46 @@ class CatalogRepository(
                 blocking = false,
             )
             if (persistSnapshot) {
-                persistAsync(snapshot)
-            }
-            // Refetch each playlist that grew externally after the main catalog is visible. Each
-            // refetch persists its own update, so the full-snapshot write above must happen first.
-            for (playlist in stalePlaylists) {
-                mutableCatalogSyncState.value = CatalogSyncState(
-                    phase = CatalogSyncPhase.RefreshingPlaylists,
-                    message = "Refreshing playlists…",
-                    loadedAlbums = mutableCatalog.value.albums.size,
-                    loadedTracks = mutableCatalog.value.tracksByParent.values.sumOf { it.size },
-                    blocking = false,
-                )
-                runCatching { refetchPlaylistTracksFromPlex(session, playlist) }
-                    .onFailure { error ->
-                        PhoebeLog.d("CatalogRepository") { "background refetch failed for '${playlist.title}': ${error.message}" }
+                if (deferTrackIndexForRefresh) {
+                    persistShellPreservingTracksAsync(snapshot)
+                    if (localTracksToPersist.isNotEmpty()) {
+                        persistTrackParents(localTracksToPersist)
                     }
+                } else {
+                    persistAsync(snapshot)
+                }
+            }
+            if (deferTrackIndexForRefresh) {
+                val server = session?.selectedServer
+                val library = session?.selectedLibrary
+                val token = session.serverAuthToken()
+                if (server != null && library != null && token != null) {
+                    indexPlexTrackPagesInBackground(
+                        server = server,
+                        library = library,
+                        token = token,
+                        initialDelayMs = PlexTrackIndexInitialDelayMs,
+                    )
+                }
+            }
+            if (deferTrackIndexForRefresh) {
+                refetchPlaylistsInBackground(session, stalePlaylists)
+            } else {
+                // Refetch each playlist that grew externally after the main catalog is visible. Each
+                // refetch persists its own update, so the full-snapshot write above must happen first.
+                for (playlist in stalePlaylists) {
+                    mutableCatalogSyncState.value = CatalogSyncState(
+                        phase = CatalogSyncPhase.RefreshingPlaylists,
+                        message = "Refreshing playlists…",
+                        loadedAlbums = mutableCatalog.value.albums.size,
+                        loadedTracks = mutableCatalog.value.tracksByParent.values.sumOf { it.size },
+                        blocking = false,
+                    )
+                    runCatching { refetchPlaylistTracksFromPlex(session, playlist) }
+                        .onFailure { error ->
+                            PhoebeLog.d("CatalogRepository") { "background refetch failed for '${playlist.title}': ${error.message}" }
+                        }
+                }
             }
             mutableCatalogSyncState.value = CatalogSyncState(
                 phase = CatalogSyncPhase.Complete,
@@ -1289,6 +1433,12 @@ class CatalogRepository(
         val stalePlaylists: List<Playlist>,
     )
 
+    private data class PlexTrackIndexTarget(
+        val server: PlexServer,
+        val library: MusicLibrary,
+        val token: String,
+    )
+
     private fun publishPlexMetadataPartial(
         raw: CatalogSnapshot,
         previous: CatalogSnapshot,
@@ -1451,6 +1601,14 @@ class CatalogRepository(
             acc + (parentId to merged)
         }
 
+    private fun CatalogSnapshot.trackParentIds(): Set<String> {
+        val ids = linkedSetOf<String>()
+        albums.forEach { ids += it.id }
+        playlists.forEach { ids += it.id }
+        ids += tracksByParent.keys
+        return ids
+    }
+
     private suspend fun removeMissingLocalArtworkReferences(snapshot: CatalogSnapshot): CatalogSnapshot {
         val checked = mutableMapOf<String, Boolean>()
         suspend fun available(url: String?): Boolean {
@@ -1493,6 +1651,8 @@ class CatalogRepository(
         server: PlexServer,
         library: MusicLibrary,
         token: String,
+        updateSyncState: Boolean = true,
+        persistIncrementally: Boolean = false,
     ): Boolean {
         var offset = 0
         var pages = 0
@@ -1506,15 +1666,20 @@ class CatalogRepository(
                 size = TrackIndexPageSize,
             )
             if (page.tracks.isEmpty()) break
-            publishIndexedPlexTracks(page.tracks)
+            val updatedParents = publishIndexedPlexTracks(page.tracks)
+            if (persistIncrementally && updatedParents.isNotEmpty()) {
+                persistTrackParents(updatedParents)
+            }
             indexedAny = true
-            mutableCatalogSyncState.value = CatalogSyncState(
-                phase = CatalogSyncPhase.LoadingSongs,
-                message = "Loaded albums, indexing songs…",
-                loadedAlbums = mutableCatalog.value.albums.size,
-                loadedTracks = mutableCatalog.value.tracksByParent.values.sumOf { it.size },
-                blocking = false,
-            )
+            if (updateSyncState) {
+                mutableCatalogSyncState.value = CatalogSyncState(
+                    phase = CatalogSyncPhase.LoadingSongs,
+                    message = "Loaded albums, indexing songs…",
+                    loadedAlbums = mutableCatalog.value.albums.size,
+                    loadedTracks = mutableCatalog.value.tracksByParent.values.sumOf { it.size },
+                    blocking = false,
+                )
+            }
             if (!page.hasMore) break
             offset = page.nextOffset
             pages++
@@ -1523,22 +1688,113 @@ class CatalogRepository(
         return indexedAny
     }
 
-    private suspend fun publishIndexedPlexTracks(rawTracks: List<Track>) {
+    private fun indexPlexTrackPagesInBackground(
+        server: PlexServer,
+        library: MusicLibrary,
+        token: String,
+        initialDelayMs: Long = 0L,
+    ) {
+        val target = PlexTrackIndexTarget(server, library, token)
+        plexTrackIndexTarget = target
+        plexTrackIndexJob?.cancel()
+        lateinit var job: Job
+        job = persistenceScope.launch(start = CoroutineStart.LAZY) {
+            try {
+                if (initialDelayMs > 0) delay(initialDelayMs)
+                val indexed = indexPlexTrackPages(
+                    server = server,
+                    library = library,
+                    token = token,
+                    updateSyncState = false,
+                    persistIncrementally = true,
+                )
+                PhoebeLog.d("CatalogRepository") {
+                    "background Plex track index ${if (indexed) "complete" else "skipped"} → " +
+                        "${mutableCatalog.value.tracksByParent.values.sumOf { it.size }} tracks"
+                }
+                if (plexTrackIndexTarget == target) {
+                    plexTrackIndexTarget = null
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                PhoebeLog.d("CatalogRepository") { "background Plex track index failed: ${error.message}" }
+                if (plexTrackIndexTarget == target) {
+                    plexTrackIndexTarget = null
+                }
+            } finally {
+                if (plexTrackIndexJob == job) {
+                    plexTrackIndexJob = null
+                }
+            }
+        }
+        plexTrackIndexJob = job
+        job.start()
+    }
+
+    private fun refetchPlaylistsInBackground(session: PlexSession?, playlists: List<Playlist>) {
+        if (playlists.isEmpty()) return
+        persistenceScope.launch {
+            playlists.chunked(PlexPlaylistRefetchParallelism).forEach { chunk ->
+                chunk.map { playlist ->
+                    async {
+                        try {
+                            refetchPlaylistTracksFromPlex(session, playlist, showRefreshing = false)
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Throwable) {
+                            PhoebeLog.d("CatalogRepository") {
+                                "background playlist refetch failed for '${playlist.title}': ${error.message}"
+                            }
+                        }
+                    }
+                }.awaitAll()
+                yield()
+            }
+        }
+    }
+
+    private fun pausePlexTrackIndexForPriority(reason: String): PlexTrackIndexTarget? {
+        val target = plexTrackIndexTarget
+        val job = plexTrackIndexJob
+        if (job != null && job.isActive) {
+            PhoebeLog.d("CatalogRepository") { "pausing background Plex track index for $reason" }
+            job.cancel()
+            plexTrackIndexJob = null
+        }
+        return target
+    }
+
+    private fun resumePlexTrackIndexAfterPriority(target: PlexTrackIndexTarget?) {
+        if (target == null || plexTrackIndexTarget != target || plexTrackIndexJob?.isActive == true) return
+        indexPlexTrackPagesInBackground(
+            server = target.server,
+            library = target.library,
+            token = target.token,
+            initialDelayMs = PlexTrackIndexPriorityResumeDelayMs,
+        )
+    }
+
+    private suspend fun publishIndexedPlexTracks(rawTracks: List<Track>): Map<String, List<Track>> {
         val tracksByAlbum = rawTracks
             .map { it.withPlexPrefix() }
             .groupBy { track -> resolveIndexedTrackParentId(track, mutableCatalog.value) }
             .filterKeys { it != null }
             .mapKeys { it.key!! }
-        if (tracksByAlbum.isEmpty()) return
-        catalogMergeMutex.withLock {
+        if (tracksByAlbum.isEmpty()) return emptyMap()
+        return catalogMergeMutex.withLock {
             val cur = mutableCatalog.value
             var nextParents = cur.tracksByParent
+            val updatedParents = linkedMapOf<String, List<Track>>()
             tracksByAlbum.forEach { (parentId, tracks) ->
                 val existing = nextParents[parentId].orEmpty()
                 val incoming = preserveTrackDateAdded(existing, tracks)
-                nextParents = nextParents + (parentId to (existing + incoming).distinctBy { it.id })
+                val updated = (existing + incoming).distinctBy { it.id }
+                nextParents = nextParents + (parentId to updated)
+                updatedParents[parentId] = updated
             }
             mutableCatalog.value = cur.copy(tracksByParent = nextParents)
+            updatedParents
         }
     }
 
@@ -1575,19 +1831,7 @@ class CatalogRepository(
                     val tracks = adapter.playlistTracks(session, playlist.copy(id = playlist.id.removePrefix("$providerPrefix:")))
                         .map { it.withProviderPrefix(providerPrefix) }
                         .let { preserveTrackDateAdded(mutableCatalog.value.tracksByParent[playlist.id].orEmpty(), it) }
-                    val next = mutableCatalog.value.copy(
-                        tracksByParent = mutableCatalog.value.tracksByParent + (playlist.id to tracks),
-                        playlists = mutableCatalog.value.playlists.map { p ->
-                            if (p.id == playlist.id) {
-                                p.copy(
-                                    trackCount = tracks.size,
-                                    thumbUrl = p.thumbUrl ?: tracks.firstNotNullOfOrNull { it.thumbUrl },
-                                )
-                            } else p
-                        },
-                    )
-                    publish(next, persist = false)
-                    persistPlaylistTracksAsync(next, playlist.id)
+                    publishRefetchedPlaylistTracks(playlist.id, tracks)
                     return@fetch
                 }
                 val userId = session.userId ?: return@fetch
@@ -1602,19 +1846,7 @@ class CatalogRepository(
                 val tracks = remoteClient.playlistTracks(server, remotePlaylist, token, userId)
                     .map { it.withProviderPrefix(providerPrefix) }
                     .let { preserveTrackDateAdded(mutableCatalog.value.tracksByParent[playlist.id].orEmpty(), it) }
-                val next = mutableCatalog.value.copy(
-                    tracksByParent = mutableCatalog.value.tracksByParent + (playlist.id to tracks),
-                    playlists = mutableCatalog.value.playlists.map { p ->
-                        if (p.id == playlist.id) {
-                            p.copy(
-                                trackCount = tracks.size,
-                                thumbUrl = p.thumbUrl ?: tracks.firstNotNullOfOrNull { it.thumbUrl },
-                            )
-                        } else p
-                    },
-                )
-                publish(next, persist = false)
-                persistPlaylistTracksAsync(next, playlist.id)
+                publishRefetchedPlaylistTracks(playlist.id, tracks)
                 return@fetch
             }
             val rating = plexRatingKey(playlist.id) ?: return@fetch
@@ -1623,19 +1855,7 @@ class CatalogRepository(
             val tracks = plexClient.playlistTracks(server, playlist.copy(id = rating), token)
                 .map { it.withPlexPrefix() }
                 .let { preserveTrackDateAdded(mutableCatalog.value.tracksByParent[playlist.id].orEmpty(), it) }
-            val next = mutableCatalog.value.copy(
-                tracksByParent = mutableCatalog.value.tracksByParent + (playlist.id to tracks),
-                playlists = mutableCatalog.value.playlists.map { p ->
-                        if (p.id == playlist.id) {
-                            p.copy(
-                                trackCount = tracks.size,
-                                thumbUrl = p.thumbUrl ?: tracks.firstNotNullOfOrNull { it.thumbUrl },
-                            )
-                        } else p
-                    },
-            )
-            publish(next, persist = false)
-            persistPlaylistTracksAsync(next, playlist.id)
+            publishRefetchedPlaylistTracks(playlist.id, tracks)
         }
         if (showRefreshing) {
             withCatalogRefreshing { fetch() }
@@ -1644,45 +1864,117 @@ class CatalogRepository(
         }
     }
 
+    private suspend fun publishRefetchedPlaylistTracks(playlistId: String, tracks: List<Track>) {
+        val next = catalogMergeMutex.withLock {
+            val cur = mutableCatalog.value
+            val updated = cur.copy(
+                tracksByParent = cur.tracksByParent + (playlistId to tracks),
+                playlists = cur.playlists.map { playlist ->
+                    if (playlist.id == playlistId) {
+                        playlist.copy(
+                            trackCount = tracks.size,
+                            thumbUrl = playlist.thumbUrl ?: tracks.firstNotNullOfOrNull { it.thumbUrl },
+                        )
+                    } else {
+                        playlist
+                    }
+                },
+            )
+            publish(updated, persist = false)
+            updated
+        }
+        persistPlaylistTracksAsync(next, playlistId)
+    }
+
     suspend fun warmPlaylistTracks(session: PlexSession?) {
+        if (mutableCachedTrackHydrationPending.value) {
+            PhoebeLog.d("CatalogRepository") { "playlist warm skipped while cached tracks hydrate" }
+            return
+        }
         val playlists = mutableCatalog.value.playlists
             .filter { playlist ->
                 playlist.remoteProviderPrefix() != null &&
                     playlist.trackCount > 0 &&
                     mutableCatalog.value.tracksByParent[playlist.id].isNullOrEmpty()
-            }
+        }
         if (playlists.isEmpty()) return
         PhoebeLog.d("CatalogRepository") { "warming ${playlists.size} playlist track lists" }
-        for (playlist in playlists) {
-            runCatching {
-                refetchPlaylistTracksFromPlex(session, playlist, showRefreshing = false)
-            }.onFailure { error ->
-                if (error is CancellationException) throw error
-                PhoebeLog.d("CatalogRepository") {
-                    "playlist warm failed for '${playlist.title}': ${error.message}"
+        val pausedIndex = pausePlexTrackIndexForPriority("playlist data warm")
+        try {
+            coroutineScope {
+                playlists.chunked(PlexPlaylistRefetchParallelism).forEach { chunk ->
+                    chunk.map { playlist ->
+                        async {
+                            try {
+                                refetchPlaylistTracksFromPlex(session, playlist, showRefreshing = false)
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Throwable) {
+                                PhoebeLog.d("CatalogRepository") {
+                                    "playlist warm failed for '${playlist.title}': ${error.message}"
+                                }
+                            }
+                        }
+                    }.awaitAll()
+                    yield()
                 }
             }
-            yield()
+        } finally {
+            resumePlexTrackIndexAfterPriority(pausedIndex)
         }
     }
 
-    suspend fun tracksForAlbum(session: PlexSession?, album: Album): List<Track> {
+    private suspend fun restoreCachedTracksForParent(parentId: String): List<Track> {
+        if (!mutableCachedTrackHydrationPending.value) return emptyList()
+        val tracks = withContext(Dispatchers.Default) { readTracksForParentFromDatabase(parentId) }
+        if (tracks.isEmpty()) return emptyList()
+        return catalogMergeMutex.withLock {
+            val current = mutableCatalog.value
+            if (current.tracksByParent[parentId].isNullOrEmpty()) {
+                mutableCatalog.value = current.copy(
+                    tracksByParent = current.tracksByParent + (parentId to tracks),
+                )
+            }
+            mutableCatalog.value.tracksByParent[parentId].orEmpty()
+        }
+    }
+
+    suspend fun tracksForAlbum(session: PlexSession?, album: Album, prioritize: Boolean = true): List<Track> {
         val existing = mutableCatalog.value.tracksByParent[album.id]
         if (!existing.isNullOrEmpty()) return existing
-        val providerPrefix = session?.providerType?.catalogPrefix
-        if (session != null && providerPrefix != null && album.id.startsWith("$providerPrefix:") && !session.isPlex()) {
-            val server = session.selectedServer ?: return emptyList()
-            val token = session.token
-            return withCatalogRefreshing {
-                val adapter = providerRegistry.adapterFor(session)
-                val tracks = if (adapter != null && !session.isEmbyFamily()) {
-                    adapter.albumTracks(session, album.copy(id = album.id.removePrefix("$providerPrefix:")))
-                } else {
-                    val userId = session.userId ?: return@withCatalogRefreshing emptyList()
-                    val remoteClient = if (session.providerType.catalogPrefix == "emby") embyClient else jellyfinClient
-                    remoteClient.albumTracks(server, album.copy(id = album.id.removePrefix("$providerPrefix:")), token, userId)
+        val pausedIndex = if (prioritize) pausePlexTrackIndexForPriority("album '${album.title}'") else null
+        return try {
+            restoreCachedTracksForParent(album.id).takeIf { it.isNotEmpty() }?.let { return it }
+            val providerPrefix = session?.providerType?.catalogPrefix
+            if (session != null && providerPrefix != null && album.id.startsWith("$providerPrefix:") && !session.isPlex()) {
+                val server = session.selectedServer ?: return emptyList()
+                val token = session.token
+                return withCatalogRefreshing {
+                    val adapter = providerRegistry.adapterFor(session)
+                    val tracks = if (adapter != null && !session.isEmbyFamily()) {
+                        adapter.albumTracks(session, album.copy(id = album.id.removePrefix("$providerPrefix:")))
+                    } else {
+                        val userId = session.userId ?: return@withCatalogRefreshing emptyList()
+                        val remoteClient = if (session.providerType.catalogPrefix == "emby") embyClient else jellyfinClient
+                        remoteClient.albumTracks(server, album.copy(id = album.id.removePrefix("$providerPrefix:")), token, userId)
+                    }
+                        .map { it.withProviderPrefix(providerPrefix) }
+                        .let { preserveTrackDateAdded(mutableCatalog.value.tracksByParent[album.id].orEmpty(), it) }
+                    publish(
+                        mutableCatalog.value.copy(
+                            tracksByParent = mutableCatalog.value.tracksByParent + (album.id to tracks),
+                        ),
+                        persist = true,
+                    )
+                    mutableCatalog.value.tracksByParent[album.id].orEmpty()
                 }
-                    .map { it.withProviderPrefix(providerPrefix) }
+            }
+            val rating = plexRatingKey(album.id) ?: return mutableCatalog.value.tracksByParent[album.id].orEmpty()
+            val server = session?.selectedServer ?: return emptyList()
+            session.selectedLibrary ?: return emptyList()
+            withCatalogRefreshing {
+                val tracks = plexClient.children(server, rating, session.serverAuthToken()!!)
+                    .map { it.withPlexPrefix() }
                     .let { preserveTrackDateAdded(mutableCatalog.value.tracksByParent[album.id].orEmpty(), it) }
                 publish(
                     mutableCatalog.value.copy(
@@ -1692,21 +1984,8 @@ class CatalogRepository(
                 )
                 mutableCatalog.value.tracksByParent[album.id].orEmpty()
             }
-        }
-        val rating = plexRatingKey(album.id) ?: return mutableCatalog.value.tracksByParent[album.id].orEmpty()
-        val server = session?.selectedServer ?: return emptyList()
-        session.selectedLibrary ?: return emptyList()
-        return withCatalogRefreshing {
-            val tracks = plexClient.children(server, rating, session.serverAuthToken()!!)
-                .map { it.withPlexPrefix() }
-                .let { preserveTrackDateAdded(mutableCatalog.value.tracksByParent[album.id].orEmpty(), it) }
-            publish(
-                mutableCatalog.value.copy(
-                    tracksByParent = mutableCatalog.value.tracksByParent + (album.id to tracks),
-                ),
-                persist = true,
-            )
-            mutableCatalog.value.tracksByParent[album.id].orEmpty()
+        } finally {
+            resumePlexTrackIndexAfterPriority(pausedIndex)
         }
     }
 
@@ -1714,92 +1993,115 @@ class CatalogRepository(
      * Fetches track listings from Plex for every album by this artist that is not already loaded.
      * Called when opening the artist detail screen.
      */
-    suspend fun ensureTracksForArtistAlbums(session: PlexSession?, artistTitle: String) {
+    suspend fun ensureTracksForArtistAlbums(session: PlexSession?, artistTitle: String, prioritize: Boolean = true) {
         val server = session?.selectedServer ?: return
         val token = session.serverAuthToken() ?: return
-        
-        if (session.isEmbyFamily()) {
-            val userId = session.userId ?: return
-            val library = session.selectedLibrary ?: return
-            val remoteClient = if (session.providerType.catalogPrefix == "emby") embyClient else jellyfinClient
-            val providerPrefix = session.providerType.catalogPrefix
-            
-            val artistId = mutableCatalog.value.artists.find { it.title.equals(artistTitle, ignoreCase = true) }?.id?.removePrefix("$providerPrefix:")
-                ?: return
-            
-            withCatalogRefreshing {
-                runCatching {
-                    val albums = remoteClient.albumsForArtist(server, library, token, userId, artistId)
+        val pausedIndex = if (prioritize) pausePlexTrackIndexForPriority("artist '$artistTitle'") else null
+        try {
+            if (session.isEmbyFamily()) {
+                val userId = session.userId ?: return
+                val library = session.selectedLibrary ?: return
+                val remoteClient = if (session.providerType.catalogPrefix == "emby") embyClient else jellyfinClient
+                val providerPrefix = session.providerType.catalogPrefix
+                val artistId = mutableCatalog.value.artists
+                    .find { it.title.equals(artistTitle, ignoreCase = true) }
+                    ?.id
+                    ?.removePrefix("$providerPrefix:")
+                    ?: return
+
+                withCatalogRefreshing {
+                    val albums = try {
+                        remoteClient.albumsForArtist(server, library, token, userId, artistId)
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (error: Throwable) {
+                        PhoebeLog.d("CatalogRepository") {
+                            "artist album fetch failed for '$artistTitle': ${error.message}"
+                        }
+                        emptyList()
+                    }
                         .map { it.withProviderPrefix(providerPrefix) }
-                    
+
                     val existingAlbums = mutableCatalog.value.albums
                     val newAlbums = albums.filter { a -> existingAlbums.none { it.id == a.id } }
-                    
+
                     if (newAlbums.isNotEmpty()) {
                         catalogMergeMutex.withLock {
                             val cur = mutableCatalog.value
                             publish(cur.copy(albums = cur.albums + newAlbums), persist = false)
                         }
                     }
-                    
+
                     coroutineScope {
                         albums.map { album ->
                             async {
-                                runCatching {
+                                try {
                                     val snap = mutableCatalog.value
                                     val existing = snap.tracksByParent[album.id]
-                                    if (!existing.isNullOrEmpty()) return@runCatching
-                                    
+                                    if (!existing.isNullOrEmpty()) return@async
+
                                     val tracks = remoteClient.albumTracks(server, album.copy(id = album.id.removePrefix("$providerPrefix:")), token, userId)
                                         .map { it.withProviderPrefix(providerPrefix) }
-                                    
+
                                     catalogMergeMutex.withLock {
                                         val cur = mutableCatalog.value
                                         publish(cur.copy(tracksByParent = cur.tracksByParent + (album.id to tracks)), persist = false)
+                                    }
+                                } catch (error: CancellationException) {
+                                    throw error
+                                } catch (error: Throwable) {
+                                    PhoebeLog.d("CatalogRepository") {
+                                        "album track fetch failed for '${album.title}': ${error.message}"
                                     }
                                 }
                             }
                         }.awaitAll()
                     }
+                    publish(mutableCatalog.value, persist = true)
+                }
+                return
+            }
+
+            val albums = catalogAlbumsForArtist(mutableCatalog.value, artistTitle)
+                .filter { plexRatingKey(it.id) != null }
+            val albumsToFetch = albums.filter { album ->
+                mutableCatalog.value.tracksByParent[album.id].isNullOrEmpty()
+            }
+            if (albumsToFetch.isEmpty()) return
+
+            withCatalogRefreshing {
+                coroutineScope {
+                    albumsToFetch.map { album ->
+                        async {
+                            try {
+                                val rating = plexRatingKey(album.id) ?: return@async
+                                val snap = mutableCatalog.value
+                                val existing = snap.tracksByParent[album.id]
+                                if (!existing.isNullOrEmpty()) return@async
+                                val tracks = plexClient.children(server, rating, token)
+                                    .map { it.withPlexPrefix() }
+                                    .let { preserveTrackDateAdded(mutableCatalog.value.tracksByParent[album.id].orEmpty(), it) }
+                                catalogMergeMutex.withLock {
+                                    val cur = mutableCatalog.value
+                                    publish(
+                                        cur.copy(tracksByParent = cur.tracksByParent + (album.id to tracks)),
+                                        persist = false,
+                                    )
+                                }
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Throwable) {
+                                PhoebeLog.d("CatalogRepository") {
+                                    "album track fetch failed for '${album.title}': ${error.message}"
+                                }
+                            }
+                        }
+                    }.awaitAll()
                 }
                 publish(mutableCatalog.value, persist = true)
             }
-            return
-        }
-
-        val albums = catalogAlbumsForArtist(mutableCatalog.value, artistTitle)
-            .filter { plexRatingKey(it.id) != null }
-        val albumsToFetch = albums.filter { album ->
-            mutableCatalog.value.tracksByParent[album.id].isNullOrEmpty()
-        }
-        if (albumsToFetch.isEmpty()) return
-
-        withCatalogRefreshing {
-            coroutineScope {
-                albumsToFetch.map { album ->
-                    async {
-                        runCatching {
-                            val rating = plexRatingKey(album.id) ?: return@runCatching
-                            val snap = mutableCatalog.value
-                            val existing = snap.tracksByParent[album.id]
-                            if (!existing.isNullOrEmpty()) return@runCatching
-                            val tracks = plexClient.children(server, rating, token)
-                                .map { it.withPlexPrefix() }
-                                .let { preserveTrackDateAdded(mutableCatalog.value.tracksByParent[album.id].orEmpty(), it) }
-                            catalogMergeMutex.withLock {
-                                val cur = mutableCatalog.value
-                                publish(
-                                    cur.copy(tracksByParent = cur.tracksByParent + (album.id to tracks)),
-                                    persist = false,
-                                )
-                            }
-                        }.onFailure { e ->
-                            PhoebeLog.d("CatalogRepository") { "album track fetch failed for '${album.title}': ${e.message}" }
-                        }
-                    }
-                }.awaitAll()
-            }
-            publish(mutableCatalog.value, persist = true)
+        } finally {
+            resumePlexTrackIndexAfterPriority(pausedIndex)
         }
     }
 
@@ -1915,73 +2217,131 @@ class CatalogRepository(
         publish(mutableCatalog.value, persist = true)
     }
 
-    suspend fun warmPlexHistoryTracks(session: PlexSession?, maxEntries: Int = 200): Int {
+    suspend fun warmPlexHistoryTracks(
+        session: PlexSession?,
+        maxRecentEntries: Int = 200,
+        maxMostPlayedEntries: Int = maxRecentEntries,
+    ): Int {
+        if (mutableCachedTrackHydrationPending.value) {
+            PhoebeLog.d("CatalogRepository") { "Plex history track warm skipped while cached tracks hydrate" }
+            return 0
+        }
         val server = session?.selectedServer ?: return 0
         val library = session.selectedLibrary ?: return 0
         val token = session.serverAuthToken() ?: return 0
-        if (maxEntries <= 0) return 0
+        if (maxRecentEntries <= 0 && maxMostPlayedEntries <= 0) return 0
 
-        val loadedTrackIds = mutableCatalog.value.tracksByParent.values
-            .asSequence()
-            .flatten()
-            .map { it.id }
-            .toSet()
-        val entries = mutableListOf<PlexPlaybackHistoryEntry>()
-        var start = 0
-        while (entries.size < maxEntries) {
-            val pageSize = (maxEntries - entries.size).coerceAtMost(PlexPlayHistorySyncer.PageSize)
-            val page = plexClient.playbackHistoryPage(
-                server = server,
-                token = token,
-                library = library,
-                minViewedAtMs = null,
-                start = start,
-                size = pageSize,
-            )
-            entries += page.entries.filter { entry ->
-                (entry.type == null || entry.type == "track") &&
-                    (entry.librarySectionId == null || entry.librarySectionId == library.key)
-            }
-            val total = page.totalSize
-            val next = page.offset + page.size
-            if (page.size <= 0 || (total != null && next >= total)) break
-            start = next
-        }
-
-        val missingRatingKeys = entries
-            .asSequence()
-            .map { it.ratingKey }
-            .filter { it.isNotBlank() }
-            .distinct()
-            .filterNot { "plex:$it" in loadedTrackIds || it in loadedTrackIds }
-            .toList()
-        if (missingRatingKeys.isEmpty()) return 0
-
-        val fetched = coroutineScope {
-            val tracks = mutableListOf<Track>()
-            missingRatingKeys
-                .chunked(catalogTrackPrefetchParallelism().coerceAtLeast(1))
-                .forEach { chunk ->
-                    tracks.addAll(chunk.map { ratingKey ->
-                        async {
-                            runCatching { plexClient.trackDetails(server, ratingKey, token) }
-                                .onFailure { e ->
-                                    PhoebeLog.d("CatalogRepository") {
-                                        "history track warm failed for '$ratingKey': ${e.message}"
-                                    }
-                                }
-                                .getOrNull()
-                        }
-                    }.awaitAll().filterNotNull())
+        val pausedIndex = pausePlexTrackIndexForPriority("Plex play history")
+        try {
+            val loadedTrackIds = mutableCatalog.value.tracksByParent.values
+                .asSequence()
+                .flatten()
+                .map { it.id }
+                .toSet()
+            val entries = mutableListOf<PlexPlaybackHistoryEntry>()
+            var start = 0
+            while (entries.size < maxRecentEntries) {
+                val pageSize = (maxRecentEntries - entries.size).coerceAtMost(PlexPlayHistorySyncer.PageSize)
+                val page = plexClient.playbackHistoryPage(
+                    server = server,
+                    token = token,
+                    library = library,
+                    minViewedAtMs = null,
+                    start = start,
+                    size = pageSize,
+                )
+                entries += page.entries.filter { entry ->
+                    (entry.type == null || entry.type == "track") &&
+                        (entry.librarySectionId == null || entry.librarySectionId == library.key)
                 }
-            tracks
-        }
-        if (fetched.isEmpty()) return 0
+                val total = page.totalSize
+                val next = page.offset + page.size
+                if (page.size <= 0 || (total != null && next >= total)) break
+                start = next
+            }
 
-        publishIndexedPlexTracks(fetched)
-        publish(mutableCatalog.value, persist = true)
-        PhoebeLog.d("CatalogRepository") { "warmPlexHistoryTracks → ${fetched.size} tracks" }
-        return fetched.size
+            val mostPlayedRatingKeys = if (maxMostPlayedEntries > 0) {
+                runCatching {
+                    plexClient.trackPlaybackStatsPage(
+                        server = server,
+                        library = library,
+                        token = token,
+                        start = 0,
+                        size = maxMostPlayedEntries.coerceAtMost(PlexHistoryWarmStatsPageSize),
+                        sort = "viewCount:desc",
+                    )
+                }.recoverCatching { error ->
+                    PhoebeLog.d("CatalogRepository") {
+                        "Plex most-played warm sort failed, falling back to last-played stats: ${error.message}"
+                    }
+                    plexClient.trackPlaybackStatsPage(
+                        server = server,
+                        library = library,
+                        token = token,
+                        start = 0,
+                        size = maxMostPlayedEntries.coerceAtMost(PlexHistoryWarmStatsPageSize),
+                    )
+                }.getOrElse { error ->
+                    PhoebeLog.d("CatalogRepository") {
+                        "Plex most-played warm failed: ${error.message}"
+                    }
+                    emptyList()
+                }
+                    .sortedWith(
+                        compareByDescending<PlexTrackPlaybackStat> { it.viewCount }
+                            .thenByDescending { it.lastViewedAtMs ?: 0L },
+                    )
+                    .map { it.ratingKey }
+                    .filter { it.isNotBlank() }
+                    .distinct()
+                    .take(maxMostPlayedEntries)
+            } else {
+                emptyList()
+            }
+
+            val missingRatingKeys = entries
+                .asSequence()
+                .map { it.ratingKey }
+                .plus(mostPlayedRatingKeys)
+                .filter { it.isNotBlank() }
+                .distinct()
+                .filterNot { "plex:$it" in loadedTrackIds || it in loadedTrackIds }
+                .toList()
+            if (missingRatingKeys.isEmpty()) return 0
+
+            val fetched = coroutineScope {
+                val tracks = mutableListOf<Track>()
+                missingRatingKeys
+                    .chunked(catalogTrackPrefetchParallelism().coerceAtLeast(1))
+                    .forEach { chunk ->
+                        tracks.addAll(chunk.map { ratingKey ->
+                            async {
+                                try {
+                                    plexClient.trackDetails(server, ratingKey, token)
+                                } catch (error: CancellationException) {
+                                    throw error
+                                } catch (error: Throwable) {
+                                    PhoebeLog.d("CatalogRepository") {
+                                        "history track warm failed for '$ratingKey': ${error.message}"
+                                    }
+                                    null
+                                }
+                            }
+                        }.awaitAll().filterNotNull())
+                    }
+                tracks
+            }
+            if (fetched.isEmpty()) return 0
+
+            publishIndexedPlexTracks(fetched)
+            publish(mutableCatalog.value, persist = true)
+            PhoebeLog.d("CatalogRepository") {
+                "warmPlexHistoryTracks → ${fetched.size} tracks recent=${entries.size} most=${mostPlayedRatingKeys.size}"
+            }
+            return fetched.size
+        } finally {
+            resumePlexTrackIndexAfterPriority(pausedIndex)
+        }
     }
 
     suspend fun tracksForDecade(session: PlexSession?, decade: Int): List<Track> {
@@ -2384,31 +2744,40 @@ class CatalogRepository(
                 it.artist.equals(track.artist, ignoreCase = true)
         }?.id
 
-    suspend fun tracksForPlaylist(session: PlexSession?, playlist: Playlist): List<Track> {
+    suspend fun tracksForPlaylist(session: PlexSession?, playlist: Playlist, prioritize: Boolean = true): List<Track> {
         if (playlist.isLocalPlaylist()) {
-            return mutableCatalog.value.tracksByParent[playlist.id].orEmpty()
+            val existing = mutableCatalog.value.tracksByParent[playlist.id]
+            if (!existing.isNullOrEmpty()) return existing
+            return restoreCachedTracksForParent(playlist.id)
         }
         if (playlist.id == PENDING_LIKED_SONGS_PLAYLIST_ID) {
             return mutableCatalog.value.tracksByParent[playlist.id].orEmpty()
         }
-        val snapshot = mutableCatalog.value
-        val playlistMeta = snapshot.playlists.find { it.id == playlist.id } ?: playlist
-        val existing = snapshot.tracksByParent[playlist.id]
-        if (!existing.isNullOrEmpty()) {
-            if (existing.size != playlistMeta.trackCount) {
-                persistenceScope.launch {
-                    runCatching { refetchPlaylistTracksFromPlex(session, playlistMeta) }
-                        .onFailure { error ->
-                            PhoebeLog.d("CatalogRepository") {
-                                "background playlist refresh failed for '${playlistMeta.title}': ${error.message}"
+        val pausedIndex = if (prioritize) pausePlexTrackIndexForPriority("playlist '${playlist.title}'") else null
+        return try {
+            val snapshot = mutableCatalog.value
+            val playlistMeta = snapshot.playlists.find { it.id == playlist.id } ?: playlist
+            val existing = snapshot.tracksByParent[playlist.id]
+            if (!existing.isNullOrEmpty()) {
+                if (existing.size != playlistMeta.trackCount) {
+                    persistenceScope.launch {
+                        runCatching { refetchPlaylistTracksFromPlex(session, playlistMeta) }
+                            .onFailure { error ->
+                                if (error is CancellationException) throw error
+                                PhoebeLog.d("CatalogRepository") {
+                                    "background playlist refresh failed for '${playlistMeta.title}': ${error.message}"
+                                }
                             }
-                        }
+                    }
                 }
+                return existing
             }
-            return existing
+            restoreCachedTracksForParent(playlist.id).takeIf { it.isNotEmpty() }?.let { return it }
+            refetchPlaylistTracksFromPlex(session, playlistMeta)
+            mutableCatalog.value.tracksByParent[playlist.id].orEmpty()
+        } finally {
+            resumePlexTrackIndexAfterPriority(pausedIndex)
         }
-        refetchPlaylistTracksFromPlex(session, playlistMeta)
-        return mutableCatalog.value.tracksByParent[playlist.id].orEmpty()
     }
 
     suspend fun findOrCreateLikedSongsPlaylist(session: PlexSession?): Playlist? {
@@ -3623,6 +3992,10 @@ class CatalogRepository(
         persist(snapshot)
     }
 
+    private suspend fun persistShellPreservingTracksAsync(snapshot: CatalogSnapshot) = withContext(Dispatchers.Default) {
+        persistShellPreservingTracks(snapshot)
+    }
+
     private fun persistPlaylistTracksAsync(snapshot: CatalogSnapshot, playlistId: String) {
         persistenceScope.launch {
             runCatching { persistPlaylistTracks(snapshot, playlistId) }
@@ -3631,6 +4004,25 @@ class CatalogRepository(
                         "playlist track cache persist failed for $playlistId: ${error.message}"
                     }
                 }
+        }
+    }
+
+    private suspend fun persistTrackParents(tracksByParent: Map<String, List<Track>>) = withContext(Dispatchers.Default) {
+        if (tracksByParent.isEmpty()) return@withContext
+        database.transaction {
+            tracksByParent.values.flatten().distinctBy { it.id }.forEach { track ->
+                upsertTrackRow(track)
+            }
+            tracksByParent.forEach { (parentId, tracks) ->
+                database.catalogQueries.deleteTrackParents(parentId)
+                tracks.forEachIndexed { index, track ->
+                    database.catalogQueries.upsertTrackParent(
+                        parentId = parentId,
+                        trackId = track.id,
+                        position = index.toLong(),
+                    )
+                }
+            }
         }
     }
 
@@ -3650,28 +4042,7 @@ class CatalogRepository(
                 favorite = playlist.favorite.toDb(),
             )
             tracks.forEach { track ->
-                database.catalogQueries.upsertTrack(
-                    id = track.id,
-                    title = track.title,
-                    artist = track.artist,
-                    album = track.album,
-                    durationMs = track.durationMs,
-                    streamUrl = track.streamUrl,
-                    downloadUrl = track.downloadUrl,
-                    thumbUrl = track.thumbUrl,
-                    localArtworkUri = track.localArtworkUri,
-                    localUri = track.localUri,
-                    year = track.year?.toLong(),
-                    genre = track.genre,
-                    mood = track.mood,
-                    style = track.style,
-                    filepath = track.filepath,
-                    audioCodec = track.audioCodec,
-                    bitrateKbps = track.bitrateKbps?.toLong(),
-                    dateAddedMs = track.dateAddedMs,
-                    rating = track.rating?.toDouble(),
-                    parentAlbumId = track.parentAlbumId,
-                )
+                upsertTrackRow(track)
             }
             database.catalogQueries.deleteTrackParents(playlistId)
             tracks.forEachIndexed { index, track ->
@@ -3684,6 +4055,20 @@ class CatalogRepository(
         }
     }
 
+    private suspend fun persistShellPreservingTracks(snapshot: CatalogSnapshot) {
+        database.transaction {
+            database.catalogQueries.clearCollectionTags()
+            database.catalogQueries.clearCollectionValues()
+            database.catalogQueries.clearCollectionValueLoads()
+            database.catalogQueries.clearArtists()
+            database.catalogQueries.clearAlbums()
+            database.catalogQueries.clearPlaylists()
+            persistShellRows(snapshot)
+        }
+        yield()
+        persistDownloads(snapshot.downloads)
+    }
+
     private suspend fun persist(snapshot: CatalogSnapshot) {
         database.transaction {
             database.catalogQueries.clearTrackParents()
@@ -3694,74 +4079,10 @@ class CatalogRepository(
             database.catalogQueries.clearArtists()
             database.catalogQueries.clearAlbums()
             database.catalogQueries.clearPlaylists()
-            snapshot.artists.forEachIndexed { index, artist ->
-                database.catalogQueries.upsertArtist(
-                    id = artist.id,
-                    title = artist.title,
-                    thumbUrl = artist.thumbUrl,
-                    albumCount = artist.albumCount.toLong(),
-                    songCount = artist.songCount.toLong(),
-                    sortKey = index.toLong(),
-                    dateAddedMs = artist.dateAddedMs,
-                    genre = artist.genre,
-                    mood = artist.mood,
-                    style = artist.style,
-                    rating = artist.rating?.toDouble(),
-                    favorite = artist.favorite.toDb(),
-                )
-            }
-            snapshot.albums.forEachIndexed { index, album ->
-                database.catalogQueries.upsertAlbum(
-                    id = album.id,
-                    title = album.title,
-                    artist = album.artist,
-                    year = album.year?.toLong(),
-                    thumbUrl = album.thumbUrl,
-                    sortKey = index.toLong(),
-                    dateAddedMs = album.dateAddedMs,
-                    genre = album.genre,
-                    mood = album.mood,
-                    style = album.style,
-                    rating = album.rating?.toDouble(),
-                    favorite = album.favorite.toDb(),
-                )
-            }
-            snapshot.playlists.forEachIndexed { index, playlist ->
-                database.catalogQueries.upsertPlaylist(
-                    id = playlist.id,
-                    title = playlist.title,
-                    trackCount = playlist.trackCount.toLong(),
-                    plKey = playlist.key,
-                    thumbUrl = playlist.thumbUrl,
-                    sortKey = index.toLong(),
-                    rating = playlist.rating?.toDouble(),
-                    favorite = playlist.favorite.toDb(),
-                )
-            }
+            persistShellRows(snapshot)
             val uniqueTracks = snapshot.tracksByParent.values.flatten().distinctBy { it.id }
             uniqueTracks.forEach { track ->
-                database.catalogQueries.upsertTrack(
-                    id = track.id,
-                    title = track.title,
-                    artist = track.artist,
-                    album = track.album,
-                    durationMs = track.durationMs,
-                    streamUrl = track.streamUrl,
-                    downloadUrl = track.downloadUrl,
-                    thumbUrl = track.thumbUrl,
-                    localArtworkUri = track.localArtworkUri,
-                    localUri = track.localUri,
-                    year = track.year?.toLong(),
-                    genre = track.genre,
-                    mood = track.mood,
-                    style = track.style,
-                    filepath = track.filepath,
-                    audioCodec = track.audioCodec,
-                    bitrateKbps = track.bitrateKbps?.toLong(),
-                    dateAddedMs = track.dateAddedMs,
-                    rating = track.rating?.toDouble(),
-                    parentAlbumId = track.parentAlbumId,
-                )
+                upsertTrackRow(track)
             }
             snapshot.tracksByParent.forEach { (parentId, tracks) ->
                 tracks.forEachIndexed { index, track ->
@@ -3772,39 +4093,115 @@ class CatalogRepository(
                     )
                 }
             }
-            snapshot.collectionTags.forEach { tag ->
-                database.catalogQueries.upsertCollectionTag(
-                    target = tag.target,
-                    facet = tag.facet,
-                    itemId = tag.itemId,
-                    value_ = tag.value,
-                )
-            }
-            snapshot.collectionValues.forEach { value ->
-                database.catalogQueries.upsertCollectionValue(
-                    target = value.target,
-                    facet = value.facet,
-                    value_ = value.value,
-                    key = value.key,
-                    fastKey = value.fastKey,
-                    filterField = value.filterField,
-                    itemsLoaded = if (value.itemsLoaded) 1L else 0L,
-                )
-            }
-            snapshot.collectionValueLoads.forEach { load ->
-                database.catalogQueries.upsertCollectionValueLoad(
-                    target = load.target,
-                    facet = load.facet,
-                )
-            }
             PhoebeLog.d("PlexCollections") {
                 "persist collectionValues count=${snapshot.collectionValues.size} collectionTags count=${snapshot.collectionTags.size} tagsByEntry=${snapshot.collectionTags.groupingBy { "${it.target}/${it.facet}" }.eachCount()}"
             }
         }
         yield()
+        persistDownloads(snapshot.downloads)
+    }
+
+    private suspend fun persistShellRows(snapshot: CatalogSnapshot) {
+        snapshot.artists.forEachIndexed { index, artist ->
+            database.catalogQueries.upsertArtist(
+                id = artist.id,
+                title = artist.title,
+                thumbUrl = artist.thumbUrl,
+                albumCount = artist.albumCount.toLong(),
+                songCount = artist.songCount.toLong(),
+                sortKey = index.toLong(),
+                dateAddedMs = artist.dateAddedMs,
+                genre = artist.genre,
+                mood = artist.mood,
+                style = artist.style,
+                rating = artist.rating?.toDouble(),
+                favorite = artist.favorite.toDb(),
+            )
+        }
+        snapshot.albums.forEachIndexed { index, album ->
+            database.catalogQueries.upsertAlbum(
+                id = album.id,
+                title = album.title,
+                artist = album.artist,
+                year = album.year?.toLong(),
+                thumbUrl = album.thumbUrl,
+                sortKey = index.toLong(),
+                dateAddedMs = album.dateAddedMs,
+                genre = album.genre,
+                mood = album.mood,
+                style = album.style,
+                rating = album.rating?.toDouble(),
+                favorite = album.favorite.toDb(),
+            )
+        }
+        snapshot.playlists.forEachIndexed { index, playlist ->
+            database.catalogQueries.upsertPlaylist(
+                id = playlist.id,
+                title = playlist.title,
+                trackCount = playlist.trackCount.toLong(),
+                plKey = playlist.key,
+                thumbUrl = playlist.thumbUrl,
+                sortKey = index.toLong(),
+                rating = playlist.rating?.toDouble(),
+                favorite = playlist.favorite.toDb(),
+            )
+        }
+        snapshot.collectionTags.forEach { tag ->
+            database.catalogQueries.upsertCollectionTag(
+                target = tag.target,
+                facet = tag.facet,
+                itemId = tag.itemId,
+                value_ = tag.value,
+            )
+        }
+        snapshot.collectionValues.forEach { value ->
+            database.catalogQueries.upsertCollectionValue(
+                target = value.target,
+                facet = value.facet,
+                value_ = value.value,
+                key = value.key,
+                fastKey = value.fastKey,
+                filterField = value.filterField,
+                itemsLoaded = if (value.itemsLoaded) 1L else 0L,
+            )
+        }
+        snapshot.collectionValueLoads.forEach { load ->
+            database.catalogQueries.upsertCollectionValueLoad(
+                target = load.target,
+                facet = load.facet,
+            )
+        }
+    }
+
+    private suspend fun upsertTrackRow(track: Track) {
+        database.catalogQueries.upsertTrack(
+            id = track.id,
+            title = track.title,
+            artist = track.artist,
+            album = track.album,
+            durationMs = track.durationMs,
+            streamUrl = track.streamUrl,
+            downloadUrl = track.downloadUrl,
+            thumbUrl = track.thumbUrl,
+            localArtworkUri = track.localArtworkUri,
+            localUri = track.localUri,
+            year = track.year?.toLong(),
+            genre = track.genre,
+            mood = track.mood,
+            style = track.style,
+            filepath = track.filepath,
+            audioCodec = track.audioCodec,
+            bitrateKbps = track.bitrateKbps?.toLong(),
+            dateAddedMs = track.dateAddedMs,
+            rating = track.rating?.toDouble(),
+            parentAlbumId = track.parentAlbumId,
+        )
+    }
+
+    private suspend fun persistDownloads(downloads: List<DownloadItem>) {
         database.transaction {
             database.downloadsQueries.clearAll()
-            snapshot.downloads.forEach { item ->
+            downloads.forEach { item ->
                 database.downloadsQueries.upsert(
                     trackId = item.trackId,
                     title = item.title,
@@ -3904,29 +4301,8 @@ class CatalogRepository(
         val trackRows = database.catalogQueries.selectAllTracks().awaitAsList()
         yield()
         val tracksById: Map<String, Track> = trackRows.associate { row ->
-                row.id to Track(
-                    id = row.id,
-                    title = row.title,
-                    artist = row.artist,
-                    album = row.album,
-                    durationMs = row.durationMs,
-                    streamUrl = row.streamUrl,
-                    downloadUrl = row.downloadUrl,
-                    thumbUrl = row.thumbUrl,
-                    localArtworkUri = row.localArtworkUri,
-                    localUri = row.localUri,
-                    year = row.year?.toInt(),
-                    genre = row.genre,
-                    mood = row.mood,
-                    style = row.style,
-                    filepath = row.filepath,
-                    audioCodec = row.audioCodec,
-                    bitrateKbps = row.bitrateKbps?.toInt(),
-                    dateAddedMs = row.dateAddedMs,
-                    rating = row.rating?.toFloat(),
-                    parentAlbumId = row.parentAlbumId,
-                )
-            }
+            row.id to row.toDomainTrack()
+        }
         yield()
         val tracksByParent: Map<String, List<Track>> = database.catalogQueries.selectTrackParents()
             .awaitAsList()
@@ -3935,7 +4311,17 @@ class CatalogRepository(
                 entries.sortedBy { it.position }
                     .mapNotNull { tracksById[it.trackId] }
             }
-        val downloads = database.downloadsQueries.selectAll().awaitAsList().map { row ->
+        return CatalogSnapshot(
+            tracksByParent = tracksByParent,
+            downloads = readDownloadsFromDatabase(),
+        )
+    }
+
+    private suspend fun readTracksForParentFromDatabase(parentId: String): List<Track> =
+        database.catalogQueries.selectTracksForParent(parentId).awaitAsList().map { it.toDomainTrack() }
+
+    private suspend fun readDownloadsFromDatabase(): List<DownloadItem> =
+        database.downloadsQueries.selectAll().awaitAsList().map { row ->
             DownloadItem(
                 trackId = row.trackId,
                 title = row.title,
@@ -3945,11 +4331,30 @@ class CatalogRepository(
                 localUri = row.localUri,
             )
         }
-        return CatalogSnapshot(
-            tracksByParent = tracksByParent,
-            downloads = downloads,
+
+    private fun com.phoebe.app.db.TrackRow.toDomainTrack(): Track =
+        Track(
+            id = id,
+            title = title,
+            artist = artist,
+            album = album,
+            durationMs = durationMs,
+            streamUrl = streamUrl,
+            downloadUrl = downloadUrl,
+            thumbUrl = thumbUrl,
+            localArtworkUri = localArtworkUri,
+            localUri = localUri,
+            year = year?.toInt(),
+            genre = genre,
+            mood = mood,
+            style = style,
+            filepath = filepath,
+            audioCodec = audioCodec,
+            bitrateKbps = bitrateKbps?.toInt(),
+            dateAddedMs = dateAddedMs,
+            rating = rating?.toFloat(),
+            parentAlbumId = parentAlbumId,
         )
-    }
 
     private fun CatalogSnapshot.isNotEmpty(): Boolean =
         artists.isNotEmpty() ||
@@ -4057,6 +4462,11 @@ class CatalogRepository(
         const val DecadeAlbumFetchTimeoutMs = 4_000L
         const val TrackIndexPageSize = 500
         const val MaxTrackIndexPages = 400
+        const val PlexTrackIndexInitialDelayMs = 1_000L
+        const val PlexTrackIndexPriorityResumeDelayMs = 1_500L
+        const val PlexInitialHistoryWarmEntries = 100
+        const val PlexHistoryWarmStatsPageSize = 250
+        const val PlexPlaylistRefetchParallelism = 2
         const val DecadeTrackPageSize = 250
         const val DecadeFirstPageSize = 80
         const val DecadeTrackLimit = 500
