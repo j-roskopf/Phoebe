@@ -368,19 +368,7 @@ fun MobilePlayer(
         val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         val collapsedSheetHeight = 76.dp + navBarBottom
 
-        val bottomElementsMinHeight = 192.dp
-        val fullArtworkSize = minOf(
-            screenWidth,
-            (
-                screenHeight -
-                    56.dp -
-                    24.dp -
-                    metadataReserve -
-                    bottomElementsMinHeight -
-                    expandedPlayButtonSize -
-                    navBarBottom
-            ).coerceAtLeast(180.dp),
-        )
+        val fullArtworkSize = screenWidth
 
         val currentArtworkSize = lerp(44.dp, fullArtworkSize, clampedExpansionFraction)
         val targetArtworkX = 0.dp
@@ -608,7 +596,7 @@ fun MobilePlayer(
                     TransportIcon(PhoebeIcon.Next, "Next Track", onNext, iconSize = 16.dp)
                     RepeatIcon(mode = repeat, onClick = onRepeat)
                 }
-                Spacer(Modifier.height(MobilePlayerExpandedControlsGap))
+                Spacer(Modifier.weight(1f).heightIn(min = MobilePlayerExpandedControlsGap))
                 MobileExpandedUtilityControls(
                     castState = castState,
                     equalizerActive = equalizerProfile.enabled,
