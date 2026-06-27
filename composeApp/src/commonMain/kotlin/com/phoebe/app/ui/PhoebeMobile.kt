@@ -130,6 +130,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -386,7 +387,7 @@ internal fun MobileBrowseShell(
     showBottomChrome: Boolean = true,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    var mobileLibraryViewMode by remember { mutableStateOf(LibraryViewMode.Grid) }
+    var mobileLibraryViewMode by rememberSaveable { mutableStateOf(LibraryViewMode.Grid) }
     val pickLocalFolder = rememberPickLocalFolder(onPicked = onAddLocalFolder)
     val availableUpdate = when (val updateState = appUpdateState) {
         is AppUpdateState.Available -> updateState.update
@@ -427,8 +428,7 @@ internal fun MobileBrowseShell(
             section == BrowseSection.Library ||
             section == BrowseSection.Playlists ||
             section == BrowseSection.Radio)
-    @Composable
-    fun BrowseTopBar() {
+    val browseTopBar: @Composable () -> Unit = {
         MobileScreenToolbar(
             title = toolbarTitle,
             onBack = if (section == BrowseSection.Settings && selectedPlaylistId == null) {
@@ -713,7 +713,7 @@ internal fun MobileBrowseShell(
                         callbacks = mobileHomeCallbacks,
                         modifier = Modifier.fillMaxSize(),
                         initialExpandedPhoneSection = initialExpandedPhoneSection,
-                        topBar = { BrowseTopBar() },
+                        topBar = browseTopBar,
                     )
                 }
                 section == BrowseSection.Library && selectedPlaylistId == null -> LibraryMobileRoute(
@@ -740,7 +740,7 @@ internal fun MobileBrowseShell(
                     ),
                     modifier = Modifier.fillMaxSize(),
                     libraryViewMode = mobileLibraryViewMode,
-                    topBar = { BrowseTopBar() },
+                    topBar = browseTopBar,
                 )
                 section == BrowseSection.Search && selectedPlaylistId == null -> SearchMobileRoute(
                     viewModel = remember(routeViewModelFactory) { routeViewModelFactory.search() },
@@ -766,7 +766,7 @@ internal fun MobileBrowseShell(
                             track = track,
                         )
                     },
-                    topBar = { BrowseTopBar() },
+                    topBar = browseTopBar,
                 )
                 section == BrowseSection.Playlists && selectedPlaylistId == null -> PlaylistsMobileRoute(
                     state = PlaylistsRouteState(
@@ -779,7 +779,7 @@ internal fun MobileBrowseShell(
                         onPlaylist = onPlaylist,
                     ),
                     modifier = Modifier.fillMaxSize(),
-                    topBar = { BrowseTopBar() },
+                    topBar = browseTopBar,
                 )
                 section == BrowseSection.Radio && selectedPlaylistId == null -> RadioRoute(
                     state = RadioRouteState(internetRadioDirectory, internetRadioStartingIds),
@@ -805,7 +805,7 @@ internal fun MobileBrowseShell(
                     ),
                     sectionIndexMode = LibrarySectionIndexMode.MobileScrollbar,
                     mode = internetRadioRouteMode,
-                    topBar = { BrowseTopBar() },
+                    topBar = browseTopBar,
                 )
                 else -> DesktopContent(
                     catalog = catalog,
@@ -857,135 +857,7 @@ internal fun MobileBrowseShell(
                 .then(if (isDesktopPlatform()) Modifier else Modifier.mobileWindowTopPadding())
                 .zIndex(2f),
             ) {
-            MobileScreenToolbar(
-                title = toolbarTitle,
-                onBack = if (section == BrowseSection.Settings && selectedPlaylistId == null) {
-                    { onNavigate(BrowseSection.Home) }
-                } else {
-                    null
-                },
-                menuExpanded = menuExpanded,
-                onMenuExpandedChange = { menuExpanded = it },
-                showMenu = availableUpdate != null || !(section == BrowseSection.Settings && selectedPlaylistId == null),
-                menuTint = if (availableUpdate != null) PhoebeUpdateBlue else PhoebeUi.primaryText,
-                menuContent = {
-                    if (section == BrowseSection.Library && selectedPlaylistId == null) {
-                        DropdownMenuItem(
-                            text = { Text("Library", color = PhoebeUi.mutedText, fontWeight = FontWeight.SemiBold) },
-                            onClick = {},
-                            enabled = false,
-                        )
-                        LibraryFilterOptionsMenuItems(
-                            filter = libraryFilter,
-                            prefs = libraryUi,
-                            onSortBy = onLibrarySortBy,
-                            onAscending = onLibraryAscending,
-                            libraryViewMode = mobileLibraryViewMode,
-                            onLibraryViewMode = { mobileLibraryViewMode = it },
-                            onColumns = onLibraryColumns,
-                            onDismiss = { menuExpanded = false },
-                        )
-                    }
-                    if (availableUpdate != null) {
-                        DropdownMenuItem(
-                            text = {
-                                Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                    if (installingUpdateState != null) {
-                                        UpdateProgressRing(
-                                            progress = installingUpdateState.progress,
-                                            modifier = Modifier.size(18.dp),
-                                        )
-                                    } else {
-                                        PhoebeIconView(PhoebeIcon.Update, tint = PhoebeUpdateBlue, modifier = Modifier.size(18.dp))
-                                    }
-                                    Text(
-                                        if (installingUpdateState != null) {
-                                            updateMenuProgressLabel(installingUpdateState)
-                                        } else {
-                                            "Update to ${availableUpdate.versionName}"
-                                        },
-                                    )
-                                }
-                            },
-                            onClick = {
-                                if (!updateInstalling) onInstallUpdate()
-                                menuExpanded = false
-                            },
-                            enabled = !updateInstalling,
-                        )
-                    }
-                    val userName = session?.userName
-                    if (userName != null) {
-                        DropdownMenuItem(
-                            text = { Text(userName, color = PhoebeUi.mutedText, fontSize = 13.sp) },
-                            onClick = {},
-                            enabled = false,
-                        )
-                    }
-                    if (LocalCatalogSyncState.current.isActive) {
-                        DropdownMenuItem(
-                            text = { CatalogMenuSyncIndicator() },
-                            onClick = {},
-                            enabled = false,
-                        )
-                    }
-                    DropdownMenuItem(
-                        text = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                PhoebeIconView(PhoebeIcon.Download, tint = PhoebeUi.secondaryText, modifier = Modifier.size(18.dp))
-                                Text("Downloads")
-                            }
-                        },
-                        onClick = {
-                            onNavigate(BrowseSection.Downloads)
-                            menuExpanded = false
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                                PhoebeIconView(PhoebeIcon.Settings, tint = PhoebeUi.secondaryText, modifier = Modifier.size(18.dp))
-                                Text("Settings")
-                            }
-                        },
-                        onClick = {
-                            onNavigate(BrowseSection.Settings)
-                            menuExpanded = false
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Refresh library") },
-                        onClick = {
-                            onRefreshLibrary()
-                            menuExpanded = false
-                        },
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Add music folder") },
-                        onClick = {
-                            pickLocalFolder()
-                            menuExpanded = false
-                        },
-                    )
-                    if (session?.token?.isNotBlank() == true) {
-                        DropdownMenuItem(
-                            text = { Text("Sign out") },
-                            onClick = {
-                                onSignOut()
-                                menuExpanded = false
-                            },
-                        )
-                    } else {
-                        DropdownMenuItem(
-                            text = { Text("Sign in") },
-                            onClick = {
-                                onOpenSignIn()
-                                menuExpanded = false
-                            },
-                        )
-                    }
-                },
-            )
+                browseTopBar()
             }
         }
 

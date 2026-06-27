@@ -17,7 +17,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -48,10 +47,8 @@ fun PillTextField(
 ) {
     val fieldTextStyle = TextStyle(color = PhoebeUi.primaryText, fontSize = 12.sp, lineHeight = 16.sp)
     var fieldValue by remember { mutableStateOf(TextFieldValue(value, selection = TextRange(value.length))) }
-    LaunchedEffect(value) {
-        if (value != fieldValue.text) {
-            fieldValue = fieldValue.copy(text = value, selection = TextRange(value.length))
-        }
+    if (value != fieldValue.text) {
+        fieldValue = fieldValue.copy(text = value, selection = TextRange(value.length))
     }
     Row(
         modifier

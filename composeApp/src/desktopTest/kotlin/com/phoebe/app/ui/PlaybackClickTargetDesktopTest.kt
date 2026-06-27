@@ -102,14 +102,14 @@ class PlaybackClickTargetDesktopTest {
 
     @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
     @Test
-    fun albumDetailTrackRowInvokesPlaybackRequestForTappedTrack() = runDesktopComposeUiTest(width = 800, height = 620) {
+    fun albumDetailTrackRowInvokesPlaybackRequestForTappedTrack() = runDesktopComposeUiTest(width = 800, height = 900) {
         val tracks = playbackTracks()
         val album = Album(id = "album-1", title = "Regression Album", artist = "Fixture Artist")
         var request: PlaybackRequest? = null
 
         setContent {
             PhoebeTheme {
-                Box(Modifier.size(800.dp, 620.dp)) {
+                Box(Modifier.size(800.dp, 900.dp)) {
                     AlbumDetailPanel(
                         album = album,
                         catalog = CatalogSnapshot(albums = listOf(album), tracksByParent = mapOf(album.id to tracks)),
@@ -126,6 +126,9 @@ class PlaybackClickTargetDesktopTest {
             }
         }
 
+        waitUntil(timeoutMillis = 5_000) {
+            onAllNodesWithTag(PlaybackTestTags.playTrack(tracks[2].id)).fetchSemanticsNodes().isNotEmpty()
+        }
         onNodeWithTag(PlaybackTestTags.playTrack(tracks[2].id)).performClick()
 
         val captured = assertNotNull(request)
