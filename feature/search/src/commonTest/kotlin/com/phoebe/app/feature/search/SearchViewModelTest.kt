@@ -63,6 +63,19 @@ class SearchViewModelTest {
     }
 
     @Test
+    fun broadQueryCapsMaterializedResults() = runTest {
+        val viewModel = SearchViewModel(SearchResultsFactory())
+        viewModel.updateCatalog(largeMatchingCatalog(), catalogRefreshing = false)
+
+        viewModel.onQuery("shared")
+
+        val state = viewModel.state.value
+        assertEquals(500, state.results.tracks.size)
+        assertEquals(500, state.results.albums.size)
+        assertEquals(500, state.results.artists.size)
+    }
+
+    @Test
     fun routeStateReflectsViewModelState() = runTest {
         val viewModel = SearchViewModel(SearchResultsFactory())
         val catalog = testCatalog()
@@ -133,6 +146,40 @@ class SearchViewModelTest {
                     state = DownloadState.Complete,
                 ),
             ),
+        )
+    }
+
+    private fun largeMatchingCatalog(): CatalogSnapshot {
+        val artists = List(600) { index ->
+            Artist(
+                id = "artist-$index",
+                title = "Shared Artist $index",
+                albumCount = 1,
+                songCount = 1,
+            )
+        }
+        val albums = List(600) { index ->
+            Album(
+                id = "album-$index",
+                title = "Shared Album $index",
+                artist = artists[index].title,
+            )
+        }
+        val tracks = List(600) { index ->
+            Track(
+                id = "track-$index",
+                title = "Shared Track $index",
+                artist = artists[index].title,
+                album = albums[index].title,
+                durationMs = 180_000L,
+                streamUrl = "https://example.com/shared-$index",
+                downloadUrl = "https://example.com/shared-$index.mp3",
+            )
+        }
+        return CatalogSnapshot(
+            artists = artists,
+            albums = albums,
+            tracksByParent = albums.zip(tracks).associate { (album, track) -> album.id to listOf(track) },
         )
     }
 }

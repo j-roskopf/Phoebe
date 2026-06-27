@@ -74,7 +74,10 @@ import com.phoebe.app.data.catalogAlbumTotalDurationMs
 import com.phoebe.app.data.catalogAlbumTrackCount
 import com.phoebe.app.data.catalogTracksForAlbum
 import com.phoebe.app.data.PlayHistorySnapshot
+import com.phoebe.app.data.filterAlbumsByQuery
+import com.phoebe.app.data.filterArtistsByQuery
 import com.phoebe.app.data.filterPlaylistsByQuery
+import com.phoebe.app.data.filterTracksByQuery
 import com.phoebe.app.data.sortAlbumsForLibrary
 import com.phoebe.app.data.sortArtistsForLibrary
 import com.phoebe.app.data.sortTracksForLibrary
@@ -91,6 +94,8 @@ import com.phoebe.app.domain.canTogglePlexLike
 import com.phoebe.app.domain.isLikedSongsPlaylist
 import com.phoebe.app.domain.isRemoteLibraryTrack
 import com.phoebe.app.ui.*
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 enum class LibraryFilterTab { Artists, Albums, Songs }
 
@@ -210,10 +215,13 @@ fun FavoriteArtistsDesktopView(
     val sortedArtists = remember(catalog, libraryUi.sortBy, libraryUi.ascending) {
         sortArtistsForLibrary(catalog, libraryUi.sortBy, libraryUi.ascending).filter { it.favorite }
     }
-    val visibleArtists = remember(sortedArtists, searchQuery) {
-        val q = searchQuery.trim()
-        if (q.isBlank()) sortedArtists else sortedArtists.filter { it.title.contains(q, ignoreCase = true) }
+    var visibleArtistsResult by remember { mutableStateOf<List<Artist>?>(null) }
+    LaunchedEffect(sortedArtists, searchQuery) {
+        visibleArtistsResult = withContext(Dispatchers.Default) {
+            filterArtistsByQuery(sortedArtists, searchQuery)
+        }
     }
+    val visibleArtists = visibleArtistsResult ?: if (searchQuery.isBlank()) sortedArtists else emptyList()
     FavoriteLibraryDesktopScaffold(
         title = "Favorite Artists",
         countLabel = "${sortedArtists.size} artists",
@@ -262,12 +270,13 @@ fun FavoriteAlbumsDesktopView(
     val sortedAlbums = remember(catalog.albums, libraryUi.sortBy, libraryUi.ascending) {
         sortAlbumsForLibrary(catalog.albums, libraryUi.sortBy, libraryUi.ascending).filter { it.favorite }
     }
-    val visibleAlbums = remember(sortedAlbums, searchQuery) {
-        val q = searchQuery.trim()
-        if (q.isBlank()) sortedAlbums else sortedAlbums.filter {
-            it.title.contains(q, ignoreCase = true) || it.artist.contains(q, ignoreCase = true)
+    var visibleAlbumsResult by remember { mutableStateOf<List<Album>?>(null) }
+    LaunchedEffect(sortedAlbums, searchQuery) {
+        visibleAlbumsResult = withContext(Dispatchers.Default) {
+            filterAlbumsByQuery(sortedAlbums, searchQuery)
         }
     }
+    val visibleAlbums = visibleAlbumsResult ?: if (searchQuery.isBlank()) sortedAlbums else emptyList()
     LaunchedEffect(visibleAlbums.firstOrNull()?.id) {
         if (selectedAlbumId == null) selectedAlbumId = visibleAlbums.firstOrNull()?.id
     }
@@ -316,9 +325,13 @@ fun FavoritePlaylistsDesktopView(
     val favoritePlaylists = remember(playlists) {
         playlists.filter { it.favorite }.sortedBy { it.title.lowercase() }
     }
-    val visiblePlaylists = remember(favoritePlaylists, searchQuery) {
-        filterPlaylistsByQuery(favoritePlaylists, searchQuery)
+    var visiblePlaylistsResult by remember { mutableStateOf<List<Playlist>?>(null) }
+    LaunchedEffect(favoritePlaylists, searchQuery) {
+        visiblePlaylistsResult = withContext(Dispatchers.Default) {
+            filterPlaylistsByQuery(favoritePlaylists, searchQuery)
+        }
     }
+    val visiblePlaylists = visiblePlaylistsResult ?: if (searchQuery.isBlank()) favoritePlaylists else emptyList()
     FavoriteLibraryDesktopScaffold(
         title = "Favorite Playlists",
         countLabel = "${favoritePlaylists.size} playlists",
@@ -485,25 +498,27 @@ fun LibraryDesktopView(
     val sortedTracks = remember(filteredTracks, sortBy, ascending) {
         sortTracksForLibrary(filteredTracks, sortBy, ascending)
     }
-    // Scoped search: filter the currently-visible tab's collection by the query.
-    val visibleArtists = remember(sortedArtists, searchQuery) {
-        val q = searchQuery.trim()
-        if (q.isBlank()) sortedArtists else sortedArtists.filter { it.title.contains(q, ignoreCase = true) }
-    }
-    val visibleAlbums = remember(sortedAlbums, searchQuery) {
-        val q = searchQuery.trim()
-        if (q.isBlank()) sortedAlbums else sortedAlbums.filter {
-            it.title.contains(q, ignoreCase = true) || it.artist.contains(q, ignoreCase = true)
+    var visibleArtistsResult by remember { mutableStateOf<List<Artist>?>(null) }
+    var visibleAlbumsResult by remember { mutableStateOf<List<Album>?>(null) }
+    var visibleTracksResult by remember { mutableStateOf<List<Track>?>(null) }
+    LaunchedEffect(sortedArtists, searchQuery) {
+        visibleArtistsResult = withContext(Dispatchers.Default) {
+            filterArtistsByQuery(sortedArtists, searchQuery)
         }
     }
-    val visibleTracks = remember(sortedTracks, searchQuery) {
-        val q = searchQuery.trim()
-        if (q.isBlank()) sortedTracks else sortedTracks.filter {
-            it.title.contains(q, ignoreCase = true) ||
-                it.artist.contains(q, ignoreCase = true) ||
-                it.album.contains(q, ignoreCase = true)
+    LaunchedEffect(sortedAlbums, searchQuery) {
+        visibleAlbumsResult = withContext(Dispatchers.Default) {
+            filterAlbumsByQuery(sortedAlbums, searchQuery)
         }
     }
+    LaunchedEffect(sortedTracks, searchQuery) {
+        visibleTracksResult = withContext(Dispatchers.Default) {
+            filterTracksByQuery(sortedTracks, searchQuery)
+        }
+    }
+    val visibleArtists = visibleArtistsResult ?: if (searchQuery.isBlank()) sortedArtists else emptyList()
+    val visibleAlbums = visibleAlbumsResult ?: if (searchQuery.isBlank()) sortedAlbums else emptyList()
+    val visibleTracks = visibleTracksResult ?: if (searchQuery.isBlank()) sortedTracks else emptyList()
     val artistTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.artistTotal else null
     val albumTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.albumTotal else null
     val trackTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.trackTotal else null
@@ -1220,120 +1235,147 @@ fun LibraryFilterOptionsMenu(
             PhoebeIconView(PhoebeIcon.More, tint = PhoebeUi.mutedText, modifier = Modifier.size(18.dp))
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            sortKeysFor(filter).forEach { key ->
-                DropdownMenuItem(
-                    text = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (key == prefs.sortBy) {
-                                PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
-                            } else {
-                                Spacer(Modifier.size(14.dp))
-                            }
-                            Text("Sort: ${sortLabelFor(filter, key)}")
-                        }
-                    },
-                    onClick = {
-                        onSortBy(key)
-                        expanded = false
-                    },
-                )
-            }
-            OrderMenuItem(
-                label = "Ascending",
-                selected = prefs.ascending,
-                onClick = {
-                    onAscending(true)
-                    expanded = false
-                },
+            LibraryFilterOptionsMenuItems(
+                filter = filter,
+                prefs = prefs,
+                onSortBy = onSortBy,
+                onAscending = onAscending,
+                libraryViewMode = libraryViewMode,
+                onLibraryViewMode = onLibraryViewMode,
+                onColumns = onColumns,
+                songFilter = songFilter,
+                onSongFilter = onSongFilter,
+                onDismiss = { expanded = false },
             )
-            OrderMenuItem(
-                label = "Descending",
-                selected = !prefs.ascending,
-                onClick = {
-                    onAscending(false)
-                    expanded = false
-                },
-            )
-            if (filter != LibraryFilterTab.Songs) {
-                DropdownMenuItem(
-                    text = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (libraryViewMode == LibraryViewMode.Grid) {
-                                PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
-                            } else {
-                                Spacer(Modifier.size(14.dp))
-                            }
-                            Text("View: Grid")
-                        }
-                    },
-                    onClick = {
-                        onLibraryViewMode(LibraryViewMode.Grid)
-                        expanded = false
-                    },
-                )
-                DropdownMenuItem(
-                    text = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (libraryViewMode == LibraryViewMode.List) {
-                                PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
-                            } else {
-                                Spacer(Modifier.size(14.dp))
-                            }
-                            Text("View: List")
-                        }
-                    },
-                    onClick = {
-                        onLibraryViewMode(LibraryViewMode.List)
-                        expanded = false
-                    },
-                )
-            }
-            if (filter == LibraryFilterTab.Songs && songFilter != null && onSongFilter != null) {
-                SongFileFilter.entries.forEach { option ->
-                    DropdownMenuItem(
-                        text = {
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                                if (option == songFilter) {
-                                    PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
-                                } else {
-                                    Spacer(Modifier.size(14.dp))
-                                }
-                                Text(
-                                    when (option) {
-                                        SongFileFilter.All -> "Filter: All files"
-                                        SongFileFilter.Lossless -> "Filter: Lossless"
-                                        SongFileFilter.Lossy -> "Filter: Lossy"
-                                    },
-                                )
-                            }
-                        },
-                        onClick = {
-                            onSongFilter(option)
-                            expanded = false
-                        },
-                    )
-                }
-            }
-            if (filter == LibraryFilterTab.Songs) {
-                DropdownMenuItem(
-                    text = { Text("Columns", color = PhoebeUi.mutedText, fontWeight = FontWeight.SemiBold) },
-                    onClick = {},
-                    enabled = false,
-                )
-                val columns = prefs.columns
-                ColumnsToggleRow("Duration", columns.duration) { onColumns(columns.copy(duration = !columns.duration)) }
-                ColumnsToggleRow("Audio codec", columns.audioCodec) { onColumns(columns.copy(audioCodec = !columns.audioCodec)) }
-                ColumnsToggleRow("Bitrate", columns.bitrate) { onColumns(columns.copy(bitrate = !columns.bitrate)) }
-                ColumnsToggleRow("Sample rate", columns.sampleRate) { onColumns(columns.copy(sampleRate = !columns.sampleRate)) }
-                ColumnsToggleRow("File type", columns.fileType) { onColumns(columns.copy(fileType = !columns.fileType)) }
-                ColumnsToggleRow("Date added", columns.dateAdded) { onColumns(columns.copy(dateAdded = !columns.dateAdded)) }
-                ColumnsToggleRow("Rating", columns.rating) { onColumns(columns.copy(rating = !columns.rating)) }
-                ColumnsToggleRow("Favorite", columns.favorite) { onColumns(columns.copy(favorite = !columns.favorite)) }
-                ColumnsToggleRow("File path", columns.filepath) { onColumns(columns.copy(filepath = !columns.filepath)) }
-                ColumnsToggleRow("Year", columns.year) { onColumns(columns.copy(year = !columns.year)) }
-                ColumnsToggleRow("Genre", columns.genre) { onColumns(columns.copy(genre = !columns.genre)) }
-            }
         }
+    }
+}
+
+@Composable
+fun LibraryFilterOptionsMenuItems(
+    filter: LibraryFilterTab,
+    prefs: LibraryUiPreferences,
+    onSortBy: (LibrarySortBy) -> Unit,
+    onAscending: (Boolean) -> Unit,
+    libraryViewMode: LibraryViewMode,
+    onLibraryViewMode: (LibraryViewMode) -> Unit,
+    onColumns: (LibraryColumnVisibility) -> Unit,
+    songFilter: SongFileFilter? = null,
+    onSongFilter: ((SongFileFilter) -> Unit)? = null,
+    onDismiss: () -> Unit,
+) {
+    sortKeysFor(filter).forEach { key ->
+        DropdownMenuItem(
+            text = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (key == prefs.sortBy) {
+                        PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
+                    } else {
+                        Spacer(Modifier.size(14.dp))
+                    }
+                    Text("Sort: ${sortLabelFor(filter, key)}")
+                }
+            },
+            onClick = {
+                onSortBy(key)
+                onDismiss()
+            },
+        )
+    }
+    OrderMenuItem(
+        label = "Ascending",
+        selected = prefs.ascending,
+        onClick = {
+            onAscending(true)
+            onDismiss()
+        },
+    )
+    OrderMenuItem(
+        label = "Descending",
+        selected = !prefs.ascending,
+        onClick = {
+            onAscending(false)
+            onDismiss()
+        },
+    )
+    if (filter != LibraryFilterTab.Songs) {
+        DropdownMenuItem(
+            text = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (libraryViewMode == LibraryViewMode.Grid) {
+                        PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
+                    } else {
+                        Spacer(Modifier.size(14.dp))
+                    }
+                    Text("View: Grid")
+                }
+            },
+            onClick = {
+                onLibraryViewMode(LibraryViewMode.Grid)
+                onDismiss()
+            },
+        )
+        DropdownMenuItem(
+            text = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (libraryViewMode == LibraryViewMode.List) {
+                        PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
+                    } else {
+                        Spacer(Modifier.size(14.dp))
+                    }
+                    Text("View: List")
+                }
+            },
+            onClick = {
+                onLibraryViewMode(LibraryViewMode.List)
+                onDismiss()
+            },
+        )
+    }
+    if (filter == LibraryFilterTab.Songs && songFilter != null && onSongFilter != null) {
+        SongFileFilter.entries.forEach { option ->
+            DropdownMenuItem(
+                text = {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                        if (option == songFilter) {
+                            PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
+                        } else {
+                            Spacer(Modifier.size(14.dp))
+                        }
+                        Text(
+                            when (option) {
+                                SongFileFilter.All -> "Filter: All files"
+                                SongFileFilter.Lossless -> "Filter: Lossless"
+                                SongFileFilter.Lossy -> "Filter: Lossy"
+                            },
+                        )
+                    }
+                },
+                onClick = {
+                    onSongFilter(option)
+                    onDismiss()
+                },
+            )
+        }
+    }
+    if (filter == LibraryFilterTab.Songs) {
+        DropdownMenuItem(
+            text = { Text("Columns", color = PhoebeUi.mutedText, fontWeight = FontWeight.SemiBold) },
+            onClick = {},
+            enabled = false,
+        )
+        val columns = prefs.columns
+        ColumnsToggleRow("Duration", columns.duration) { onColumns(columns.copy(duration = !columns.duration)) }
+        ColumnsToggleRow("Audio codec", columns.audioCodec) { onColumns(columns.copy(audioCodec = !columns.audioCodec)) }
+        ColumnsToggleRow("Bitrate", columns.bitrate) { onColumns(columns.copy(bitrate = !columns.bitrate)) }
+        ColumnsToggleRow("Sample rate", columns.sampleRate) { onColumns(columns.copy(sampleRate = !columns.sampleRate)) }
+        ColumnsToggleRow("File type", columns.fileType) { onColumns(columns.copy(fileType = !columns.fileType)) }
+        ColumnsToggleRow("Date added", columns.dateAdded) { onColumns(columns.copy(dateAdded = !columns.dateAdded)) }
+        ColumnsToggleRow("Rating", columns.rating) { onColumns(columns.copy(rating = !columns.rating)) }
+        ColumnsToggleRow("Favorite", columns.favorite) { onColumns(columns.copy(favorite = !columns.favorite)) }
+        ColumnsToggleRow("File path", columns.filepath) { onColumns(columns.copy(filepath = !columns.filepath)) }
+        ColumnsToggleRow("Year", columns.year) { onColumns(columns.copy(year = !columns.year)) }
+        ColumnsToggleRow("Genre", columns.genre) { onColumns(columns.copy(genre = !columns.genre)) }
     }
 }
 

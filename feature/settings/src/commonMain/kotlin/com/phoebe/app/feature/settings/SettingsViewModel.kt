@@ -62,6 +62,10 @@ class SettingsViewModel : ViewModel() {
         mutableState.update { it?.copy(appSettings = it.appSettings.copy(blurredArtworkAppearance = enabled)) }
     }
 
+    fun onTintedBackgroundGradient(enabled: Boolean) {
+        mutableState.update { it?.copy(appSettings = it.appSettings.copy(tintedBackgroundGradient = enabled)) }
+    }
+
     fun onHomeSections(sections: List<HomeSection>) {
         mutableState.update { it?.copy(libraryUi = it.libraryUi.copy(homeSections = sections)) }
     }

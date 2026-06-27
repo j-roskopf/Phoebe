@@ -265,6 +265,8 @@ internal data class SettingsActions(
     val audioProcessingCapabilities: AudioProcessingCapabilities = AudioProcessingCapabilities(),
     val onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
     val onBlurredArtworkAppearance: (Boolean) -> Unit = {},
+    val onFullBleedDetailArtwork: (Boolean) -> Unit = {},
+    val onTintedBackgroundGradient: (Boolean) -> Unit = {},
     val onDownloadDirectory: (String?) -> Unit,
     val onDeleteAllDownloads: () -> Unit,
     val onDeleteCompletedDownloads: () -> Unit = {},

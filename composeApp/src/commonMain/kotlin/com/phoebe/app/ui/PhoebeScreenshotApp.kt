@@ -249,8 +249,10 @@ internal enum class PhoebeScreenshotScenario {
     Radio,
     Playlist,
     Artist,
+    ArtistOldLayout,
     ArtistRadio,
     Album,
+    AlbumOldLayout,
     CollectionValues,
     CollectionItems,
     Song,
@@ -385,9 +387,12 @@ internal fun PhoebeDesktopScreenshotScenario(
         PhoebeScreenshotScenario.FavoriteArtists -> AppScreen.FavoriteArtists
         PhoebeScreenshotScenario.FavoriteAlbums -> AppScreen.FavoriteAlbums
         PhoebeScreenshotScenario.Artist,
+        PhoebeScreenshotScenario.ArtistOldLayout,
         PhoebeScreenshotScenario.ArtistRadio,
         -> AppScreen.ArtistDetail(fixture.artist)
-        PhoebeScreenshotScenario.Album -> AppScreen.AlbumDetail(fixture.album)
+        PhoebeScreenshotScenario.Album,
+        PhoebeScreenshotScenario.AlbumOldLayout,
+        -> AppScreen.AlbumDetail(fixture.album)
         PhoebeScreenshotScenario.CollectionValues -> AppScreen.Collections(CollectionEntry(CollectionTarget.Artists, CollectionFacet.Genre))
         PhoebeScreenshotScenario.CollectionItems -> AppScreen.CollectionItems(CollectionEntry(CollectionTarget.Artists, CollectionFacet.Genre), "Dream pop")
         PhoebeScreenshotScenario.Song -> AppScreen.SongDetail(fixture.currentTrack)
@@ -562,7 +567,10 @@ internal fun PhoebeDesktopScreenshotScenario(
             onRetryServers = {},
         ),
         settingsState = SettingsUiState(
-            appSettings = AppSettings.Default,
+            appSettings = AppSettings.Default.copy(
+                fullBleedDetailArtwork = scenario != PhoebeScreenshotScenario.ArtistOldLayout &&
+                    scenario != PhoebeScreenshotScenario.AlbumOldLayout,
+            ),
             downloadDirectory = null,
             downloadCount = fixture.catalog.downloads.size,
             defaultDownloadDirectoryLabel = "App storage",
@@ -690,6 +698,7 @@ internal fun PhoebeMobileScreenshotScenario(
                 modifier = Modifier.fillMaxSize(),
             )
             PhoebeScreenshotScenario.Artist,
+            PhoebeScreenshotScenario.ArtistOldLayout,
             PhoebeScreenshotScenario.ArtistRadio,
             -> ArtistDetailRoute(
                 state = ArtistDetailRouteState(
@@ -715,7 +724,9 @@ internal fun PhoebeMobileScreenshotScenario(
                 ),
                 modifier = Modifier.fillMaxSize(),
             )
-            PhoebeScreenshotScenario.Album -> AlbumDetailRoute(
+            PhoebeScreenshotScenario.Album,
+            PhoebeScreenshotScenario.AlbumOldLayout,
+            -> AlbumDetailRoute(
                 state = AlbumDetailRouteState(
                     album = fixture.album,
                     catalog = catalog,

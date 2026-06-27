@@ -12,12 +12,15 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -35,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -54,9 +58,6 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.phoebe.app.data.artistAlbumCountSubtitle
-import com.phoebe.app.data.filterAlbumsByQuery
-import com.phoebe.app.data.filterArtistsByQuery
-import com.phoebe.app.data.filterTracksByQuery
 import com.phoebe.app.domain.Album
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.CatalogSnapshot
@@ -71,6 +72,7 @@ import com.phoebe.app.domain.filterWith
 import com.phoebe.app.domain.parseAdvancedSearchQuery
 import com.phoebe.app.ui.ArtworkImage
 import com.phoebe.app.ui.AutoScrollingText
+import com.phoebe.app.ui.LocalMobileChromePadding
 import com.phoebe.app.ui.PhoebeIcon
 import com.phoebe.app.ui.PhoebeIconView
 import com.phoebe.app.ui.PhoebeDesktopLayout
@@ -81,6 +83,8 @@ import com.phoebe.app.ui.SectionLabel
 import com.phoebe.app.ui.TrackArtworkImage
 import com.phoebe.app.ui.formatDuration
 import com.phoebe.app.ui.openContextMenuOnSecondaryClick
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 data class SearchUiResults(
     val tracks: List<Track>,
@@ -98,15 +102,28 @@ internal enum class SearchResultScope {
     Artists,
 }
 
+private const val SearchResultLimit = 500
+
 @Composable
 internal fun rememberSearchUiResults(catalog: CatalogSnapshot, searchQuery: String): SearchUiResults {
     val query = searchQuery.trim()
-    val allTracks = remember(catalog.tracksByParent) {
-        catalog.tracksByParent.values.asSequence().flatten().distinctBy { it.id }.toList()
-    }
-    return remember(catalog.albums, catalog.artists, allTracks, query) {
-        deriveSearchUiResults(catalog, query, allTracks)
-    }
+    return produceState(
+        initialValue = SearchResultsFactory.EmptyResults,
+        catalog.albums,
+        catalog.artists,
+        catalog.tracksByParent,
+        catalog.downloads,
+        query,
+    ) {
+        value = if (query.isBlank()) {
+            SearchResultsFactory.EmptyResults
+        } else {
+            withContext(Dispatchers.Default) {
+                val allTracks = catalog.tracksByParent.values.asSequence().flatten().distinctBy { it.id }.toList()
+                deriveSearchUiResults(catalog, query, allTracks)
+            }
+        }
+    }.value
 }
 
 fun deriveSearchUiResults(
@@ -129,9 +146,28 @@ fun deriveSearchUiResults(
     val filterContext = catalog.toTrackFilterContext()
     val filteredTracks = tracks.filterWith(advancedQuery.filter, filterContext)
     val textQuery = advancedQuery.text.ifBlank { query.takeIf { advancedQuery.filter.rules.isEmpty() }.orEmpty() }
-    val matchingTracks = if (textQuery.isBlank()) filteredTracks else filterTracksByQuery(filteredTracks, textQuery)
-    val albums = if (textQuery.isBlank()) emptyList() else filterAlbumsByQuery(catalog.albums, textQuery)
-    val artists = if (textQuery.isBlank()) emptyList() else filterArtistsByQuery(catalog.artists, textQuery)
+    val matchingTracks = if (textQuery.isBlank()) {
+        filteredTracks.take(SearchResultLimit)
+    } else {
+        filteredTracks.matchingSearch(textQuery) {
+            it.title.contains(textQuery, ignoreCase = true) ||
+                it.artist.contains(textQuery, ignoreCase = true) ||
+                it.album.contains(textQuery, ignoreCase = true)
+        }
+    }
+    val albums = if (textQuery.isBlank()) {
+        emptyList()
+    } else {
+        catalog.albums.matchingSearch(textQuery) {
+            it.title.contains(textQuery, ignoreCase = true) ||
+                it.artist.contains(textQuery, ignoreCase = true)
+        }
+    }
+    val artists = if (textQuery.isBlank()) {
+        emptyList()
+    } else {
+        catalog.artists.matchingSearch(textQuery) { it.title.contains(textQuery, ignoreCase = true) }
+    }
     return SearchUiResults(
         tracks = matchingTracks,
         albums = albums,
@@ -140,6 +176,19 @@ fun deriveSearchUiResults(
         topAlbum = bestSearchMatch(albums, textQuery) { it.title },
         topTrack = bestSearchMatch(matchingTracks, textQuery) { it.title },
     )
+}
+
+private inline fun <T> Iterable<T>.matchingSearch(query: String, matches: (T) -> Boolean): List<T> {
+    val trimmed = query.trim()
+    if (trimmed.isBlank()) return emptyList()
+    val results = ArrayList<T>(SearchResultLimit)
+    for (item in this) {
+        if (matches(item)) {
+            results += item
+            if (results.size == SearchResultLimit) break
+        }
+    }
+    return results
 }
 
 private fun CatalogSnapshot.toTrackFilterContext(): TrackFilterContext {
@@ -373,6 +422,7 @@ fun SearchDesktopView(
     ) -> Unit = { track, expanded, onDismiss, onAddToUpNext, onDownload ->
         DefaultSearchTrackMenuContent(track, expanded, onDismiss, onAddToUpNext, onDownload)
     },
+    topBar: (@Composable () -> Unit)? = null,
 ) {
     val results = rememberSearchUiResults(catalog, searchQuery)
     val searchHistory = LocalSearchHistory.current
@@ -558,6 +608,7 @@ fun SearchMobileView(
     ) -> Unit = { track, expanded, onDismiss, onAddToUpNext, onDownload ->
         DefaultSearchTrackMenuContent(track, expanded, onDismiss, onAddToUpNext, onDownload)
     },
+    topBar: (@Composable () -> Unit)? = null,
 ) {
     val results = rememberSearchUiResults(catalog, searchQuery)
     val searchHistory = LocalSearchHistory.current
@@ -578,11 +629,18 @@ fun SearchMobileView(
         tracks.getOrNull(index)?.let(searchHistory.recordTrack)
         onPlayTracks(tracks, index)
     }
+    val chromePadding = LocalMobileChromePadding.current
     LazyColumn(
         modifier = modifier.padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp),
-        contentPadding = PaddingValues(bottom = 18.dp),
+        contentPadding = PaddingValues(
+            top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 10.dp,
+            bottom = chromePadding.bottom + 18.dp,
+        ),
     ) {
+        topBar?.let { header ->
+            item(key = "top-bar", contentType = "top-bar") { header() }
+        }
         item(contentType = "search-field") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 SearchInputWithSyntaxHelp(searchQuery, onSearchQuery, Modifier.fillMaxWidth())

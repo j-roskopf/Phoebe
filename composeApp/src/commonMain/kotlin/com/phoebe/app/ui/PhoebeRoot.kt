@@ -1145,7 +1145,7 @@ private fun PhoebeRootStateHolder(
             val shellModifier = if (compact) {
                 Modifier
                     .fillMaxSize()
-                    .background(PhoebeUi.shellTop)
+                    .phoebeShellBackground(appSettings.tintedBackgroundGradient)
                     .padding(top = compactDesktopTopPadding)
             } else {
                 val shellInsets = if (mergesTitleBar) {
@@ -1157,13 +1157,7 @@ private fun PhoebeRootStateHolder(
                 }
                 Modifier
                     .fillMaxSize()
-                    .background(
-                        Brush.radialGradient(
-                            colors = listOf(PhoebeUi.shellRadialTint, PhoebeUi.canvasBackground),
-                            center = Offset(420f, 40f),
-                            radius = 960f,
-                        ),
-                    )
+                    .phoebeShellBackground(appSettings.tintedBackgroundGradient)
                     .windowInsetsPadding(shellInsets)
             }
             Box(modifier = shellModifier) {
@@ -1217,7 +1211,7 @@ private fun PhoebeRootStateHolder(
                     backStack = renderableMobileContentRoutes,
                     modifier = Modifier.fillMaxSize(),
                     animateTransitions = true,
-                    opaqueSceneBackgrounds = true,
+                    opaqueSceneBackgrounds = !isDesktopPlatform(),
                     onBack = {
                         when (navigator.currentRoute) {
                             is PhoebeRoute.PlaylistDetail -> exitPlaylistDetail()
@@ -1301,6 +1295,7 @@ private fun PhoebeRootStateHolder(
                             searchQuery = searchQuery,
                             artistRadioAvailability = artistRadioAvailability[scr.artist.id],
                             artistRadioStarting = scr.artist.id in radioStartingIds,
+                            fullBleedArtwork = appSettings.fullBleedDetailArtwork,
                         ),
                         actions = ArtistDetailRouteActions(
                             onBack = { navigator.pop() },
@@ -1326,6 +1321,7 @@ private fun PhoebeRootStateHolder(
                             libraryUi = libraryUi,
                             catalogRefreshing = catalogRefreshing,
                             searchQuery = searchQuery,
+                            fullBleedArtwork = appSettings.fullBleedDetailArtwork,
                         ),
                         actions = AlbumDetailRouteActions(
                             onBack = { navigator.pop() },
@@ -1660,6 +1656,7 @@ private fun PhoebeRootStateHolder(
                         onAudioProcessingSettings = state::setAudioProcessingSettings,
                         onVisualizerPreset = state::setNowPlayingVisualizerPreset,
                         onBlurredArtworkAppearance = state::setBlurredArtworkAppearance,
+                        onTintedBackgroundGradient = state::setTintedBackgroundGradient,
                         downloadDirectory = downloadDirectory,
                         downloadCount = downloads.size,
                         downloadItems = downloads,
@@ -2126,6 +2123,8 @@ private fun PhoebeRootStateHolder(
                         audioProcessingCapabilities = state.audioProcessingCapabilities,
                         onVisualizerPreset = state::setNowPlayingVisualizerPreset,
                         onBlurredArtworkAppearance = state::setBlurredArtworkAppearance,
+                        onFullBleedDetailArtwork = state::setFullBleedDetailArtwork,
+                        onTintedBackgroundGradient = state::setTintedBackgroundGradient,
                         onDownloadDirectory = state::setDownloadDirectory,
                         onDeleteAllDownloads = state::deleteAllDownloads,
                         onDeleteCompletedDownloads = state::deleteCompletedDownloads,
@@ -2492,6 +2491,7 @@ private fun MobilePlayerHost(
             equalizerRemoteUnavailable = equalizerRemoteUnavailable,
             visualizerPreset = appSettings.nowPlayingVisualizerPreset,
             blurredArtworkAppearance = appSettings.blurredArtworkAppearance,
+            tintedBackgroundGradient = appSettings.tintedBackgroundGradient,
             audioAnalysis = audioAnalysis,
             handleSystemBack = handleSystemBack,
             expansionFraction = expansionFraction,

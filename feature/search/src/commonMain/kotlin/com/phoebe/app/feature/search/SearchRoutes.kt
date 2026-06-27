@@ -49,22 +49,14 @@ fun SearchDesktopRoute(
     LaunchedEffect(catalog, catalogRefreshing) {
         viewModel.updateCatalog(catalog, catalogRefreshing)
     }
-    LaunchedEffect(searchQuery) {
-        viewModel.onQuery(searchQuery)
-    }
     val state by viewModel.state.collectAsStateWithLifecycle()
     SearchDesktopRoute(
         state = SearchDesktopRouteState(
             catalog = state.catalog,
             catalogRefreshing = state.catalogRefreshing,
-            query = state.query,
+            query = searchQuery,
         ),
-        actions = actions.copy(
-            onQuery = { query ->
-                viewModel.onQuery(query)
-                actions.onQuery(query)
-            },
-        ),
+        actions = actions,
         modifier = modifier,
         loadingContent = loadingContent,
         trackMenuContent = trackMenuContent,
@@ -121,29 +113,23 @@ fun SearchMobileRoute(
     ) -> Unit = { track, expanded, onDismiss, onAddToUpNext, onDownload ->
         DefaultSearchTrackMenuContent(track, expanded, onDismiss, onAddToUpNext, onDownload)
     },
+    topBar: (@Composable () -> Unit)? = null,
 ) {
     LaunchedEffect(catalog, catalogRefreshing) {
         viewModel.updateCatalog(catalog, catalogRefreshing)
-    }
-    LaunchedEffect(searchQuery) {
-        viewModel.onQuery(searchQuery)
     }
     val state by viewModel.state.collectAsStateWithLifecycle()
     SearchMobileRoute(
         state = SearchDesktopRouteState(
             catalog = state.catalog,
             catalogRefreshing = state.catalogRefreshing,
-            query = state.query,
+            query = searchQuery,
         ),
-        actions = actions.copy(
-            onQuery = { query ->
-                viewModel.onQuery(query)
-                actions.onQuery(query)
-            },
-        ),
+        actions = actions,
         modifier = modifier,
         loadingContent = loadingContent,
         trackMenuContent = trackMenuContent,
+        topBar = topBar,
     )
 }
 
@@ -162,6 +148,7 @@ fun SearchMobileRoute(
     ) -> Unit = { track, expanded, onDismiss, onAddToUpNext, onDownload ->
         DefaultSearchTrackMenuContent(track, expanded, onDismiss, onAddToUpNext, onDownload)
     },
+    topBar: (@Composable () -> Unit)? = null,
 ) {
     SearchMobileView(
         catalog = state.catalog,
@@ -176,5 +163,6 @@ fun SearchMobileRoute(
         onDownload = actions.onDownload,
         loadingContent = loadingContent,
         trackMenuContent = trackMenuContent,
+        topBar = topBar,
     )
 }

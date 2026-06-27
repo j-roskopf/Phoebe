@@ -122,6 +122,7 @@ fun RadioRoute(
     contentPadding: PaddingValues = PaddingValues(horizontal = 36.dp, vertical = 28.dp),
     sectionIndexMode: LibrarySectionIndexMode = LibrarySectionIndexMode.DesktopScrollbar,
     mode: RadioRouteMode = RadioRouteMode.Home,
+    topBar: (@Composable () -> Unit)? = null,
 ) {
     var queryText by remember(state.directory.searchQuery.text) { mutableStateOf(state.directory.searchQuery.text) }
     var editingStation by remember { mutableStateOf<RadioStation?>(null) }
@@ -222,7 +223,7 @@ fun RadioRoute(
         recommendedByCategory,
     ) {
         buildList {
-            var anchorItemIndex = 0
+            var anchorItemIndex = if (topBar == null) 0 else 1
             add("Top" to anchorItemIndex)
             anchorItemIndex += 2
 
@@ -306,13 +307,16 @@ fun RadioRoute(
             }
     }
 
-    Box(modifier.fillMaxSize().background(PhoebeUi.shellTop)) {
+    Box(modifier.fillMaxSize()) {
         LazyColumn(
             state = listState,
             modifier = Modifier.fillMaxSize(),
             contentPadding = listContentPadding,
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            topBar?.let { header ->
+                item(key = "top-bar", contentType = "top-bar") { header() }
+            }
             if (sectionIndexMode != LibrarySectionIndexMode.MobileScrollbar) {
                 item(contentType = "header") {
                     Row(

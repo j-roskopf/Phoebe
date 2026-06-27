@@ -205,6 +205,7 @@ fun MobilePlayer(
     equalizerRemoteUnavailable: Boolean = false,
     visualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
     blurredArtworkAppearance: Boolean = true,
+    tintedBackgroundGradient: Boolean = false,
     audioAnalysis: AudioAnalysisFrame = AudioAnalysisFrame.Empty,
     onToggle: () -> Unit,
     onPrevious: () -> Unit,
@@ -349,13 +350,15 @@ fun MobilePlayer(
                             ),
                         )
                     )
-                    drawRect(
-                        brush = Brush.radialGradient(
-                            colors = listOf(shellRadialTint.copy(alpha = clampedExpansionFraction * 0.105f), Color.Transparent),
-                            center = Offset(210f * this.density, 50f * this.density),
-                            radius = 520f * this.density,
+                    if (tintedBackgroundGradient) {
+                        drawRect(
+                            brush = Brush.radialGradient(
+                                colors = listOf(shellRadialTint.copy(alpha = clampedExpansionFraction), Color.Transparent),
+                                center = Offset(210f * this.density, 50f * this.density),
+                                radius = 520f * this.density,
+                            )
                         )
-                    )
+                    }
                 }
                 if (collapsedChromeAlpha > 0f) {
                     drawRect(color = navBarColor.copy(alpha = collapsedChromeAlpha))

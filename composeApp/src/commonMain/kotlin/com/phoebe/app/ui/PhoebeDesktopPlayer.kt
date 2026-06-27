@@ -24,7 +24,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.phoebe.app.domain.AppScreen
@@ -302,6 +301,7 @@ internal fun DesktopPlayer(
     val onPersistVolumeSettingsFromSettings = settingsActions.onPersistVolumeSettings
     val onVisualizerPresetFromSettings = settingsActions.onVisualizerPreset
     val onBlurredArtworkAppearance = settingsActions.onBlurredArtworkAppearance
+    val onFullBleedDetailArtwork = settingsActions.onFullBleedDetailArtwork
     val onDownloadDirectory = settingsActions.onDownloadDirectory
     val onDeleteAllDownloads = settingsActions.onDeleteAllDownloads
     val onDeleteCompletedDownloads = settingsActions.onDeleteCompletedDownloads
@@ -325,14 +325,11 @@ internal fun DesktopPlayer(
         Box(
             Modifier
                 .fillMaxSize()
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(PhoebeUi.shellRadialTint, PhoebeUi.shellBottom),
-                        center = Offset(500f, 20f),
-                        radius = 560f,
-                    ),
-                )
-                .background(Brush.verticalGradient(listOf(PhoebeUi.shellTop, PhoebeUi.shellBottom))),
+                .phoebeShellBackground(
+                    tintedGradient = appSettings.tintedBackgroundGradient,
+                    center = Offset(520f, 48f),
+                    radius = 1_420f,
+                ),
         ) {
                 Row(Modifier.fillMaxSize()) {
                     Sidebar(
@@ -397,7 +394,6 @@ internal fun DesktopPlayer(
                                         backStack = displayRoutes,
                                         modifier = Modifier.fillMaxSize(),
                                         animateTransitions = sharedElementsEnabled,
-                                        opaqueSceneBackgrounds = true,
                                         onBack = onPopDetail,
                                     ) { targetRoute ->
                                         val targetResolution = resolvePhoebeRoute(targetRoute, catalog, track)
@@ -475,6 +471,7 @@ internal fun DesktopPlayer(
                                             searchQuery = searchQuery,
                                             artistRadioAvailability = artistRadioAvailability[targetScreen.artist.id],
                                             artistRadioStarting = targetScreen.artist.id in radioStartingIds,
+                                            fullBleedArtwork = appSettings.fullBleedDetailArtwork,
                                         ),
                                         actions = ArtistDetailRouteActions(
                                             onBack = onPopDetail,
@@ -503,6 +500,7 @@ internal fun DesktopPlayer(
                                             libraryUi = libraryUi,
                                             catalogRefreshing = catalogRefreshing,
                                             searchQuery = searchQuery,
+                                            fullBleedArtwork = appSettings.fullBleedDetailArtwork,
                                         ),
                                         actions = AlbumDetailRouteActions(
                                             onBack = onPopDetail,
@@ -841,6 +839,8 @@ internal fun DesktopPlayer(
                                             onAudioProcessingSettings = settingsActions.onAudioProcessingSettings,
                                             onVisualizerPreset = onVisualizerPresetFromSettings,
                                             onBlurredArtworkAppearance = onBlurredArtworkAppearance,
+                                            onFullBleedDetailArtwork = onFullBleedDetailArtwork,
+                                            onTintedBackgroundGradient = settingsActions.onTintedBackgroundGradient,
                                             onHomeSections = onHomeSections,
                                             onMobileBottomTabs = onMobileBottomTabs,
                                             onPersonalMix = onPersonalMix,

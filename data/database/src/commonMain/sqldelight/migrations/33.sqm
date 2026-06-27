@@ -1,0 +1,1 @@
+ALTER TABLE AppSettingsRow ADD COLUMN tintedBackgroundGradient INTEGER NOT NULL DEFAULT 1;

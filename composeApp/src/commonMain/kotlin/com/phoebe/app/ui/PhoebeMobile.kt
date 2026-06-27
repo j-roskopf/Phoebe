@@ -30,9 +30,11 @@ import phoebe.composeapp.generated.resources.phoebe_icon_rounded
 import org.jetbrains.compose.resources.painterResource
 import com.phoebe.app.feature.home.*
 import com.phoebe.app.feature.library.LibraryFilterTab
+import com.phoebe.app.feature.library.LibraryFilterOptionsMenuItems
 import com.phoebe.app.feature.library.LibraryMobileRoute
 import com.phoebe.app.feature.library.LibraryRouteActions
 import com.phoebe.app.feature.library.LibraryRouteState
+import com.phoebe.app.feature.library.LibraryViewMode
 import com.phoebe.app.feature.library.PlaylistsMobileRoute
 import com.phoebe.app.feature.library.PlaylistsRouteActions
 import com.phoebe.app.feature.library.PlaylistsRouteState
@@ -344,6 +346,7 @@ internal fun MobileBrowseShell(
     audioProcessingCapabilities: AudioProcessingCapabilities = AudioProcessingCapabilities(),
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
     onBlurredArtworkAppearance: (Boolean) -> Unit = {},
+    onTintedBackgroundGradient: (Boolean) -> Unit = {},
     downloadDirectory: String?,
     downloadCount: Int,
     downloadItems: List<DownloadItem> = emptyList(),
@@ -383,6 +386,7 @@ internal fun MobileBrowseShell(
     showBottomChrome: Boolean = true,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    var mobileLibraryViewMode by remember { mutableStateOf(LibraryViewMode.Grid) }
     val pickLocalFolder = rememberPickLocalFolder(onPicked = onAddLocalFolder)
     val availableUpdate = when (val updateState = appUpdateState) {
         is AppUpdateState.Available -> updateState.update
@@ -417,10 +421,148 @@ internal fun MobileBrowseShell(
             inheritedChromePadding.bottom
         },
     )
+    val topBarScrollsWithContent = selectedPlaylistId == null &&
+        (section == BrowseSection.Home ||
+            section == BrowseSection.Search ||
+            section == BrowseSection.Library ||
+            section == BrowseSection.Playlists ||
+            section == BrowseSection.Radio)
+    @Composable
+    fun BrowseTopBar() {
+        MobileScreenToolbar(
+            title = toolbarTitle,
+            onBack = if (section == BrowseSection.Settings && selectedPlaylistId == null) {
+                { onNavigate(BrowseSection.Home) }
+            } else {
+                null
+            },
+            menuExpanded = menuExpanded,
+            onMenuExpandedChange = { menuExpanded = it },
+            showMenu = availableUpdate != null || !(section == BrowseSection.Settings && selectedPlaylistId == null),
+            menuTint = if (availableUpdate != null) PhoebeUpdateBlue else PhoebeUi.primaryText,
+            menuContent = {
+                if (section == BrowseSection.Library && selectedPlaylistId == null) {
+                    DropdownMenuItem(
+                        text = { Text("Library", color = PhoebeUi.mutedText, fontWeight = FontWeight.SemiBold) },
+                        onClick = {},
+                        enabled = false,
+                    )
+                    LibraryFilterOptionsMenuItems(
+                        filter = libraryFilter,
+                        prefs = libraryUi,
+                        onSortBy = onLibrarySortBy,
+                        onAscending = onLibraryAscending,
+                        libraryViewMode = mobileLibraryViewMode,
+                        onLibraryViewMode = { mobileLibraryViewMode = it },
+                        onColumns = onLibraryColumns,
+                        onDismiss = { menuExpanded = false },
+                    )
+                }
+                if (availableUpdate != null) {
+                    DropdownMenuItem(
+                        text = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                if (installingUpdateState != null) {
+                                    UpdateProgressRing(
+                                        progress = installingUpdateState.progress,
+                                        modifier = Modifier.size(18.dp),
+                                    )
+                                } else {
+                                    PhoebeIconView(PhoebeIcon.Update, tint = PhoebeUpdateBlue, modifier = Modifier.size(18.dp))
+                                }
+                                Text(
+                                    if (installingUpdateState != null) {
+                                        updateMenuProgressLabel(installingUpdateState)
+                                    } else {
+                                        "Update to ${availableUpdate.versionName}"
+                                    },
+                                )
+                            }
+                        },
+                        onClick = {
+                            if (!updateInstalling) onInstallUpdate()
+                            menuExpanded = false
+                        },
+                        enabled = !updateInstalling,
+                    )
+                }
+                val userName = session?.userName
+                if (userName != null) {
+                    DropdownMenuItem(
+                        text = { Text(userName, color = PhoebeUi.mutedText, fontSize = 13.sp) },
+                        onClick = {},
+                        enabled = false,
+                    )
+                }
+                if (LocalCatalogSyncState.current.isActive) {
+                    DropdownMenuItem(
+                        text = { CatalogMenuSyncIndicator() },
+                        onClick = {},
+                        enabled = false,
+                    )
+                }
+                DropdownMenuItem(
+                    text = {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            PhoebeIconView(PhoebeIcon.Download, tint = PhoebeUi.secondaryText, modifier = Modifier.size(18.dp))
+                            Text("Downloads")
+                        }
+                    },
+                    onClick = {
+                        onNavigate(BrowseSection.Downloads)
+                        menuExpanded = false
+                    },
+                )
+                DropdownMenuItem(
+                    text = {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            PhoebeIconView(PhoebeIcon.Settings, tint = PhoebeUi.secondaryText, modifier = Modifier.size(18.dp))
+                            Text("Settings")
+                        }
+                    },
+                    onClick = {
+                        onNavigate(BrowseSection.Settings)
+                        menuExpanded = false
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Refresh library") },
+                    onClick = {
+                        onRefreshLibrary()
+                        menuExpanded = false
+                    },
+                )
+                DropdownMenuItem(
+                    text = { Text("Add music folder") },
+                    onClick = {
+                        pickLocalFolder()
+                        menuExpanded = false
+                    },
+                )
+                if (session?.token?.isNotBlank() == true) {
+                    DropdownMenuItem(
+                        text = { Text("Sign out") },
+                        onClick = {
+                            onSignOut()
+                            menuExpanded = false
+                        },
+                    )
+                } else {
+                    DropdownMenuItem(
+                        text = { Text("Sign in") },
+                        onClick = {
+                            onOpenSignIn()
+                            menuExpanded = false
+                        },
+                    )
+                }
+            },
+        )
+    }
     Box(
         Modifier
             .fillMaxSize()
-            .background(PhoebeUi.shellTop),
+            .phoebeShellBackground(appSettings.tintedBackgroundGradient),
     ) {
         CompositionLocalProvider(LocalMobileChromePadding provides chromePadding) {
             Box(Modifier.fillMaxSize()) {
@@ -466,6 +608,7 @@ internal fun MobileBrowseShell(
                         onAudioProcessingSettings = onAudioProcessingSettings,
                         onVisualizerPreset = onVisualizerPreset,
                         onBlurredArtworkAppearance = onBlurredArtworkAppearance,
+                        onTintedBackgroundGradient = onTintedBackgroundGradient,
                         onHomeSections = onHomeSections,
                         onMobileBottomTabs = onMobileBottomTabs,
                         onPersonalMix = onPersonalMix,
@@ -570,6 +713,7 @@ internal fun MobileBrowseShell(
                         callbacks = mobileHomeCallbacks,
                         modifier = Modifier.fillMaxSize(),
                         initialExpandedPhoneSection = initialExpandedPhoneSection,
+                        topBar = { BrowseTopBar() },
                     )
                 }
                 section == BrowseSection.Library && selectedPlaylistId == null -> LibraryMobileRoute(
@@ -578,6 +722,7 @@ internal fun MobileBrowseShell(
                         catalogRefreshing = catalogRefreshing,
                         filter = libraryFilter,
                         libraryUi = libraryUi,
+                        searchQuery = searchQuery,
                         jellyfinPagination = (session.isEmbyFamily() || session.isNavidrome()) && session?.jellyfinSyncMode == JellyfinSyncMode.Quick,
                     ),
                     actions = LibraryRouteActions(
@@ -591,8 +736,11 @@ internal fun MobileBrowseShell(
                         onPlayTracks = onPlayTracks,
                         onAddToUpNext = onAddToUpNext,
                         onDownload = onDownload,
+                        onSearchQuery = onSearchQuery,
                     ),
                     modifier = Modifier.fillMaxSize(),
+                    libraryViewMode = mobileLibraryViewMode,
+                    topBar = { BrowseTopBar() },
                 )
                 section == BrowseSection.Search && selectedPlaylistId == null -> SearchMobileRoute(
                     viewModel = remember(routeViewModelFactory) { routeViewModelFactory.search() },
@@ -607,7 +755,7 @@ internal fun MobileBrowseShell(
                         onAddToUpNext = onAddToUpNext,
                         onDownload = onDownload,
                     ),
-                    modifier = Modifier.fillMaxSize().padding(top = chromePadding.top, bottom = chromePadding.bottom),
+                    modifier = Modifier.fillMaxSize(),
                     loadingContent = { CatalogLoadingStrip() },
                     trackMenuContent = { track, expanded, onDismiss, onAddToUpNext, onDownload ->
                         TrackActionMenu(
@@ -618,6 +766,7 @@ internal fun MobileBrowseShell(
                             track = track,
                         )
                     },
+                    topBar = { BrowseTopBar() },
                 )
                 section == BrowseSection.Playlists && selectedPlaylistId == null -> PlaylistsMobileRoute(
                     state = PlaylistsRouteState(
@@ -629,7 +778,8 @@ internal fun MobileBrowseShell(
                         onSearchQuery = onSearchQuery,
                         onPlaylist = onPlaylist,
                     ),
-                    modifier = Modifier.fillMaxSize().padding(top = chromePadding.top, bottom = chromePadding.bottom),
+                    modifier = Modifier.fillMaxSize(),
+                    topBar = { BrowseTopBar() },
                 )
                 section == BrowseSection.Radio && selectedPlaylistId == null -> RadioRoute(
                     state = RadioRouteState(internetRadioDirectory, internetRadioStartingIds),
@@ -649,12 +799,13 @@ internal fun MobileBrowseShell(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(
                         start = 20.dp,
-                        top = chromePadding.top,
+                        top = statusBarTopPadding + 10.dp,
                         end = 20.dp,
                         bottom = chromePadding.bottom,
                     ),
                     sectionIndexMode = LibrarySectionIndexMode.MobileScrollbar,
                     mode = internetRadioRouteMode,
+                    topBar = { BrowseTopBar() },
                 )
                 else -> DesktopContent(
                     catalog = catalog,
@@ -698,14 +849,14 @@ internal fun MobileBrowseShell(
             }
         }
         }
-        Box(
+        if (!topBarScrollsWithContent) {
+            Box(
             Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()
-                .background(PhoebeUi.shellTop)
                 .then(if (isDesktopPlatform()) Modifier else Modifier.mobileWindowTopPadding())
                 .zIndex(2f),
-        ) {
+            ) {
             MobileScreenToolbar(
                 title = toolbarTitle,
                 onBack = if (section == BrowseSection.Settings && selectedPlaylistId == null) {
@@ -718,6 +869,23 @@ internal fun MobileBrowseShell(
                 showMenu = availableUpdate != null || !(section == BrowseSection.Settings && selectedPlaylistId == null),
                 menuTint = if (availableUpdate != null) PhoebeUpdateBlue else PhoebeUi.primaryText,
                 menuContent = {
+                    if (section == BrowseSection.Library && selectedPlaylistId == null) {
+                        DropdownMenuItem(
+                            text = { Text("Library", color = PhoebeUi.mutedText, fontWeight = FontWeight.SemiBold) },
+                            onClick = {},
+                            enabled = false,
+                        )
+                        LibraryFilterOptionsMenuItems(
+                            filter = libraryFilter,
+                            prefs = libraryUi,
+                            onSortBy = onLibrarySortBy,
+                            onAscending = onLibraryAscending,
+                            libraryViewMode = mobileLibraryViewMode,
+                            onLibraryViewMode = { mobileLibraryViewMode = it },
+                            onColumns = onLibraryColumns,
+                            onDismiss = { menuExpanded = false },
+                        )
+                    }
                     if (availableUpdate != null) {
                         DropdownMenuItem(
                             text = {
@@ -818,6 +986,7 @@ internal fun MobileBrowseShell(
                     }
                 },
             )
+            }
         }
 
     }

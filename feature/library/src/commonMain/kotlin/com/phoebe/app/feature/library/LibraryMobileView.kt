@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
@@ -52,7 +53,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.phoebe.app.data.catalogTracksForAlbum
+import com.phoebe.app.data.filterAlbumsByQuery
+import com.phoebe.app.data.filterArtistsByQuery
 import com.phoebe.app.data.filterPlaylistsByQuery
+import com.phoebe.app.data.filterTracksByQuery
 import com.phoebe.app.data.sortAlbumsForLibrary
 import com.phoebe.app.data.sortArtistsForLibrary
 import com.phoebe.app.data.sortTracksForLibrary
@@ -75,11 +79,9 @@ import kotlinx.coroutines.withContext
 
 private val MobileLibraryChromeTopPadding = 8.dp
 private val MobileLibraryTabsHeight = 50.dp
-private val MobileLibraryTabsToToolbarGap = 14.dp
-private val MobileLibraryToolbarHeight = 0.dp
-private val MobileLibraryToolbarToContentGap = 10.dp
-private val MobileLibraryLoadingStripHeight = 16.dp
-private val MobileLibraryPaginationHeight = 36.dp
+private val MobileLibraryTabsToSearchGap = 10.dp
+private val MobileLibrarySearchHeight = 44.dp
+private val MobileLibrarySearchToContentGap = 10.dp
 private val MobileLibraryContentGap = 8.dp
 private val MobileLibrarySectionIndexBottomPadding = 22.dp
 
@@ -113,10 +115,13 @@ fun LibraryMobileView(
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     modifier: Modifier = Modifier,
+    searchQuery: String = "",
+    onSearchQuery: (String) -> Unit = {},
+    libraryViewMode: LibraryViewMode = LibraryViewMode.Grid,
     jellyfinPagination: Boolean = false,
     onJellyfinPage: (JellyfinLibraryPageKind, Int) -> Unit = { _, _ -> },
+    topBar: (@Composable () -> Unit)? = null,
 ) {
-    var libraryViewMode by remember { mutableStateOf(LibraryViewMode.Grid) }
     var pageIndex by remember(filter) { mutableStateOf(0) }
 
     val ascending = libraryUi.ascending
@@ -134,13 +139,34 @@ fun LibraryMobileView(
     val sortedTracks = remember(allTracks, sortBy, ascending) {
         sortTracksForLibrary(allTracks, sortBy, ascending)
     }
-    val artistTotal = catalog.remotePageInfo.artistTotal
-    val albumTotal = catalog.remotePageInfo.albumTotal
-    val trackTotal = catalog.remotePageInfo.trackTotal
-    val artistPage = remember(sortedArtists, jellyfinPagination, pageIndex, artistTotal) { libraryPage(sortedArtists, jellyfinPagination, pageIndex, artistTotal) }
-    val albumPage = remember(sortedAlbums, jellyfinPagination, pageIndex, albumTotal) { libraryPage(sortedAlbums, jellyfinPagination, pageIndex, albumTotal) }
-    val trackPage = remember(sortedTracks, jellyfinPagination, pageIndex, trackTotal) { libraryPage(sortedTracks, jellyfinPagination, pageIndex, trackTotal) }
-    LaunchedEffect(filter, sortedArtists.size, sortedAlbums.size, sortedTracks.size) {
+    var visibleArtistsResult by remember { mutableStateOf<List<Artist>?>(null) }
+    var visibleAlbumsResult by remember { mutableStateOf<List<Album>?>(null) }
+    var visibleTracksResult by remember { mutableStateOf<List<Track>?>(null) }
+    LaunchedEffect(sortedArtists, searchQuery) {
+        visibleArtistsResult = withContext(Dispatchers.Default) {
+            filterArtistsByQuery(sortedArtists, searchQuery)
+        }
+    }
+    LaunchedEffect(sortedAlbums, searchQuery) {
+        visibleAlbumsResult = withContext(Dispatchers.Default) {
+            filterAlbumsByQuery(sortedAlbums, searchQuery)
+        }
+    }
+    LaunchedEffect(sortedTracks, searchQuery) {
+        visibleTracksResult = withContext(Dispatchers.Default) {
+            filterTracksByQuery(sortedTracks, searchQuery)
+        }
+    }
+    val visibleArtists = visibleArtistsResult ?: if (searchQuery.isBlank()) sortedArtists else emptyList()
+    val visibleAlbums = visibleAlbumsResult ?: if (searchQuery.isBlank()) sortedAlbums else emptyList()
+    val visibleTracks = visibleTracksResult ?: if (searchQuery.isBlank()) sortedTracks else emptyList()
+    val artistTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.artistTotal else null
+    val albumTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.albumTotal else null
+    val trackTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.trackTotal else null
+    val artistPage = remember(visibleArtists, jellyfinPagination, pageIndex, artistTotal) { libraryPage(visibleArtists, jellyfinPagination, pageIndex, artistTotal) }
+    val albumPage = remember(visibleAlbums, jellyfinPagination, pageIndex, albumTotal) { libraryPage(visibleAlbums, jellyfinPagination, pageIndex, albumTotal) }
+    val trackPage = remember(visibleTracks, jellyfinPagination, pageIndex, trackTotal) { libraryPage(visibleTracks, jellyfinPagination, pageIndex, trackTotal) }
+    LaunchedEffect(filter, searchQuery, visibleArtists.size, visibleAlbums.size, visibleTracks.size) {
         val pageCount = when (filter) {
             LibraryFilterTab.Artists -> artistPage.pageCount
             LibraryFilterTab.Albums -> albumPage.pageCount
@@ -149,23 +175,26 @@ fun LibraryMobileView(
         if (pageIndex > pageCount - 1) pageIndex = (pageCount - 1).coerceAtLeast(0)
     }
     val chromePadding = LocalMobileChromePadding.current
-    val activePage = when (filter) {
-        LibraryFilterTab.Artists -> artistPage
-        LibraryFilterTab.Albums -> albumPage
-        LibraryFilterTab.Songs -> trackPage
-    }
     val listContentPadding = PaddingValues(
-        top = chromePadding.top +
-            MobileLibraryChromeTopPadding +
-            MobileLibraryTabsHeight +
-            MobileLibraryTabsToToolbarGap +
-            MobileLibraryToolbarHeight +
-            MobileLibraryToolbarToContentGap +
-            (if (catalogRefreshing) MobileLibraryLoadingStripHeight else 0.dp) +
-            (if (activePage.pageCount > 1) MobileLibraryPaginationHeight else 0.dp) +
-            MobileLibraryContentGap,
+        top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + MobileLibraryChromeTopPadding,
         bottom = chromePadding.bottom + 8.dp,
     )
+    val libraryHeader: @Composable () -> Unit = {
+        MobileLibraryHeader(
+            topBar = topBar,
+            filter = filter,
+            searchQuery = searchQuery,
+            catalogRefreshing = catalogRefreshing,
+            artistPage = artistPage,
+            albumPage = albumPage,
+            trackPage = trackPage,
+            jellyfinPagination = jellyfinPagination,
+            onFilter = onFilter,
+            onSearchQuery = onSearchQuery,
+            onJellyfinPage = onJellyfinPage,
+            onPageIndex = { pageIndex = it },
+        )
+    }
 
     Box(modifier.fillMaxSize().padding(horizontal = 16.dp)) {
         Box(Modifier.fillMaxSize()) {
@@ -178,6 +207,7 @@ fun LibraryMobileView(
                     ascending = ascending,
                     onArtist = onArtist,
                     contentPadding = listContentPadding,
+                    contentHeader = libraryHeader,
                 )
                 LibraryFilterTab.Albums -> MobileAlbumsContent(
                     catalog = catalog,
@@ -188,6 +218,7 @@ fun LibraryMobileView(
                     ascending = ascending,
                     onAlbum = onAlbum,
                     contentPadding = listContentPadding,
+                    contentHeader = libraryHeader,
                 )
                 LibraryFilterTab.Songs -> MobileSongsList(
                     tracks = trackPage.items,
@@ -198,44 +229,64 @@ fun LibraryMobileView(
                     onAddToUpNext = onAddToUpNext,
                     onDownload = onDownload,
                     contentPadding = listContentPadding,
+                    contentHeader = libraryHeader,
                 )
             }
         }
-        Column(
-            Modifier
-                .fillMaxWidth()
-                .background(PhoebeUi.shellTop)
-                .padding(top = chromePadding.top + MobileLibraryChromeTopPadding),
-        ) {
-            MobileLibraryTabs(
-                filter = filter,
-                onFilter = onFilter,
-                prefs = libraryUi,
-                onSortBy = onLibrarySortBy,
-                onAscending = onLibraryAscending,
-                libraryViewMode = libraryViewMode,
-                onLibraryViewMode = { libraryViewMode = it },
-                onColumns = onLibraryColumns,
-            )
-            Spacer(Modifier.height(10.dp))
-            if (catalogRefreshing) {
-                LibraryLoadingStrip(Modifier.padding(bottom = 6.dp))
-            }
-            when (filter) {
-                LibraryFilterTab.Artists -> LibraryPaginationControls(artistPage, onPage = {
-                    if (jellyfinPagination) onJellyfinPage(filter.toJellyfinPageKind(), it)
-                    pageIndex = it
-                })
-                LibraryFilterTab.Albums -> LibraryPaginationControls(albumPage, onPage = {
-                    if (jellyfinPagination) onJellyfinPage(filter.toJellyfinPageKind(), it)
-                    pageIndex = it
-                })
-                LibraryFilterTab.Songs -> LibraryPaginationControls(trackPage, onPage = {
-                    if (jellyfinPagination) onJellyfinPage(filter.toJellyfinPageKind(), it)
-                    pageIndex = it
-                })
-            }
+    }
+}
+
+@Composable
+private fun MobileLibraryHeader(
+    topBar: (@Composable () -> Unit)?,
+    filter: LibraryFilterTab,
+    searchQuery: String,
+    catalogRefreshing: Boolean,
+    artistPage: LibraryPage<Artist>,
+    albumPage: LibraryPage<Album>,
+    trackPage: LibraryPage<Track>,
+    jellyfinPagination: Boolean,
+    onFilter: (LibraryFilterTab) -> Unit,
+    onSearchQuery: (String) -> Unit,
+    onJellyfinPage: (JellyfinLibraryPageKind, Int) -> Unit,
+    onPageIndex: (Int) -> Unit,
+) {
+    Column(Modifier.fillMaxWidth()) {
+        topBar?.invoke()
+        MobileLibraryTabs(
+            filter = filter,
+            onFilter = onFilter,
+        )
+        Spacer(Modifier.height(MobileLibraryTabsToSearchGap))
+        SearchPill(
+            query = searchQuery,
+            onQueryChange = onSearchQuery,
+            modifier = Modifier.fillMaxWidth().height(MobileLibrarySearchHeight),
+            placeholder = when (filter) {
+                LibraryFilterTab.Artists -> "Search artists"
+                LibraryFilterTab.Albums -> "Search albums"
+                LibraryFilterTab.Songs -> "Search songs"
+            },
+        )
+        Spacer(Modifier.height(MobileLibrarySearchToContentGap))
+        if (catalogRefreshing) {
+            LibraryLoadingStrip(Modifier.padding(bottom = 6.dp))
         }
+        when (filter) {
+            LibraryFilterTab.Artists -> LibraryPaginationControls(artistPage, onPage = {
+                if (jellyfinPagination && searchQuery.isBlank()) onJellyfinPage(filter.toJellyfinPageKind(), it)
+                onPageIndex(it)
+            })
+            LibraryFilterTab.Albums -> LibraryPaginationControls(albumPage, onPage = {
+                if (jellyfinPagination && searchQuery.isBlank()) onJellyfinPage(filter.toJellyfinPageKind(), it)
+                onPageIndex(it)
+            })
+            LibraryFilterTab.Songs -> LibraryPaginationControls(trackPage, onPage = {
+                if (jellyfinPagination && searchQuery.isBlank()) onJellyfinPage(filter.toJellyfinPageKind(), it)
+                onPageIndex(it)
+            })
+        }
+        Spacer(Modifier.height(MobileLibraryContentGap))
     }
 }
 
@@ -380,60 +431,49 @@ private fun FavoriteLibraryHeader(
 private fun MobileLibraryTabs(
     filter: LibraryFilterTab,
     onFilter: (LibraryFilterTab) -> Unit,
-    prefs: LibraryUiPreferences,
-    onSortBy: (LibrarySortBy) -> Unit,
-    onAscending: (Boolean) -> Unit,
-    libraryViewMode: LibraryViewMode,
-    onLibraryViewMode: (LibraryViewMode) -> Unit,
-    onColumns: (LibraryColumnVisibility) -> Unit,
 ) {
     Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Modifier
+            .fillMaxWidth()
+            .height(MobileLibraryTabsHeight)
+            .clip(RoundedCornerShape(16.dp))
+            .background(PhoebeUi.accent.copy(alpha = 0.10f))
+            .border(BorderStroke(1.dp, PhoebeUi.accent.copy(alpha = 0.28f)), RoundedCornerShape(16.dp))
+            .padding(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        Row(
-            Modifier
-                .weight(1f)
-                .clip(RoundedCornerShape(12.dp))
-                .background(Color.White.copy(alpha = 0.04f))
-                .border(BorderStroke(1.dp, PhoebeUi.border), RoundedCornerShape(12.dp))
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-        ) {
-            LibraryFilterTab.entries.forEach { tab ->
-                val active = filter == tab
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .clip(RoundedCornerShape(8.dp))
-                        .clickable { onFilter(tab) }
-                        .background(if (active) PhoebeUi.accent.copy(alpha = 0.22f) else Color.Transparent)
-                        .padding(vertical = 10.dp),
-                    contentAlignment = Alignment.Center,
-                ) {
-                    Text(
-                        when (tab) {
-                            LibraryFilterTab.Artists -> "Artists"
-                            LibraryFilterTab.Albums -> "Albums"
-                            LibraryFilterTab.Songs -> "Songs"
-                        },
-                        color = if (active) PhoebeUi.primaryText else PhoebeUi.secondaryText,
-                        fontSize = 13.sp,
-                        fontWeight = if (active) FontWeight.SemiBold else FontWeight.Medium,
-                    )
-                }
+        LibraryFilterTab.entries.forEach { tab ->
+            val active = filter == tab
+            Box(
+                Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(11.dp))
+                    .clickable { onFilter(tab) }
+                    .background(if (active) PhoebeUi.accent.copy(alpha = 0.32f) else Color.Transparent)
+                    .border(
+                        BorderStroke(
+                            1.dp,
+                            if (active) PhoebeUi.accentLight.copy(alpha = 0.36f) else Color.Transparent,
+                        ),
+                        RoundedCornerShape(11.dp),
+                    ),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    when (tab) {
+                        LibraryFilterTab.Artists -> "Artists"
+                        LibraryFilterTab.Albums -> "Albums"
+                        LibraryFilterTab.Songs -> "Songs"
+                    },
+                    color = if (active) PhoebeUi.primaryText else PhoebeUi.secondaryText,
+                    fontSize = 13.sp,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
         }
-        LibraryFilterOptionsMenu(
-            filter = filter,
-            prefs = prefs,
-            onSortBy = onSortBy,
-            onAscending = onAscending,
-            libraryViewMode = libraryViewMode,
-            onLibraryViewMode = onLibraryViewMode,
-            onColumns = onColumns,
-        )
     }
 }
 
@@ -462,13 +502,23 @@ private fun MobileArtistsContent(
     ascending: Boolean,
     onArtist: (Artist) -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
+    contentHeader: (@Composable () -> Unit)? = null,
 ) {
     if (artists.isEmpty()) {
-        Box(Modifier.fillMaxSize().padding(contentPadding)) {
-            Text("No artists yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+        LazyColumn(
+            contentPadding = contentPadding,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            contentHeader?.let { header ->
+                item(key = "library-header", contentType = "library-header") { header() }
+            }
+            item(contentType = "empty-state") {
+                Text("No artists yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+            }
         }
         return
     }
+    val headerItemOffset = if (contentHeader == null) 0 else 1
     val indexEntries = remember(artists, sortBy, ascending) {
         libraryArtistScrollIndex(artists, sortBy, ascending)
     }
@@ -488,6 +538,15 @@ private fun MobileArtistsContent(
                     contentPadding = contentPadding,
                     modifier = Modifier.fillMaxSize(),
                 ) {
+                    contentHeader?.let { header ->
+                        item(
+                            key = "library-header",
+                            span = { GridItemSpan(maxLineSpan) },
+                            contentType = "library-header",
+                        ) {
+                            header()
+                        }
+                    }
                     items(artists, key = { it.id }, contentType = { "artist-card" }) { artist ->
                         val onArtistClick = remember(artist, onArtist) { { onArtist(artist) } }
                         MobileArtistCard(
@@ -500,7 +559,9 @@ private fun MobileArtistsContent(
                 LibrarySectionIndex(
                     entries = indexEntries,
                     onEntrySelected = { entry ->
-                        indexScrollDispatcher.launch(scope, key = entry.itemIndex) { gridState.scrollToItem(entry.itemIndex) }
+                        indexScrollDispatcher.launch(scope, key = entry.itemIndex) {
+                            gridState.scrollToItem(entry.itemIndex + headerItemOffset)
+                        }
                     },
                     onScrubbingChanged = { sectionIndexScrubbing = it },
                     mode = LibrarySectionIndexMode.MobileScrollbar,
@@ -525,6 +586,9 @@ private fun MobileArtistsContent(
                     contentPadding = contentPadding,
                     modifier = Modifier.fillMaxSize(),
                 ) {
+                    contentHeader?.let { header ->
+                        item(key = "library-header", contentType = "library-header") { header() }
+                    }
                     items(artists, key = { it.id }, contentType = { "artist-row" }) { artist ->
                         val onArtistClick = remember(artist, onArtist) { { onArtist(artist) } }
                         MobileArtistRow(artist = artist, onClick = onArtistClick)
@@ -533,7 +597,9 @@ private fun MobileArtistsContent(
                 LibrarySectionIndex(
                     entries = indexEntries,
                     onEntrySelected = { entry ->
-                        indexScrollDispatcher.launch(scope, key = entry.itemIndex) { listState.scrollToItem(entry.itemIndex) }
+                        indexScrollDispatcher.launch(scope, key = entry.itemIndex) {
+                            listState.scrollToItem(entry.itemIndex + headerItemOffset)
+                        }
                     },
                     onScrubbingChanged = { sectionIndexScrubbing = it },
                     mode = LibrarySectionIndexMode.MobileScrollbar,
@@ -677,13 +743,23 @@ private fun MobileAlbumsContent(
     ascending: Boolean,
     onAlbum: (Album) -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
+    contentHeader: (@Composable () -> Unit)? = null,
 ) {
     if (albums.isEmpty()) {
-        Box(Modifier.fillMaxSize().padding(contentPadding)) {
-            Text("No albums yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+        LazyColumn(
+            contentPadding = contentPadding,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            contentHeader?.let { header ->
+                item(key = "library-header", contentType = "library-header") { header() }
+            }
+            item(contentType = "empty-state") {
+                Text("No albums yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+            }
         }
         return
     }
+    val headerItemOffset = if (contentHeader == null) 0 else 1
     val indexEntries = remember(albums, sortBy, ascending) {
         libraryAlbumScrollIndex(albums, sortBy, ascending)
     }
@@ -703,6 +779,15 @@ private fun MobileAlbumsContent(
                     contentPadding = contentPadding,
                     modifier = Modifier.fillMaxSize(),
                 ) {
+                    contentHeader?.let { header ->
+                        item(
+                            key = "library-header",
+                            span = { GridItemSpan(maxLineSpan) },
+                            contentType = "library-header",
+                        ) {
+                            header()
+                        }
+                    }
                     items(albums, key = { it.id }, contentType = { "album-card" }) { album ->
                         val onAlbumClick = remember(album, onAlbum) { { onAlbum(album) } }
                         MobileAlbumCard(
@@ -716,7 +801,9 @@ private fun MobileAlbumsContent(
                 LibrarySectionIndex(
                     entries = indexEntries,
                     onEntrySelected = { entry ->
-                        indexScrollDispatcher.launch(scope, key = entry.itemIndex) { gridState.scrollToItem(entry.itemIndex) }
+                        indexScrollDispatcher.launch(scope, key = entry.itemIndex) {
+                            gridState.scrollToItem(entry.itemIndex + headerItemOffset)
+                        }
                     },
                     onScrubbingChanged = { sectionIndexScrubbing = it },
                     mode = LibrarySectionIndexMode.MobileScrollbar,
@@ -741,6 +828,9 @@ private fun MobileAlbumsContent(
                     contentPadding = contentPadding,
                     modifier = Modifier.fillMaxSize(),
                 ) {
+                    contentHeader?.let { header ->
+                        item(key = "library-header", contentType = "library-header") { header() }
+                    }
                     items(albums, key = { it.id }, contentType = { "album-row" }) { album ->
                         val onAlbumClick = remember(album, onAlbum) { { onAlbum(album) } }
                         MobileAlbumListRow(catalog = catalog, album = album, onClick = onAlbumClick)
@@ -749,7 +839,9 @@ private fun MobileAlbumsContent(
                 LibrarySectionIndex(
                     entries = indexEntries,
                     onEntrySelected = { entry ->
-                        indexScrollDispatcher.launch(scope, key = entry.itemIndex) { listState.scrollToItem(entry.itemIndex) }
+                        indexScrollDispatcher.launch(scope, key = entry.itemIndex) {
+                            listState.scrollToItem(entry.itemIndex + headerItemOffset)
+                        }
                     },
                     onScrubbingChanged = { sectionIndexScrubbing = it },
                     mode = LibrarySectionIndexMode.MobileScrollbar,
@@ -910,13 +1002,23 @@ private fun MobileSongsList(
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
+    contentHeader: (@Composable () -> Unit)? = null,
 ) {
     if (tracks.isEmpty()) {
-        Box(Modifier.fillMaxSize().padding(contentPadding)) {
-            Text("No songs yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+        LazyColumn(
+            contentPadding = contentPadding,
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            contentHeader?.let { header ->
+                item(key = "library-header", contentType = "library-header") { header() }
+            }
+            item(contentType = "empty-state") {
+                Text("No songs yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+            }
         }
         return
     }
+    val headerItemOffset = if (contentHeader == null) 0 else 1
     val listState = RetainedLazyListStates.remember("library-songs")
     val indexEntries = remember(tracks, sortBy, ascending) {
         libraryTrackScrollIndex(tracks, sortBy, ascending)
@@ -934,6 +1036,9 @@ private fun MobileSongsList(
             contentPadding = contentPadding,
             modifier = Modifier.fillMaxSize(),
         ) {
+            contentHeader?.let { header ->
+                item(key = "library-header", contentType = "library-header") { header() }
+            }
             items(tracks.size, key = { tracks[it].id }, contentType = { "song-row" }) { index ->
                 val track = tracks[index]
                 val onPlayClick = remember(index, onPlay) { { onPlay(index) } }
@@ -954,7 +1059,9 @@ private fun MobileSongsList(
         LibrarySectionIndex(
             entries = indexEntries,
             onEntrySelected = { entry ->
-                indexScrollDispatcher.launch(scope, key = entry.itemIndex) { listState.scrollToItem(entry.itemIndex) }
+                indexScrollDispatcher.launch(scope, key = entry.itemIndex) {
+                    listState.scrollToItem(entry.itemIndex + headerItemOffset)
+                }
             },
             onScrubbingChanged = { sectionIndexScrubbing = it },
             mode = LibrarySectionIndexMode.MobileScrollbar,
@@ -1334,6 +1441,7 @@ fun PlaylistsMobileView(
     onSearchQuery: (String) -> Unit,
     onPlaylist: (Playlist) -> Unit,
     modifier: Modifier = Modifier,
+    topBar: (@Composable () -> Unit)? = null,
 ) {
     val playlistActions = LocalPlaylistActions.current
     val playlists = playlistActions.playlists
@@ -1341,56 +1449,67 @@ fun PlaylistsMobileView(
     if (showSmartPlaylistDialog) {
         SmartPlaylistTemplateDialog(catalog = catalog, onDismiss = { showSmartPlaylistDialog = false })
     }
-    val preparedVisiblePlaylists = remember(playlists, searchQuery) {
-        filterPlaylistsByQuery(playlists, searchQuery)
+    var visiblePlaylistsResult by remember { mutableStateOf<List<Playlist>?>(null) }
+    LaunchedEffect(playlists, searchQuery) {
+        visiblePlaylistsResult = withContext(Dispatchers.Default) {
+            filterPlaylistsByQuery(playlists, searchQuery)
+        }
     }
+    val preparedVisiblePlaylists = visiblePlaylistsResult ?: if (searchQuery.isBlank()) playlists else emptyList()
+    val catalogSyncInProgress = LocalCatalogSyncInProgress.current
+    val chromePadding = LocalMobileChromePadding.current
 
-    Column(
-        modifier
-            .fillMaxSize()
-            .padding(start = 16.dp, end = 16.dp, top = 8.dp),
+    val listState = RetainedLazyListStates.remember("mobile-playlists")
+    LazyColumn(
+        state = listState,
+        modifier = modifier.fillMaxSize().padding(horizontal = 16.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+        contentPadding = PaddingValues(
+            top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 8.dp,
+            bottom = chromePadding.bottom + MobileChromeScrollGap,
+        ),
     ) {
-        SearchPill(
-            query = searchQuery,
-            onQueryChange = onSearchQuery,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-            placeholder = "Search playlists",
-        )
-        if (LocalCatalogSyncInProgress.current) {
-            LibraryLoadingStrip(Modifier.padding(bottom = 6.dp))
+        topBar?.let { header ->
+            item(key = "top-bar", contentType = "top-bar") { header() }
+        }
+        item(contentType = "search") {
+            SearchPill(
+                query = searchQuery,
+                onQueryChange = onSearchQuery,
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                placeholder = "Search playlists",
+            )
+        }
+        if (catalogSyncInProgress) {
+            item(contentType = "loading") {
+                LibraryLoadingStrip(Modifier.padding(bottom = 6.dp))
+            }
         }
         if (!playlistActions.playlistsEnabled) {
-            Column(
-                Modifier.fillMaxWidth().padding(top = 48.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                PhoebeIconView(PhoebeIcon.Queue, tint = PhoebeUi.mutedText, modifier = Modifier.size(36.dp))
-                Text(
-                    "Sign in to Plex or Jellyfin to browse playlists",
-                    color = PhoebeUi.secondaryText,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                )
-                Text(
-                    "Playlists sync from your streaming music library.",
-                    color = PhoebeUi.mutedText,
-                    fontSize = 13.sp,
-                    lineHeight = 18.sp,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                )
+            item(contentType = "disabled") {
+                Column(
+                    Modifier.fillMaxWidth().padding(top = 48.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    PhoebeIconView(PhoebeIcon.Queue, tint = PhoebeUi.mutedText, modifier = Modifier.size(36.dp))
+                    Text(
+                        "Sign in to Plex or Jellyfin to browse playlists",
+                        color = PhoebeUi.secondaryText,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Text(
+                        "Playlists sync from your streaming music library.",
+                        color = PhoebeUi.mutedText,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                }
             }
         } else {
-            val listState = RetainedLazyListStates.remember("mobile-playlists")
-            LazyColumn(
-                state = listState,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
-                contentPadding = PaddingValues(bottom = MobileChromeScrollGap),
-            ) {
                 item(contentType = "create") {
                     MobilePlaylistRow(
                         icon = PhoebeIcon.Plus,
@@ -1450,7 +1569,6 @@ fun PlaylistsMobileView(
                         )
                     }
                 }
-            }
         }
     }
 }
@@ -1480,7 +1598,7 @@ fun MobilePlaylistRow(
             ArtworkImage(
                 title,
                 thumbUrl,
-                Modifier.size(52.dp),
+                Modifier.size(52.dp).sharedArtworkTransition(sharedKey),
                 radius = 8.dp,
                 elevated = false,
                 maxDecodeDimension = ThumbnailArtworkMaxDecodeDimension,

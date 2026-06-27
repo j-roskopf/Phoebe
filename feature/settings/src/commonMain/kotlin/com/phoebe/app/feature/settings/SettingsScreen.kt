@@ -141,6 +141,8 @@ fun SettingsDesktopView(
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
     onBlurredArtworkAppearance: (Boolean) -> Unit = {},
+    onFullBleedDetailArtwork: (Boolean) -> Unit = {},
+    onTintedBackgroundGradient: (Boolean) -> Unit = {},
     onHomeSections: (List<HomeSection>) -> Unit,
     onMobileBottomTabs: (List<MobileBottomTab>) -> Unit = {},
     onPersonalMix: (PersonalMixPreferences) -> Unit,
@@ -221,6 +223,11 @@ fun SettingsDesktopView(
                         onVisualizerPreset,
                         appSettings.blurredArtworkAppearance,
                         onBlurredArtworkAppearance,
+                        appSettings.fullBleedDetailArtwork,
+                        onFullBleedDetailArtwork,
+                        appSettings.tintedBackgroundGradient,
+                        onTintedBackgroundGradient,
+                        showFullBleedDetailArtwork = true,
                     )
                     SettingsCategory.AudioPlayback -> AudioPlaybackSettingsCard(
                         settings = appSettings,
@@ -328,6 +335,7 @@ fun SettingsMobileView(
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
     onBlurredArtworkAppearance: (Boolean) -> Unit = {},
+    onTintedBackgroundGradient: (Boolean) -> Unit = {},
     onHomeSections: (List<HomeSection>) -> Unit,
     onMobileBottomTabs: (List<MobileBottomTab>) -> Unit = {},
     onPersonalMix: (PersonalMixPreferences) -> Unit,
@@ -395,6 +403,8 @@ fun SettingsMobileView(
             onVisualizerPreset,
             appSettings.blurredArtworkAppearance,
             onBlurredArtworkAppearance,
+            appSettings.tintedBackgroundGradient,
+            onTintedBackgroundGradient,
             compact = true,
         )
         SectionLabel("LIBRARY", PhoebeUi.accentLight)
@@ -509,6 +519,11 @@ private fun AppearanceSettingsCard(
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit,
     blurredArtworkAppearance: Boolean,
     onBlurredArtworkAppearance: (Boolean) -> Unit,
+    fullBleedDetailArtwork: Boolean = true,
+    onFullBleedDetailArtwork: (Boolean) -> Unit = {},
+    tintedBackgroundGradient: Boolean = true,
+    onTintedBackgroundGradient: (Boolean) -> Unit = {},
+    showFullBleedDetailArtwork: Boolean = false,
     compact: Boolean = false,
 ) {
     SettingsCard {
@@ -556,6 +571,50 @@ private fun AppearanceSettingsCard(
             )
         }
         Spacer(Modifier.height(18.dp))
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Tinted background", color = PhoebeUi.primaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text("Use a soft gradient from the selected tint color", color = PhoebeUi.secondaryText, fontSize = 12.sp)
+            }
+            Switch(
+                checked = tintedBackgroundGradient,
+                onCheckedChange = onTintedBackgroundGradient,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = PhoebeUi.accentLight,
+                    uncheckedThumbColor = Color.White,
+                    uncheckedTrackColor = PhoebeUi.progressTrack,
+                ),
+            )
+        }
+        Spacer(Modifier.height(18.dp))
+        if (showFullBleedDetailArtwork) {
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Full bleed detail artwork", color = PhoebeUi.primaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                    Text("Let album and artist pages use artwork as the desktop header background", color = PhoebeUi.secondaryText, fontSize = 12.sp)
+                }
+                Switch(
+                    checked = fullBleedDetailArtwork,
+                    onCheckedChange = onFullBleedDetailArtwork,
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = PhoebeUi.accentLight,
+                        uncheckedThumbColor = Color.White,
+                        uncheckedTrackColor = PhoebeUi.progressTrack,
+                    ),
+                )
+            }
+            Spacer(Modifier.height(18.dp))
+        }
         Text("Mobile Home layout", color = PhoebeUi.primaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(10.dp))
         HomeLayoutModeControl(

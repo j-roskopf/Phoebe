@@ -58,6 +58,8 @@ class AppSettingsRepositoryDesktopTest {
             setPersistEqualizerSettings(true, EqualizerProfile.Default.normalized().withGain(7, 4.5f))
             setPersistVolumeSettings(true, 0.42f)
             setBlurredArtworkAppearance(false)
+            setFullBleedDetailArtwork(false)
+            setTintedBackgroundGradient(false)
         }
         val restored = AppSettingsRepository(db).apply { restore() }
 
@@ -69,6 +71,8 @@ class AppSettingsRepositoryDesktopTest {
         assertEquals(0.42f, restored.settings.value.savedVolume)
         assertEquals(4.5f, restored.settings.value.equalizerProfile.gainsDb[7])
         assertFalse(restored.settings.value.blurredArtworkAppearance)
+        assertFalse(restored.settings.value.fullBleedDetailArtwork)
+        assertFalse(restored.settings.value.tintedBackgroundGradient)
     }
 
     @Test

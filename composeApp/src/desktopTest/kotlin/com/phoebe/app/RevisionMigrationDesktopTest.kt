@@ -49,6 +49,7 @@ class RevisionMigrationDesktopTest {
         assertTrue(settings.listenBrainzSettings.contains("\"enabled\":false"))
         assertEquals("Artwork", settings.nowPlayingVisualizerPreset)
         assertEquals(1L, settings.blurredArtworkAppearance)
+        assertEquals(1L, settings.fullBleedDetailArtwork)
         assertEquals(PhoebeDatabase.Schema.version, readUserVersion(dbFile))
         assertEquals("18", revFile.readText().trim())
     }

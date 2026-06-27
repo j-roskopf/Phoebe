@@ -48,4 +48,12 @@ class SettingsService(
     suspend fun setBlurredArtworkAppearance(enabled: Boolean) {
         appSettingsRepository.setBlurredArtworkAppearance(enabled)
     }
+
+    suspend fun setFullBleedDetailArtwork(enabled: Boolean) {
+        appSettingsRepository.setFullBleedDetailArtwork(enabled)
+    }
+
+    suspend fun setTintedBackgroundGradient(enabled: Boolean) {
+        appSettingsRepository.setTintedBackgroundGradient(enabled)
+    }
 }

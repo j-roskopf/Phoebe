@@ -50,6 +50,25 @@ class PhoebeDesktopScreenshotTest {
 
     @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
     @Test
+    fun desktopDetailOldArtworkLayoutDark() = runDesktopComposeUiTest(width = 1365, height = 900) {
+        listOf(
+            PhoebeScreenshotScenario.ArtistOldLayout to "artist",
+            PhoebeScreenshotScenario.AlbumOldLayout to "album",
+        ).forEach { (scenario, slug) ->
+            setContent {
+                Box(Modifier.size(1365.dp, 900.dp)) {
+                    PhoebeScreenshotApp(scenario = scenario)
+                }
+            }
+            waitForIdle()
+            onRoot().captureRoboImage(
+                filePath = "src/screenshotTest/roborazzi/desktop-$slug-old-artwork-layout-dark.png",
+            )
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
     fun desktopRadioDark() = runDesktopComposeUiTest(width = 1365, height = 900) {
         setContent {
             Box(Modifier.size(1365.dp, 900.dp)) {
@@ -121,6 +140,29 @@ class PhoebeDesktopScreenshotTest {
             waitForIdle()
             onRoot().captureRoboImage(
                 filePath = "src/screenshotTest/roborazzi/desktop-player-visualizer-$slug-dark.png",
+            )
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopTintedBackgroundsDark() = runDesktopComposeUiTest(width = 1365, height = 900) {
+        listOf(
+            PhoebeScreenshotScenario.Home,
+            PhoebeScreenshotScenario.Library,
+            PhoebeScreenshotScenario.Search,
+        ).forEach { scenario ->
+            setContent {
+                Box(Modifier.size(1365.dp, 900.dp)) {
+                    PhoebeScreenshotApp(
+                        scenario = scenario,
+                        tintId = PhoebeTintOption.fromId("red").id,
+                    )
+                }
+            }
+            waitForIdle()
+            onRoot().captureRoboImage(
+                filePath = "src/screenshotTest/roborazzi/desktop-${scenario.name.lowercase()}-red-tint-dark.png",
             )
         }
     }

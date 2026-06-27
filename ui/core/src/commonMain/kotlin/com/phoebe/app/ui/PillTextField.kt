@@ -17,6 +17,11 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,6 +29,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -40,6 +47,12 @@ fun PillTextField(
     clearButtonContentDescription: String = "Clear",
 ) {
     val fieldTextStyle = TextStyle(color = PhoebeUi.primaryText, fontSize = 12.sp, lineHeight = 16.sp)
+    var fieldValue by remember { mutableStateOf(TextFieldValue(value, selection = TextRange(value.length))) }
+    LaunchedEffect(value) {
+        if (value != fieldValue.text) {
+            fieldValue = fieldValue.copy(text = value, selection = TextRange(value.length))
+        }
+    }
     Row(
         modifier
             .height(40.dp)
@@ -52,8 +65,11 @@ fun PillTextField(
     ) {
         PhoebeIconView(leadingIcon, tint = PhoebeUi.mutedText, modifier = Modifier.size(18.dp))
         BasicTextField(
-            value = value,
-            onValueChange = onValueChange,
+            value = fieldValue,
+            onValueChange = { newValue ->
+                fieldValue = newValue
+                if (newValue.text != value) onValueChange(newValue.text)
+            },
             singleLine = true,
             textStyle = fieldTextStyle,
             cursorBrush = SolidColor(PhoebeUi.primaryText),

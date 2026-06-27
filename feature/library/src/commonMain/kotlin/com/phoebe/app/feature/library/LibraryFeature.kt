@@ -108,6 +108,8 @@ fun LibraryMobileRoute(
     state: LibraryRouteState,
     actions: LibraryRouteActions,
     modifier: Modifier = Modifier,
+    libraryViewMode: LibraryViewMode = LibraryViewMode.Grid,
+    topBar: (@Composable () -> Unit)? = null,
 ) {
     LibraryMobileView(
         catalog = state.catalog,
@@ -115,6 +117,9 @@ fun LibraryMobileRoute(
         filter = state.filter,
         libraryUi = state.libraryUi,
         jellyfinPagination = state.jellyfinPagination,
+        searchQuery = state.searchQuery,
+        onSearchQuery = actions.onSearchQuery,
+        libraryViewMode = libraryViewMode,
         onJellyfinPage = actions.onJellyfinPage,
         onFilter = actions.onFilter,
         onLibrarySortBy = actions.onLibrarySortBy,
@@ -126,6 +131,7 @@ fun LibraryMobileRoute(
         onAddToUpNext = actions.onAddToUpNext,
         onDownload = actions.onDownload,
         modifier = modifier,
+        topBar = topBar,
     )
 }
 
@@ -187,6 +193,7 @@ fun PlaylistsMobileRoute(
     state: PlaylistsRouteState,
     actions: PlaylistsRouteActions,
     modifier: Modifier = Modifier,
+    topBar: (@Composable () -> Unit)? = null,
 ) {
     PlaylistsMobileView(
         catalog = state.catalog,
@@ -195,5 +202,6 @@ fun PlaylistsMobileRoute(
         onSearchQuery = actions.onSearchQuery,
         onPlaylist = actions.onPlaylist,
         modifier = modifier,
+        topBar = topBar,
     )
 }

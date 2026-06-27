@@ -171,6 +171,8 @@ import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.isLocalMediaPlayback
 import com.phoebe.app.domain.isLocalPlaylist
 import com.phoebe.app.domain.isRemoteLibraryTrack
+import com.phoebe.app.domain.isLikedSongsPlaylist
+import com.phoebe.app.domain.remoteProviderPrefix
 import com.phoebe.app.domain.supportsPlexPlaylists
 import com.phoebe.app.domain.supportsTrackRemoval
 import com.phoebe.app.platform.currentTimeMs
@@ -1165,6 +1167,184 @@ private fun MobileAlbumDetailHeader(
 }
 
 @Composable
+private fun MobilePlaylistDetailHeader(
+    playlist: Playlist,
+    tracks: List<Track>,
+    visibleTracks: List<Track>,
+    searchQuery: String,
+    favoriteActions: FavoriteActions,
+    ratingActions: RatingActions,
+    onBack: () -> Unit,
+    onSearchQuery: (String) -> Unit,
+    onPlayTracks: (List<Track>, Int) -> Unit,
+    onDownloadPlaylist: (Playlist) -> Unit,
+    onCancelDownloadPlaylist: (Playlist) -> Unit,
+    onDeleteDownloadPlaylist: (Playlist) -> Unit,
+) {
+    val rating = ratingActions.ratingFor(playlist)?.coerceIn(0f, 5f)?.takeIf { it > 0f }
+    Column(
+        Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        MobilePlaylistDetailTopBar(onBack = onBack, playlist = playlist)
+        ArtworkImage(
+            playlist.title,
+            playlist.thumbUrl,
+            Modifier
+                .fillMaxWidth()
+                .widthIn(max = 320.dp)
+                .aspectRatio(1f)
+                .sharedArtworkTransition("playlist:${playlist.id}"),
+            radius = 24.dp,
+            elevated = true,
+            maxDecodeDimension = HeroArtworkMaxDecodeDimension,
+        )
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                playlist.title,
+                color = PhoebeUi.primaryText,
+                fontSize = 34.sp,
+                lineHeight = 37.sp,
+                fontWeight = FontWeight.Black,
+                maxLines = 3,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.sharedBoundsTransition("playlist:${playlist.id}:title"),
+            )
+            Text(
+                playlistCuratorLine(playlist),
+                color = PhoebeUi.secondaryText,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                PlaylistTrackSummaryLine(
+                    totalCount = tracks.size.takeIf { it > 0 } ?: playlist.trackCount,
+                    visibleCount = visibleTracks.size,
+                    searchQuery = searchQuery,
+                )
+                if (ratingActions.ratingsEnabled && rating != null) {
+                    Text("·", color = PhoebeUi.mutedText, fontSize = 14.sp)
+                    RatingStars(
+                        rating = rating,
+                        enabled = true,
+                        onRating = { ratingActions.onRatePlaylist(playlist, it) },
+                        starSize = 14.dp,
+                        showClear = false,
+                    )
+                    Text(
+                        playlistRatingLabel(rating),
+                        color = PhoebeUi.secondaryText,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            MobileDetailIconSurface {
+                DownloadActionButton(
+                    label = "Download",
+                    tracks = tracks,
+                    iconOnly = true,
+                    onCancel = { onCancelDownloadPlaylist(playlist) },
+                    onDelete = { onDeleteDownloadPlaylist(playlist) },
+                ) { onDownloadPlaylist(playlist) }
+            }
+            MobileDetailIconSurface {
+                LikeButton(
+                    liked = favoriteActions.isFavorite(playlist),
+                    enabled = true,
+                    onClick = { favoriteActions.onTogglePlaylist(playlist) },
+                )
+            }
+            SearchPill(
+                query = searchQuery,
+                onQueryChange = onSearchQuery,
+                modifier = Modifier.weight(1f),
+                placeholder = "Search songs and artists",
+            )
+        }
+        MobileDetailPrimaryPlayButton(
+            enabled = visibleTracks.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { onPlayTracks(visibleTracks, 0) },
+        )
+    }
+}
+
+@Composable
+private fun MobilePlaylistDetailTopBar(
+    onBack: () -> Unit,
+    playlist: Playlist,
+) {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(48.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            Modifier
+                .align(Alignment.CenterStart)
+                .size(44.dp)
+                .clip(CircleShape)
+                .background(Color.Black.copy(alpha = 0.22f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            DetailBackButton(onBack = onBack)
+        }
+        Text(
+            "Playlist",
+            color = PhoebeUi.primaryText,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+        )
+        if (playlistShowsManagementMenu(playlist)) {
+            Box(
+                Modifier
+                    .align(Alignment.CenterEnd)
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(Color.Black.copy(alpha = 0.22f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                PlaylistManagementMenuButton(playlist)
+            }
+        }
+    }
+}
+
+private fun playlistCuratorLine(playlist: Playlist): String {
+    val source = playlist.id.substringBefore(':', missingDelimiterValue = "")
+        .takeIf { it.isNotBlank() }
+        ?.replaceFirstChar { char -> char.uppercaseChar() }
+    return source?.let { "Curated by $it" } ?: "Curated playlist"
+}
+
+private fun playlistRatingLabel(rating: Float): String {
+    val tenths = (rating.coerceIn(0f, 5f) * 10f).roundToInt()
+    return if (tenths % 10 == 0) (tenths / 10).toString() else "${tenths / 10}.${tenths % 10}"
+}
+
+private fun playlistShowsManagementMenu(playlist: Playlist): Boolean =
+    !playlist.isLikedSongsPlaylist() && (
+        playlist.isSmartPlaylist() ||
+            playlist.isLocalPlaylist() ||
+            playlist.remoteProviderPrefix() == "plex"
+    )
+
+@Composable
 private fun DesktopArtistDetailHeader(
     artist: Artist,
     artistThumbUrl: String?,
@@ -1185,6 +1365,7 @@ private fun DesktopArtistDetailHeader(
     searchQuery: String,
     onSearchQuery: (String) -> Unit,
     immersive: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     DesktopDetailHero(
         label = "Artist",
@@ -1193,6 +1374,7 @@ private fun DesktopArtistDetailHeader(
         meta = listOf("${albumsCount} $albumWord", "${tracks.size} $songWord"),
         onBack = onBack,
         immersive = immersive,
+        modifier = modifier,
         searchQuery = searchQuery,
         onSearchQuery = onSearchQuery,
         backgroundArtwork = { revealFullArtwork ->
@@ -1267,6 +1449,7 @@ private fun DesktopAlbumDetailHeader(
     searchQuery: String,
     onSearchQuery: (String) -> Unit,
     immersive: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val meta = buildList {
         album.year?.let { add(it.toString()) }
@@ -1280,6 +1463,7 @@ private fun DesktopAlbumDetailHeader(
         meta = meta,
         onBack = onBack,
         immersive = immersive,
+        modifier = modifier,
         searchQuery = searchQuery,
         onSearchQuery = onSearchQuery,
         backgroundArtwork = { revealFullArtwork ->
@@ -1775,6 +1959,7 @@ fun ArtistDetailPanel(
     catalog: CatalogSnapshot,
     libraryUi: LibraryUiPreferences,
     catalogRefreshing: Boolean = false,
+    fullBleedArtwork: Boolean = true,
     modifier: Modifier = Modifier,
     searchQuery: String = "",
     onSearchQuery: (String) -> Unit = {},
@@ -1857,7 +2042,7 @@ fun ArtistDetailPanel(
         } else {
             if (mobileBottomPadding > 144.dp) mobileBottomPadding else 144.dp
         }
-        val immersiveDesktopHeader = useTable && maxHeight >= 640.dp
+        val immersiveDesktopHeader = fullBleedArtwork && useTable && maxHeight >= 640.dp
         val albumGridItemSizeDp = libraryUi.albumGridItemSizeDp
         val albumGridColumns = rememberLibraryGridColumnCount(
             availableWidth = maxWidth,
@@ -1875,6 +2060,15 @@ fun ArtistDetailPanel(
             Modifier.padding(start = startPadding, end = endPadding)
         } else {
             Modifier
+        }
+        val desktopHeaderModifier = if (immersiveDesktopHeader) {
+            Modifier
+        } else {
+            Modifier.padding(
+                start = startPadding,
+                top = PhoebeDesktopLayout.contentTop,
+                end = endPadding,
+            )
         }
         if (showStats) {
             ArtistStatsPanel(
@@ -1927,6 +2121,7 @@ fun ArtistDetailPanel(
                         searchQuery = searchQuery,
                         onSearchQuery = onSearchQuery,
                         immersive = immersiveDesktopHeader,
+                        modifier = desktopHeaderModifier,
                     )
                     Spacer(Modifier.height(14.dp))
                     Column(contentPaddingModifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -2684,6 +2879,7 @@ fun AlbumDetailPanel(
     catalog: CatalogSnapshot,
     libraryUi: LibraryUiPreferences,
     catalogRefreshing: Boolean = false,
+    fullBleedArtwork: Boolean = true,
     modifier: Modifier = Modifier,
     searchQuery: String = "",
     onSearchQuery: (String) -> Unit = {},
@@ -2736,7 +2932,7 @@ fun AlbumDetailPanel(
         } else {
             if (mobileBottomPadding > 144.dp) mobileBottomPadding else 144.dp
         }
-        val immersiveDesktopHeader = useTable && maxHeight >= 640.dp
+        val immersiveDesktopHeader = fullBleedArtwork && useTable && maxHeight >= 640.dp
         val listState = RetainedLazyListStates.remember("album-detail:${resolvedAlbum.id}")
         val listStartPadding = if (useTable) 0.dp else startPadding
         val listEndPadding = if (useTable) 0.dp else endPadding
@@ -2745,6 +2941,15 @@ fun AlbumDetailPanel(
             Modifier.padding(start = startPadding, end = endPadding)
         } else {
             Modifier
+        }
+        val desktopHeaderModifier = if (immersiveDesktopHeader) {
+            Modifier
+        } else {
+            Modifier.padding(
+                start = startPadding,
+                top = PhoebeDesktopLayout.contentTop,
+                end = endPadding,
+            )
         }
     LazyColumn(
         state = listState,
@@ -2773,6 +2978,7 @@ fun AlbumDetailPanel(
                         searchQuery = searchQuery,
                         onSearchQuery = onSearchQuery,
                         immersive = immersiveDesktopHeader,
+                        modifier = desktopHeaderModifier,
                     )
                     Spacer(Modifier.height(18.dp))
                     DetailSectionHeader(
@@ -3152,62 +3358,64 @@ fun PlaylistDetailPanel(
             ) {
                 item(contentType = "playlist-header") {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        DetailSectionIntro(
-                            onBack = onBack,
-                            label = "Playlist",
-                            alignBackIconToContentStart = !useTable,
-                        )
-                        Text(
-                            playlist.title,
-                            color = PhoebeUi.primaryText,
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Black,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.sharedBoundsTransition("playlist:${playlist.id}:title"),
-                        )
-                        PlaylistTrackSummaryLine(
-                            totalCount = sortedTracks.size,
-                            visibleCount = visibleTracks.size,
-                            searchQuery = searchQuery,
-                        )
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            LikeButton(
-                                liked = favoriteActions.isFavorite(playlist),
-                                enabled = true,
-                                onClick = { favoriteActions.onTogglePlaylist(playlist) },
-                            )
-                            if (ratingActions.ratingsEnabled && (playlist.id.startsWith("plex:") || playlist.id.startsWith("jellyfin:"))) {
-                                RatingStars(
-                                    rating = ratingActions.ratingFor(playlist),
-                                    enabled = true,
-                                    onRating = { ratingActions.onRatePlaylist(playlist, it) },
-                                    starSize = 16.dp,
-                                    showClear = true,
-                                )
-                            }
-                            PlaylistManagementMenuButton(playlist)
-                        }
-                        SearchPill(
-                            query = searchQuery,
-                            onQueryChange = onSearchQuery,
-                            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                            placeholder = "Search songs and artists",
-                        )
                         if (!useTable) {
-                            Row(
-                                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier.padding(top = 4.dp),
-                            ) {
-                                DownloadActionButton(
-                                    label = "Download Playlist",
-                                    tracks = actionTracks,
-                                    onCancel = { onCancelDownloadPlaylist(playlist) },
-                                    onDelete = { onDeleteDownloadPlaylist(playlist) },
-                                ) { onDownloadPlaylist(playlist) }
-                                PlaylistExportMenu(playlist = playlist)
+                            MobilePlaylistDetailHeader(
+                                playlist = playlist,
+                                tracks = actionTracks,
+                                visibleTracks = visibleTracks,
+                                searchQuery = searchQuery,
+                                favoriteActions = favoriteActions,
+                                ratingActions = ratingActions,
+                                onBack = onBack,
+                                onSearchQuery = onSearchQuery,
+                                onPlayTracks = onPlayTracks,
+                                onDownloadPlaylist = onDownloadPlaylist,
+                                onCancelDownloadPlaylist = onCancelDownloadPlaylist,
+                                onDeleteDownloadPlaylist = onDeleteDownloadPlaylist,
+                            )
+                        } else {
+                            DetailSectionIntro(
+                                onBack = onBack,
+                                label = "Playlist",
+                                alignBackIconToContentStart = false,
+                            )
+                            Text(
+                                playlist.title,
+                                color = PhoebeUi.primaryText,
+                                fontSize = 24.sp,
+                                fontWeight = FontWeight.Black,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.sharedBoundsTransition("playlist:${playlist.id}:title"),
+                            )
+                            PlaylistTrackSummaryLine(
+                                totalCount = sortedTracks.size,
+                                visibleCount = visibleTracks.size,
+                                searchQuery = searchQuery,
+                            )
+                            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                LikeButton(
+                                    liked = favoriteActions.isFavorite(playlist),
+                                    enabled = true,
+                                    onClick = { favoriteActions.onTogglePlaylist(playlist) },
+                                )
+                                if (ratingActions.ratingsEnabled && (playlist.id.startsWith("plex:") || playlist.id.startsWith("jellyfin:"))) {
+                                    RatingStars(
+                                        rating = ratingActions.ratingFor(playlist),
+                                        enabled = true,
+                                        onRating = { ratingActions.onRatePlaylist(playlist, it) },
+                                        starSize = 16.dp,
+                                        showClear = true,
+                                    )
+                                }
+                                PlaylistManagementMenuButton(playlist)
                             }
+                            SearchPill(
+                                query = searchQuery,
+                                onQueryChange = onSearchQuery,
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                placeholder = "Search songs and artists",
+                            )
                         }
                         Spacer(Modifier.height(6.dp))
                         DetailSectionHeader(

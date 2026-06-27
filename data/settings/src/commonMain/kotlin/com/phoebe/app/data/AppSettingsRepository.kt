@@ -110,6 +110,18 @@ class AppSettingsRepository(
         }
     }
 
+    suspend fun setFullBleedDetailArtwork(enabled: Boolean) {
+        updateAndSave { current ->
+            current.copy(fullBleedDetailArtwork = enabled)
+        }
+    }
+
+    suspend fun setTintedBackgroundGradient(enabled: Boolean) {
+        updateAndSave { current ->
+            current.copy(tintedBackgroundGradient = enabled)
+        }
+    }
+
     suspend fun setListenBrainzSettings(settings: ListenBrainzSettings) {
         updateAndSave { current ->
             current.copy(listenBrainz = settings.normalized())
@@ -164,6 +176,8 @@ class AppSettingsRepository(
                     equalizerProfile = json.encodeToString(normalized.equalizerProfile),
                     nowPlayingVisualizerPreset = normalized.nowPlayingVisualizerPreset.name,
                     blurredArtworkAppearance = normalized.blurredArtworkAppearance.toDb(),
+                    fullBleedDetailArtwork = normalized.fullBleedDetailArtwork.toDb(),
+                    tintedBackgroundGradient = normalized.tintedBackgroundGradient.toDb(),
                     listenBrainzSettings = json.encodeToString(normalized.listenBrainz),
                     lastFmSettings = json.encodeToString(normalized.lastFm),
                     downloadPolicySettings = json.encodeToString(normalized.downloadPolicy),
@@ -185,6 +199,8 @@ class AppSettingsRepository(
             equalizerProfile = decodeEqualizerProfile(equalizerProfile),
             nowPlayingVisualizerPreset = NowPlayingVisualizerPreset.fromStoredName(nowPlayingVisualizerPreset),
             blurredArtworkAppearance = blurredArtworkAppearance.toBool(),
+            fullBleedDetailArtwork = fullBleedDetailArtwork.toBool(),
+            tintedBackgroundGradient = tintedBackgroundGradient.toBool(),
             listenBrainz = decodeListenBrainzSettings(listenBrainzSettings),
             lastFm = decodeLastFmSettings(lastFmSettings),
             downloadPolicy = decodeDownloadPolicySettings(downloadPolicySettings),

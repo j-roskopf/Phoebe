@@ -1026,6 +1026,8 @@ data class AppSettings(
     val equalizerProfile: EqualizerProfile = EqualizerProfile.Default,
     val nowPlayingVisualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
     val blurredArtworkAppearance: Boolean = true,
+    val fullBleedDetailArtwork: Boolean = true,
+    val tintedBackgroundGradient: Boolean = true,
     val listenBrainz: ListenBrainzSettings = ListenBrainzSettings(),
     val lastFm: LastFmSettings = LastFmSettings(),
     val downloadPolicy: DownloadPolicySettings = DownloadPolicySettings(),

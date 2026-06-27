@@ -7,6 +7,7 @@ import com.github.takahirom.roborazzi.captureRoboImage
 import com.github.takahirom.roborazzi.size
 import com.phoebe.app.ui.PhoebeScreenshotApp
 import com.phoebe.app.ui.PhoebeScreenshotScenario
+import com.phoebe.app.ui.PhoebeTintOption
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -64,6 +65,10 @@ class PhoebeAndroidPhoneScreenshotTest {
     @Test fun phonePlayerVisualizerClassicEQLight() = capturePhone("player-visualizer-classic-eq", PhoebeScreenshotScenario.PlayerVisualizerClassicEQ, useLightAppearance = true)
     @Test fun phonePlayerVisualizerHaloSpectrumLight() = capturePhone("player-visualizer-halo-spectrum", PhoebeScreenshotScenario.PlayerVisualizerHaloSpectrum, useLightAppearance = true)
     @Test fun phonePlayerUpNextExpandedLight() = capturePhone("player-upnext-expanded", PhoebeScreenshotScenario.PlayerUpNextExpanded, useLightAppearance = true)
+
+    @Test fun phoneHomeRedTintDark() = capturePhone("home-red-tint", PhoebeScreenshotScenario.Home, tintId = PhoebeTintOption.fromId("red").id)
+    @Test fun phoneLibraryRedTintDark() = capturePhone("library-red-tint", PhoebeScreenshotScenario.Library, tintId = PhoebeTintOption.fromId("red").id)
+    @Test fun phoneSearchRedTintDark() = capturePhone("search-red-tint", PhoebeScreenshotScenario.Search, tintId = PhoebeTintOption.fromId("red").id)
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -88,6 +93,7 @@ private fun capturePhone(
     slug: String,
     scenario: PhoebeScreenshotScenario,
     useLightAppearance: Boolean = false,
+    tintId: String = PhoebeTintOption.Purple.id,
     heightDp: Int = 932,
 ) = capture(
     name = "android-phone-$slug-${if (useLightAppearance) "light" else "dark"}",
@@ -95,16 +101,19 @@ private fun capturePhone(
     widthDp = 430,
     heightDp = heightDp,
     useLightAppearance = useLightAppearance,
+    tintId = tintId,
 )
 
 private fun captureTablet(
     slug: String,
     scenario: PhoebeScreenshotScenario,
+    tintId: String = PhoebeTintOption.Purple.id,
 ) = capture(
     name = "android-tablet-$slug-dark",
     scenario = scenario,
     widthDp = 1180,
     heightDp = 820,
+    tintId = tintId,
 )
 
 private fun captureTabletUpNextExpanded(
@@ -125,6 +134,7 @@ private fun capture(
     widthDp: Int,
     heightDp: Int,
     useLightAppearance: Boolean = false,
+    tintId: String = PhoebeTintOption.Purple.id,
     forceShowQueue: Boolean = false,
 ) {
     captureRoboImage(
@@ -136,6 +146,7 @@ private fun capture(
         PhoebeScreenshotApp(
             scenario = scenario,
             useLightAppearance = useLightAppearance,
+            tintId = tintId,
             forceShowQueue = forceShowQueue,
             modifier = Modifier,
         )

@@ -184,9 +184,13 @@ private fun PlaylistDetailDesktopContent(
     val sortedTracks = remember(tracks, playlistSortBy, playlistAscending) {
         sortTracksForLibrary(tracks, playlistSortBy, playlistAscending)
     }
-    val filteredTracks = remember(sortedTracks, searchQuery) {
-        filterTracksByQuery(sortedTracks, searchQuery)
+    var filteredTracksResult by remember { mutableStateOf<List<Track>?>(null) }
+    LaunchedEffect(sortedTracks, searchQuery) {
+        filteredTracksResult = withContext(Dispatchers.Default) {
+            filterTracksByQuery(sortedTracks, searchQuery)
+        }
     }
+    val filteredTracks = filteredTracksResult ?: if (searchQuery.isBlank()) sortedTracks else emptyList()
     val editModeAvailable = filteredTracks.isNotEmpty() && playlist.supportsTrackRemoval()
     val editEnabled = editModeEnabled && editModeAvailable
     val selectedTracks = remember(filteredTracks, selectedTrackKeys) {

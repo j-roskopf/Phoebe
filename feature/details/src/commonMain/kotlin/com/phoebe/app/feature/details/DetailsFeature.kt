@@ -22,6 +22,7 @@ data class ArtistDetailRouteState(
     val searchQuery: String = "",
     val artistRadioAvailability: ArtistRadioAvailability? = null,
     val artistRadioStarting: Boolean = false,
+    val fullBleedArtwork: Boolean = true,
 )
 
 class ArtistDetailRouteActions(
@@ -48,6 +49,7 @@ data class AlbumDetailRouteState(
     val libraryUi: LibraryUiPreferences,
     val catalogRefreshing: Boolean = false,
     val searchQuery: String = "",
+    val fullBleedArtwork: Boolean = true,
 )
 
 class AlbumDetailRouteActions(
@@ -108,6 +110,7 @@ fun ArtistDetailRoute(
         catalog = state.catalog,
         libraryUi = state.libraryUi,
         catalogRefreshing = state.catalogRefreshing,
+        fullBleedArtwork = state.fullBleedArtwork,
         modifier = modifier,
         searchQuery = state.searchQuery,
         onBack = actions.onBack,
@@ -140,6 +143,7 @@ fun AlbumDetailRoute(
         catalog = state.catalog,
         libraryUi = state.libraryUi,
         catalogRefreshing = state.catalogRefreshing,
+        fullBleedArtwork = state.fullBleedArtwork,
         modifier = modifier,
         searchQuery = state.searchQuery,
         onBack = actions.onBack,

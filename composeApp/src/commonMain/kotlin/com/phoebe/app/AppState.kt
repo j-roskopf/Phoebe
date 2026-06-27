@@ -2148,6 +2148,14 @@ class AppState(
         dependencies.settingsService.setBlurredArtworkAppearance(enabled)
     }
 
+    fun setFullBleedDetailArtwork(enabled: Boolean) = scope.launch {
+        dependencies.settingsService.setFullBleedDetailArtwork(enabled)
+    }
+
+    fun setTintedBackgroundGradient(enabled: Boolean) = scope.launch {
+        dependencies.settingsService.setTintedBackgroundGradient(enabled)
+    }
+
     fun setAudioProcessingSettings(settings: AudioProcessingSettings) = scope.launch {
         dependencies.appSettingsRepository.setAudioProcessingSettings(settings)
     }

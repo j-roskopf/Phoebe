@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
@@ -33,6 +35,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyListScope
@@ -141,6 +144,7 @@ fun MobileHomeRoute(
     callbacks: MobileHomeCallbacks,
     modifier: Modifier = Modifier,
     initialExpandedPhoneSection: PhoneHomeAccordionSection? = null,
+    topBar: (@Composable () -> Unit)? = null,
 ) {
     MobileHomeScreen(
         state = routeState.homeUiState,
@@ -175,6 +179,7 @@ fun MobileHomeRoute(
         supportedCollectionEntries = routeState.supportedCollectionEntries,
         initialExpandedPhoneSection = initialExpandedPhoneSection,
         layoutMode = routeState.homeScreenLayoutMode,
+        topBar = topBar,
     )
 }
 
@@ -359,6 +364,7 @@ fun MobileHomeScreen(
     supportedCollectionEntries: Set<CollectionEntry> = allCollectionEntries().toSet(),
     initialExpandedPhoneSection: PhoneHomeAccordionSection? = null,
     layoutMode: HomeScreenLayoutMode = HomeScreenLayoutMode.Default,
+    topBar: (@Composable () -> Unit)? = null,
 ) {
     var showDecadeMix by remember { mutableStateOf(false) }
     if (showDecadeMix) {
@@ -420,6 +426,7 @@ fun MobileHomeScreen(
                 onPlayTracks = onPlayTracks,
                 onAddToUpNext = onAddToUpNext,
                 onDownload = onDownload,
+                topBar = topBar,
             )
         } else {
             MobileHomeContent(
@@ -457,6 +464,7 @@ fun MobileHomeScreen(
                 onShowDecadeMix = { showDecadeMix = true },
                 onClearDecadeMixNotice = onClearDecadeMixNotice,
                 onPlayTracks = onPlayTracks,
+                topBar = topBar,
             )
         }
     }
@@ -662,6 +670,7 @@ private fun MobileHomeContent(
     onShowDecadeMix: () -> Unit,
     onClearDecadeMixNotice: () -> Unit,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    topBar: (@Composable () -> Unit)?,
 ) {
     LaunchedEffect(expandedPhoneSection, sectionOrder, catalogSyncInProgress, usePhoneAccordions) {
         val target = expandedPhoneSection ?: return@LaunchedEffect
@@ -676,11 +685,14 @@ private fun MobileHomeContent(
         state = listState,
         modifier = modifier.padding(horizontal = 16.dp),
         contentPadding = PaddingValues(
-            top = chromePadding.top + 10.dp,
+            top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 10.dp,
             bottom = chromePadding.bottom + 10.dp,
         ),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        topBar?.let { header ->
+            item(key = "top-bar", contentType = "top-bar") { header() }
+        }
         if (catalogSyncInProgress) {
             item(key = "loading", contentType = "loading") { CatalogLoadingStrip() }
         }
@@ -875,16 +887,20 @@ private fun MobileExpandedHomeContent(
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
+    topBar: (@Composable () -> Unit)?,
 ) {
     LazyColumn(
         state = listState,
         modifier = modifier.padding(horizontal = 16.dp),
         contentPadding = PaddingValues(
-            top = chromePadding.top + 10.dp,
+            top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 10.dp,
             bottom = chromePadding.bottom + 10.dp,
         ),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
+        topBar?.let { header ->
+            item(key = "top-bar", contentType = "top-bar") { header() }
+        }
         if (catalogSyncInProgress) {
             item(key = "loading", contentType = "loading") { CatalogLoadingStrip() }
         }
