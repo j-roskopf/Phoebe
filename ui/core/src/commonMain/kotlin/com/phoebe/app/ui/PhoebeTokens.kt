@@ -115,7 +115,7 @@ val PhoebePaletteDark = PhoebeVisualPalette(
 /** Tokens from docs/light_mode_design.md */
 val PhoebePaletteLight = PhoebeVisualPalette(
     canvasBackground = Color(0xFFF3F4F7),
-    shellRadialTint = Color(0x0F8B3DFF),
+    shellRadialTint = Color(0x338B3DFF),
     shellTop = Color(0xFFFFFFFF),
     shellBottom = Color(0xFFFAFAFC),
     navBar = Color(0xFFFFFFFF),
@@ -145,7 +145,7 @@ internal fun PhoebeVisualPalette.withTint(tint: PhoebeTintOption, useLightAppear
     if (tint.id == PhoebeTintOption.Purple.id) return this
     val accent = if (useLightAppearance) tint.lightColor else tint.color
     return copy(
-        shellRadialTint = accent.copy(alpha = if (useLightAppearance) 0.12f else 0.32f),
+        shellRadialTint = accent.copy(alpha = if (useLightAppearance) 0.20f else 0.32f),
         accent = accent,
         accentLight = accent,
         librarySelectedRow = accent.copy(alpha = if (useLightAppearance) 0.10f else 0.18f),
