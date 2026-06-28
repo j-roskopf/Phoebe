@@ -1143,11 +1143,17 @@ private fun PhoebeRootStateHolder(
             val wideDesktop = maxWidth >= 1280.dp
             CompositionLocalProvider(LocalPlaylistDragEnabled provides !compact) {
             val mergesTitleBar = LocalDesktopMergesTitleBar.current
+            val shellTintStrength = if (isDesktopPlatform()) 0.72f else 1f
+            val shellTintRadius = if (isDesktopPlatform()) 930f else 960f
             val compactDesktopTopPadding = if (compact && isDesktopPlatform()) desktopWindowTopPadding() else 0.dp
             val shellModifier = if (compact) {
                 Modifier
                     .fillMaxSize()
-                    .phoebeShellBackground(appSettings.tintedBackgroundGradient)
+                    .phoebeShellBackground(
+                        tintedGradient = appSettings.tintedBackgroundGradient,
+                        radius = shellTintRadius,
+                        radialTintStrength = shellTintStrength,
+                    )
                     .padding(top = compactDesktopTopPadding)
             } else {
                 val shellInsets = if (mergesTitleBar) {
@@ -1159,7 +1165,11 @@ private fun PhoebeRootStateHolder(
                 }
                 Modifier
                     .fillMaxSize()
-                    .phoebeShellBackground(appSettings.tintedBackgroundGradient)
+                    .phoebeShellBackground(
+                        tintedGradient = appSettings.tintedBackgroundGradient,
+                        radius = shellTintRadius,
+                        radialTintStrength = shellTintStrength,
+                    )
                     .windowInsetsPadding(shellInsets)
             }
             Box(modifier = shellModifier) {

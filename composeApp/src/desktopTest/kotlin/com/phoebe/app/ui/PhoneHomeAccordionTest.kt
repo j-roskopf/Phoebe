@@ -9,6 +9,7 @@ import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -272,6 +273,49 @@ class PhoneHomeAccordionTest {
         waitForIdle()
 
         assertEquals(HomeScreenLayoutMode.Expanded, selected)
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun settingsTintedBackgroundSwitchCanBeDisabledOnMobile() = runDesktopComposeUiTest(width = 430, height = 932) {
+        var tintedBackground: Boolean? = null
+        setContent {
+            PhoebeTheme {
+                SettingsMobileView(
+                    isLightMode = false,
+                    onLightModeChange = {},
+                    tintId = PhoebeTintOption.Purple.id,
+                    onTintChange = {},
+                    downloadDirectory = null,
+                    downloadCount = 0,
+                    appSettings = AppSettings.Default.copy(tintedBackgroundGradient = true),
+                    libraryUi = LibraryUiPreferences(),
+                    defaultDownloadDirectoryLabel = "App storage",
+                    onDownloadDirectory = {},
+                    onDeleteAllDownloads = {},
+                    onCrossfadeSeconds = {},
+                    onScanLibraryOnLaunch = {},
+                    onNotifyWhenDownloadFinishes = {},
+                    onTintedBackgroundGradient = { tintedBackground = it },
+                    onHomeSections = {},
+                    onPersonalMix = {},
+                    onAlbumGridItemSize = {},
+                    onArtistGridItemSize = {},
+                    onExportFavoritePlaylists = {},
+                    onImportFavoritePlaylists = {},
+                    onExportRadioStations = {},
+                    onImportRadioStations = {},
+                    modifier = Modifier.size(430.dp, 932.dp),
+                )
+            }
+        }
+
+        onNodeWithTag("settings:tinted-background-switch", useUnmergedTree = true)
+            .performScrollTo()
+            .performClick()
+        waitForIdle()
+
+        assertEquals(false, tintedBackground)
     }
 
     private fun testTrack(id: String, title: String): Track =

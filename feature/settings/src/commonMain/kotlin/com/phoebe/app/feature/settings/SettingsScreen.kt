@@ -52,6 +52,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -401,10 +402,10 @@ fun SettingsMobileView(
             onHomeScreenLayoutModeChange,
             appSettings.nowPlayingVisualizerPreset,
             onVisualizerPreset,
-            appSettings.blurredArtworkAppearance,
-            onBlurredArtworkAppearance,
-            appSettings.tintedBackgroundGradient,
-            onTintedBackgroundGradient,
+            blurredArtworkAppearance = appSettings.blurredArtworkAppearance,
+            onBlurredArtworkAppearance = onBlurredArtworkAppearance,
+            tintedBackgroundGradient = appSettings.tintedBackgroundGradient,
+            onTintedBackgroundGradient = onTintedBackgroundGradient,
             compact = true,
         )
         SectionLabel("LIBRARY", PhoebeUi.accentLight)
@@ -583,6 +584,7 @@ private fun AppearanceSettingsCard(
             Switch(
                 checked = tintedBackgroundGradient,
                 onCheckedChange = onTintedBackgroundGradient,
+                modifier = Modifier.testTag("settings:tinted-background-switch"),
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = Color.White,
                     checkedTrackColor = PhoebeUi.accentLight,
@@ -2428,6 +2430,29 @@ private fun AboutSettingsCard(
             linkLabel = "joetr.com",
             onClick = { openExternalUrl(CreatorWebsiteUrl) },
         )
+        Spacer(Modifier.height(if (compact) 12.dp else 14.dp))
+        ImageCreditsSection()
+    }
+}
+
+@Composable
+private fun ImageCreditsSection() {
+    Text("Image Credits", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+    Text(
+        "Mix and collection artwork from Unsplash",
+        color = PhoebeUi.mutedText,
+        fontSize = 12.sp,
+        modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        UnsplashImageCredits.forEach { credit ->
+            AboutLinkRow(
+                title = credit.photographer,
+                subtitle = credit.description,
+                linkLabel = "Unsplash",
+                onClick = { openExternalUrl(credit.url) },
+            )
+        }
     }
 }
 
@@ -2541,6 +2566,71 @@ private const val LastFmApiAccountsUrl = "https://www.last.fm/api/account/create
 private const val ListenBrainzConnectUiTimeoutMs = 50_000L
 private const val ProjectGitHubUrl = "https://github.com/${PhoebeBuildInfo.githubOwner}/${PhoebeBuildInfo.githubRepo}"
 private const val CreatorWebsiteUrl = "https://joetr.com"
+private const val UnsplashReferral = "?utm_source=Phoebe&utm_medium=referral"
+
+private data class UnsplashImageCredit(
+    val photographer: String,
+    val description: String,
+    val url: String,
+)
+
+private val UnsplashImageCredits = listOf(
+    UnsplashImageCredit(
+        photographer = "Sašo Tušar",
+        description = "Shallow focus photography of audio mixer",
+        url = "https://unsplash.com/photos/shallow-focus-photography-of-audio-mixer-QtgGYlug6Cw$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "CARTIST",
+        description = "Pile of cassette tapes",
+        url = "https://unsplash.com/photos/pile-of-cassette-tapes-bq_GrIelfxk$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Clay Banks",
+        description = "Black and white vinyl record",
+        url = "https://unsplash.com/photos/black-and-white-vinyl-record-fEVaiLwWvlU$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Markus Spiske",
+        description = "Closeup photo of green tree",
+        url = "https://unsplash.com/photos/closeup-photo-of-green-tree-5Rr6Q48gJds$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Lucas Santos",
+        description = "Black and gold chronograph watch",
+        url = "https://unsplash.com/photos/black-and-gold-chronograph-watch-huRn8ECqADI$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Joanne Glaudemans",
+        description = "A group of toys on a table",
+        url = "https://unsplash.com/photos/a-group-of-toys-on-a-table-6bovWnOmi10$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Colin + Meg",
+        description = "A collage of photos of people and animals",
+        url = "https://unsplash.com/photos/a-collage-of-photos-of-people-and-animals-7CIIfsu6SSI$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Zachary Nelson",
+        description = "Man holding wireless microphone",
+        url = "https://unsplash.com/photos/man-holding-wireless-microphone-HPYk8X9hh34$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Chris Hardy",
+        description = "A stack of magazines sitting on top of a wooden table",
+        url = "https://unsplash.com/photos/a-stack-of-magazines-sitting-on-top-of-a-wooden-table-vjq0m95G16U$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Anish Prajapati",
+        description = "Woman in white and black plaid shirt playing electric guitar",
+        url = "https://unsplash.com/photos/woman-in-white-and-black-plaid-shirt-playing-electric-guitar-5Sxh_zg5Des$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Isabelle Farinelli Silva",
+        description = "A black shelf with a bunch of CDs on it",
+        url = "https://unsplash.com/photos/a-black-shelf-with-a-bunch-of-cds-on-it-IGrl4aw5VQ8$UnsplashReferral",
+    ),
+)
 
 @Composable
 private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {

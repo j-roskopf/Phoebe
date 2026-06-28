@@ -69,12 +69,15 @@ fun Modifier.phoebeShellBackground(
     tintedGradient: Boolean,
     center: Offset = Offset(420f, 40f),
     radius: Float = 960f,
+    radialTintStrength: Float = 1f,
 ): Modifier =
     if (tintedGradient) {
+        val shellTint = PhoebeUi.shellRadialTint
+        val softenedShellTint = shellTint.copy(alpha = shellTint.alpha * radialTintStrength.coerceIn(0f, 1f))
         background(Brush.verticalGradient(listOf(PhoebeUi.shellTop, PhoebeUi.shellBottom)))
             .background(
                 Brush.radialGradient(
-                    colors = listOf(PhoebeUi.shellRadialTint, Color.Transparent),
+                    colors = listOf(softenedShellTint, Color.Transparent),
                     center = center,
                     radius = radius,
                 ),

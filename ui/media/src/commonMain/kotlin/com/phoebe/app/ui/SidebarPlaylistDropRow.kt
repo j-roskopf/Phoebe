@@ -28,18 +28,20 @@ fun SidebarPlaylistDropRow(
     val playlistActions = LocalPlaylistActions.current
     val isHovered = (controller?.draggedTrack != null || controller?.draggedPlaylist != null) &&
         controller.isHovering(playlist.id)
+    val shape = RoundedCornerShape(10.dp)
     androidx.compose.foundation.layout.Box(
         modifier = Modifier
             .draggablePlaylist(playlist)
             .playlistDropTarget(playlist)
-            .clip(RoundedCornerShape(10.dp))
-            .background(if (isHovered) PhoebeUi.accentLight.copy(alpha = 0.32f) else PhoebeUi.sidebar)
-            .border(
-                BorderStroke(
-                    width = if (isHovered) 1.5.dp else 0.dp,
-                    color = if (isHovered) PhoebeUi.accentLight else PhoebeUi.sidebar,
-                ),
-                RoundedCornerShape(10.dp),
+            .clip(shape)
+            .then(
+                if (isHovered) {
+                    Modifier
+                        .background(PhoebeUi.accentLight.copy(alpha = 0.32f))
+                        .border(BorderStroke(1.5.dp, PhoebeUi.accentLight), shape)
+                } else {
+                    Modifier
+                },
             )
             .padding(2.dp),
     ) {

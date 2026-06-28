@@ -7,16 +7,15 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.asPaddingValues
-import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -87,42 +86,74 @@ fun CollectionsScreen(
         entry.facet.name,
         saver = LazyListState.Saver,
     ) { LazyListState() }
-    Column(
-        modifier
+    LazyColumn(
+        state = listState,
+        modifier = modifier
             .fillMaxSize()
-            .padding(start = 28.dp, end = 28.dp, top = mobileContentTopPadding(24.dp), bottom = 24.dp + bottomContentPadding),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+            .padding(horizontal = 28.dp),
+        contentPadding = PaddingValues(top = mobileContentTopPadding(24.dp), bottom = 24.dp + bottomContentPadding),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
-        CollectionsHeader(
-            label = "COLLECTIONS",
-            title = entry.title,
-            subtitle = if (buckets.any { it.items.isNotEmpty() }) {
-                "${buckets.sumOf { it.items.size }} ${entry.target.itemPlural.lowercase()} across ${buckets.size} ${entry.facet.plural.lowercase()}"
-            } else if (loading) {
-                "Loading ${entry.facet.plural.lowercase()}…"
-            } else {
-                "${buckets.size} ${entry.facet.plural.lowercase()}"
-            },
-            onBack = onBack,
-        )
-        CollectionSortHeader(
-            title = entry.facet.plural,
-            sortBy = sortBy,
-            sortKeys = listOf(LibrarySortBy.Name, LibrarySortBy.DateAdded),
-            sortLabel = { key -> if (key == LibrarySortBy.DateAdded) "Item count" else "${entry.facet.singular} name" },
-            onSortBy = { sortBy = it },
-            ascending = ascending,
-            onAscending = { ascending = it },
-        )
-        CollectionValuesList(
-            entry = entry,
-            buckets = visibleBuckets,
-            loading = loading,
-            searchQuery = searchQuery,
-            state = listState,
-            onCollectionValue = onCollectionValue,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-        )
+        item(key = "collections-header", contentType = "collections-header") {
+            CollectionsHeader(
+                label = "COLLECTIONS",
+                title = entry.title,
+                subtitle = if (buckets.any { it.items.isNotEmpty() }) {
+                    "${buckets.sumOf { it.items.size }} ${entry.target.itemPlural.lowercase()} across ${buckets.size} ${entry.facet.plural.lowercase()}"
+                } else if (loading) {
+                    "Loading ${entry.facet.plural.lowercase()}…"
+                } else {
+                    "${buckets.size} ${entry.facet.plural.lowercase()}"
+                },
+                onBack = onBack,
+                modifier = Modifier.padding(bottom = 14.dp),
+            )
+        }
+        item(key = "collections-sort", contentType = "collections-sort") {
+            CollectionSortHeader(
+                title = entry.facet.plural,
+                sortBy = sortBy,
+                sortKeys = listOf(LibrarySortBy.Name, LibrarySortBy.DateAdded),
+                sortLabel = { key -> if (key == LibrarySortBy.DateAdded) "Item count" else "${entry.facet.singular} name" },
+                onSortBy = { sortBy = it },
+                ascending = ascending,
+                onAscending = { ascending = it },
+                modifier = Modifier.padding(bottom = 14.dp),
+            )
+        }
+        when {
+            loading -> item(key = "collections-loading", contentType = "collections-loading") {
+                CollectionLoadingIndicator(
+                    message = "Loading ${entry.facet.plural.lowercase()}…",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                )
+            }
+            visibleBuckets.isEmpty() -> item(key = "collections-empty", contentType = "collections-empty") {
+                val query = searchQuery.trim()
+                val message = if (query.isNotBlank()) {
+                    "No ${entry.facet.plural.lowercase()} match \"$query\"."
+                } else {
+                    "No ${entry.facet.singular.lowercase()} tags are available for ${entry.target.itemPlural.lowercase()} yet."
+                }
+                CollectionEmpty(
+                    message = message,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                )
+            }
+            else -> items(
+                items = visibleBuckets,
+                key = { it.label },
+                contentType = { "collection-value" },
+            ) { bucket ->
+                CollectionValueRow(entry, bucket) {
+                    onCollectionValue(entry, bucket.label)
+                }
+            }
+        }
     }
 }
 
@@ -182,41 +213,93 @@ fun CollectionItemsScreen(
         value,
         saver = LazyListState.Saver,
     ) { LazyListState() }
-    Column(
-        modifier
+    LazyColumn(
+        state = listState,
+        modifier = modifier
             .fillMaxSize()
-            .padding(start = 28.dp, end = 28.dp, top = mobileContentTopPadding(24.dp), bottom = 24.dp + bottomContentPadding),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+            .padding(horizontal = 28.dp),
+        contentPadding = PaddingValues(top = mobileContentTopPadding(24.dp), bottom = 24.dp + bottomContentPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        CollectionsHeader(
-            label = entry.title,
-            title = value,
-            subtitle = if (loading) {
-                "Loading ${entry.target.itemPlural.lowercase()}…"
-            } else {
-                "${items.size} ${if (items.size == 1) entry.target.itemSingular.lowercase() else entry.target.itemPlural.lowercase()}"
-            },
-            onBack = onBack,
-        )
-        CollectionSortHeader(
-            title = entry.target.itemPlural,
-            sortBy = sortBy,
-            sortKeys = collectionItemSortKeys(entry.target),
-            sortLabel = { key -> collectionItemSortLabel(entry.target, key) },
-            onSortBy = { sortBy = it },
-            ascending = ascending,
-            onAscending = { ascending = it },
-        )
-        CollectionItemsList(
-            entry = entry,
-            items = visibleItems,
-            loading = loading,
-            searchQuery = searchQuery,
-            state = listState,
-            onArtist = onArtist,
-            onAlbum = onAlbum,
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-        )
+        item(key = "collection-items-header", contentType = "collection-items-header") {
+            CollectionsHeader(
+                label = entry.title,
+                title = value,
+                subtitle = if (loading) {
+                    "Loading ${entry.target.itemPlural.lowercase()}…"
+                } else {
+                    "${items.size} ${if (items.size == 1) entry.target.itemSingular.lowercase() else entry.target.itemPlural.lowercase()}"
+                },
+                onBack = onBack,
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
+        }
+        item(key = "collection-items-sort", contentType = "collection-items-sort") {
+            CollectionSortHeader(
+                title = entry.target.itemPlural,
+                sortBy = sortBy,
+                sortKeys = collectionItemSortKeys(entry.target),
+                sortLabel = { key -> collectionItemSortLabel(entry.target, key) },
+                onSortBy = { sortBy = it },
+                ascending = ascending,
+                onAscending = { ascending = it },
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
+        }
+        when {
+            loading -> item(key = "collection-items-loading", contentType = "collection-items-loading") {
+                CollectionLoadingIndicator(
+                    message = "Loading ${entry.target.itemPlural.lowercase()}…",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                )
+            }
+            visibleItems.isEmpty() -> item(key = "collection-items-empty", contentType = "collection-items-empty") {
+                val query = searchQuery.trim()
+                val message = if (query.isNotBlank()) {
+                    "No ${entry.target.itemPlural.lowercase()} in this ${entry.facet.singular.lowercase()} match \"$query\"."
+                } else {
+                    "Nothing is in this ${entry.facet.singular.lowercase()} yet."
+                }
+                CollectionEmpty(
+                    message = message,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(180.dp),
+                )
+            }
+            else -> items(
+                items = visibleItems,
+                key = { it.id },
+                contentType = { "collection-item" },
+            ) { item ->
+                when (entry.target) {
+                    CollectionTarget.Artists -> {
+                        val artist = item.artist ?: return@items
+                        CollectionItemRow(
+                            title = artist.title,
+                            subtitle = item.subtitle,
+                            seed = artist.title,
+                            thumbUrl = item.thumbUrl,
+                            artworkRadius = 999.dp,
+                            onClick = { onArtist(artist) },
+                        )
+                    }
+                    CollectionTarget.Albums -> {
+                        val album = item.album ?: return@items
+                        CollectionItemRow(
+                            title = album.title,
+                            subtitle = item.subtitle,
+                            seed = album.title,
+                            thumbUrl = item.thumbUrl,
+                            artworkRadius = 10.dp,
+                            onClick = { onAlbum(album) },
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -226,8 +309,9 @@ private fun CollectionsHeader(
     title: String,
     subtitle: String,
     onBack: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         DetailBackButton(onBack = onBack)
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
@@ -263,9 +347,10 @@ private fun CollectionSortHeader(
     onSortBy: (LibrarySortBy) -> Unit,
     ascending: Boolean,
     onAscending: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        Modifier.fillMaxWidth(),
+        modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -354,47 +439,6 @@ private fun CollectionEmpty(message: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun CollectionValuesList(
-    entry: CollectionEntry,
-    buckets: List<CollectionBucket>,
-    loading: Boolean,
-    searchQuery: String,
-    state: LazyListState,
-    onCollectionValue: (CollectionEntry, String) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    if (loading) {
-        CollectionLoadingIndicator("Loading ${entry.facet.plural.lowercase()}…", modifier)
-        return
-    }
-    if (buckets.isEmpty()) {
-        val query = searchQuery.trim()
-        val message = if (query.isNotBlank()) {
-            "No ${entry.facet.plural.lowercase()} match \"$query\"."
-        } else {
-            "No ${entry.facet.singular.lowercase()} tags are available for ${entry.target.itemPlural.lowercase()} yet."
-        }
-        CollectionEmpty(message, modifier)
-        return
-    }
-    LazyColumn(
-        state = state,
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        items(
-            items = buckets,
-            key = { it.label },
-            contentType = { "collection-value" },
-        ) { bucket ->
-            CollectionValueRow(entry, bucket) {
-                onCollectionValue(entry, bucket.label)
-            }
-        }
-    }
-}
-
-@Composable
 private fun CollectionValueRow(entry: CollectionEntry, bucket: CollectionBucket, onClick: () -> Unit) {
     Row(
         Modifier
@@ -415,69 +459,6 @@ private fun CollectionValueRow(entry: CollectionEntry, bucket: CollectionBucket,
             modifier = Modifier.weight(1f),
         )
         PhoebeIconView(PhoebeIcon.Forward, tint = PhoebeUi.mutedText, modifier = Modifier.size(12.dp))
-    }
-}
-
-@Composable
-private fun CollectionItemsList(
-    entry: CollectionEntry,
-    items: List<CollectionItem>,
-    loading: Boolean,
-    searchQuery: String,
-    state: LazyListState,
-    onArtist: (Artist) -> Unit,
-    onAlbum: (Album) -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    if (loading) {
-        CollectionLoadingIndicator("Loading ${entry.target.itemPlural.lowercase()}…", modifier)
-        return
-    }
-    if (items.isEmpty()) {
-        val query = searchQuery.trim()
-        val message = if (query.isNotBlank()) {
-            "No ${entry.target.itemPlural.lowercase()} in this ${entry.facet.singular.lowercase()} match \"$query\"."
-        } else {
-            "Nothing is in this ${entry.facet.singular.lowercase()} yet."
-        }
-        CollectionEmpty(message, modifier)
-        return
-    }
-    LazyColumn(
-        state = state,
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        items(
-            items = items,
-            key = { it.id },
-            contentType = { "collection-item" },
-        ) { item ->
-            when (entry.target) {
-                CollectionTarget.Artists -> {
-                    val artist = item.artist ?: return@items
-                    CollectionItemRow(
-                        title = artist.title,
-                        subtitle = item.subtitle,
-                        seed = artist.title,
-                        thumbUrl = item.thumbUrl,
-                        artworkRadius = 999.dp,
-                        onClick = { onArtist(artist) },
-                    )
-                }
-                CollectionTarget.Albums -> {
-                    val album = item.album ?: return@items
-                    CollectionItemRow(
-                        title = album.title,
-                        subtitle = item.subtitle,
-                        seed = album.title,
-                        thumbUrl = item.thumbUrl,
-                        artworkRadius = 10.dp,
-                        onClick = { onAlbum(album) },
-                    )
-                }
-            }
-        }
     }
 }
 

@@ -120,7 +120,18 @@ import phoebe.feature.home.generated.resources.mix_time_travel
 
 private val PhoneHomeAccordionBreakpoint: Dp = 600.dp
 private val MobileHomePosterCardSize: Dp = 148.dp
+private const val HomePlayedPanelMaxRows = 5
 private const val HomeMixCardAspectRatio = 1f
+
+@Composable
+private fun HomeSectionLabel(label: String) {
+    SectionLabel(
+        label = label,
+        color = PhoebeUi.mutedText,
+        fontSize = 12.sp,
+        fontWeight = FontWeight.ExtraBold,
+    )
+}
 
 @Immutable
 data class MobileHomeRouteState(
@@ -253,6 +264,7 @@ fun DesktopHomeScreen(
     onDownload: (Track) -> Unit,
     homeSections: List<HomeSection> = HomeSection.defaultOrder,
     supportedCollectionEntries: Set<CollectionEntry> = allCollectionEntries().toSet(),
+    useBarePanels: Boolean = false,
 ) {
     var showDecadeMix by remember { mutableStateOf(false) }
     if (showDecadeMix) {
@@ -268,7 +280,8 @@ fun DesktopHomeScreen(
             },
         )
     }
-    val playedPanelMaxRows = 4
+    val playedPanelMaxRows = HomePlayedPanelMaxRows
+    val panelStyle = if (useBarePanels) HomePanelStyle.Bare else HomePanelStyle.Card
     val sharedPlayedTrackKeys = remember(state.mostPlayedTracks, state.recentlyPlayedTracks) {
         val visibleTrackIds = state.mostPlayedTracks.take(playedPanelMaxRows).map { it.track.id } +
             state.recentlyPlayedTracks.take(playedPanelMaxRows).map { it.track.id }
@@ -299,13 +312,13 @@ fun DesktopHomeScreen(
         normalizedHomeSections(homeSections).forEach { section ->
             when (section) {
                 HomeSection.Mixes -> item("mixes") {
-                    DesktopMixesPanel(onPlayPersonalMix, radioStations, radioStartingIds, onPlayRadioStation, onClearDecadeMixNotice) {
+                    DesktopMixesPanel(onPlayPersonalMix, radioStations, radioStartingIds, onPlayRadioStation, onClearDecadeMixNotice, panelStyle = panelStyle) {
                         showDecadeMix = true
                     }
                 }
                 HomeSection.Collections -> item("collections") {
-                    HomePanel(Modifier.fillMaxWidth()) {
-                        SectionLabel("COLLECTIONS", PhoebeUi.mutedText)
+                    HomePanel(Modifier.fillMaxWidth(), style = panelStyle) {
+                        HomeSectionLabel("COLLECTIONS")
                         DesktopCollectionsGrid(supportedCollectionEntries, onCollections)
                     }
                 }
@@ -316,10 +329,11 @@ fun DesktopHomeScreen(
                             onPlaylist,
                             onFavoritePlaylists,
                             totalCount = state.favoritePlaylistCount,
+                            panelStyle = panelStyle,
                         )
                     }
-                    item("favorite-artists") { DesktopFavoriteArtistsPanel(state.favoriteArtists, artistThumbs, onArtist, onFavoriteArtists, totalCount = state.favoriteArtistCount) }
-                    item("favorite-albums") { DesktopFavoriteAlbumsPanel(state.favoriteAlbums, albumArtworkFallbacks, onAlbum, onFavoriteAlbums, totalCount = state.favoriteAlbumCount) }
+                    item("favorite-artists") { DesktopFavoriteArtistsPanel(state.favoriteArtists, artistThumbs, onArtist, onFavoriteArtists, totalCount = state.favoriteArtistCount, panelStyle = panelStyle) }
+                    item("favorite-albums") { DesktopFavoriteAlbumsPanel(state.favoriteAlbums, albumArtworkFallbacks, onAlbum, onFavoriteAlbums, totalCount = state.favoriteAlbumCount, panelStyle = panelStyle) }
                 }
                 HomeSection.FavoritePlaylists -> item("favorite-playlists") {
                     DesktopFavoritePlaylistsPanel(
@@ -327,23 +341,24 @@ fun DesktopHomeScreen(
                         onPlaylist,
                         onFavoritePlaylists,
                         totalCount = state.favoritePlaylistCount,
+                        panelStyle = panelStyle,
                     )
                 }
-                HomeSection.FavoriteArtists -> item("favorite-artists") { DesktopFavoriteArtistsPanel(state.favoriteArtists, artistThumbs, onArtist, onFavoriteArtists, totalCount = state.favoriteArtistCount) }
-                HomeSection.FavoriteAlbums -> item("favorite-albums") { DesktopFavoriteAlbumsPanel(state.favoriteAlbums, albumArtworkFallbacks, onAlbum, onFavoriteAlbums, totalCount = state.favoriteAlbumCount) }
+                HomeSection.FavoriteArtists -> item("favorite-artists") { DesktopFavoriteArtistsPanel(state.favoriteArtists, artistThumbs, onArtist, onFavoriteArtists, totalCount = state.favoriteArtistCount, panelStyle = panelStyle) }
+                HomeSection.FavoriteAlbums -> item("favorite-albums") { DesktopFavoriteAlbumsPanel(state.favoriteAlbums, albumArtworkFallbacks, onAlbum, onFavoriteAlbums, totalCount = state.favoriteAlbumCount, panelStyle = panelStyle) }
                 HomeSection.Recents -> {
-                    item("recent-songs") { DesktopRecentSongsPanel(state.recentlyAddedTracks, onRecentSongs, onPlayTracks) }
-                    item("recent-artists") { DesktopRecentArtistsPanel(state.recentlyAddedArtists, artistThumbs, onRecentArtists, onArtist) }
-                    item("recent-albums") { DesktopRecentAlbumsPanel(state.recentlyAddedAlbums, albumArtworkFallbacks, onRecentAlbums, onAlbum) }
+                    item("recent-songs") { DesktopRecentSongsPanel(state.recentlyAddedTracks, onRecentSongs, onPlayTracks, panelStyle = panelStyle) }
+                    item("recent-artists") { DesktopRecentArtistsPanel(state.recentlyAddedArtists, artistThumbs, onRecentArtists, onArtist, panelStyle = panelStyle) }
+                    item("recent-albums") { DesktopRecentAlbumsPanel(state.recentlyAddedAlbums, albumArtworkFallbacks, onRecentAlbums, onAlbum, panelStyle = panelStyle) }
                 }
-                HomeSection.RecentSongs -> item("recent-songs") { DesktopRecentSongsPanel(state.recentlyAddedTracks, onRecentSongs, onPlayTracks) }
-                HomeSection.RecentArtists -> item("recent-artists") { DesktopRecentArtistsPanel(state.recentlyAddedArtists, artistThumbs, onRecentArtists, onArtist) }
-                HomeSection.RecentAlbums -> item("recent-albums") { DesktopRecentAlbumsPanel(state.recentlyAddedAlbums, albumArtworkFallbacks, onRecentAlbums, onAlbum) }
+                HomeSection.RecentSongs -> item("recent-songs") { DesktopRecentSongsPanel(state.recentlyAddedTracks, onRecentSongs, onPlayTracks, panelStyle = panelStyle) }
+                HomeSection.RecentArtists -> item("recent-artists") { DesktopRecentArtistsPanel(state.recentlyAddedArtists, artistThumbs, onRecentArtists, onArtist, panelStyle = panelStyle) }
+                HomeSection.RecentAlbums -> item("recent-albums") { DesktopRecentAlbumsPanel(state.recentlyAddedAlbums, albumArtworkFallbacks, onRecentAlbums, onAlbum, panelStyle = panelStyle) }
                 HomeSection.Played -> item("played") {
-                    DesktopPlayedPanels(state, onPlayTracks, onAddToUpNext, onDownload, onMostPlayed, onRecentlyPlayed, playedPanelMaxRows, sharedKeyForPlayedTrack)
+                    DesktopPlayedPanels(state, onPlayTracks, onAddToUpNext, onDownload, onMostPlayed, onRecentlyPlayed, playedPanelMaxRows, sharedKeyForPlayedTrack, panelStyle)
                 }
                 HomeSection.Random -> item("random") {
-                    DesktopRandomPanels(state, catalogRefreshing, albumArtworkFallbacks, onArtist, onAlbum, onRefreshArtists, onRefreshAlbums, onPrefetchArtist, onPrefetchAlbum)
+                    DesktopRandomPanels(state, catalogRefreshing, albumArtworkFallbacks, onArtist, onAlbum, onRefreshArtists, onRefreshAlbums, onPrefetchArtist, onPrefetchAlbum, panelStyle)
                 }
             }
         }
@@ -1113,7 +1128,7 @@ private fun ExpandedCollectionsShelf(
     onCollections: (CollectionEntry) -> Unit,
 ) {
     if (collectionEntries.isEmpty()) {
-        SectionLabel("COLLECTIONS", PhoebeUi.mutedText)
+        HomeSectionLabel("COLLECTIONS")
         HomeEmptyState("No collections are available.")
     } else {
         ExpandedHomeShelf("COLLECTIONS", horizontalSpacing = 9.dp) {
@@ -1413,7 +1428,7 @@ private fun HomePlayedTablePanel(
             else -> {
                 val tracks = rows.map { it.track }
                 Column(Modifier.fillMaxWidth()) {
-                    rows.take(4).forEachIndexed { index, row ->
+                    rows.take(HomePlayedPanelMaxRows).forEachIndexed { index, row ->
                         if (index > 0) {
                             Box(
                                 Modifier
@@ -1754,7 +1769,7 @@ private fun MobileRecentsShortcutsSection(
 ) {
     val actions = recentActionsFor(subsections, onRecentSongs, onRecentArtists, onRecentAlbums)
     HomePanel(Modifier.fillMaxWidth()) {
-        SectionLabel("RECENTLY ADDED", PhoebeUi.mutedText)
+        HomeSectionLabel("RECENTLY ADDED")
         if (actions.isEmpty()) {
             HomeEmptyState("No recently added sections are enabled.")
         } else {
@@ -1775,7 +1790,7 @@ private fun MobileRandomSection(
     onRefreshAlbums: () -> Unit,
 ) {
     HomePanel(Modifier.fillMaxWidth()) {
-        SectionLabel("RANDOM", PhoebeUi.mutedText)
+        HomeSectionLabel("RANDOM")
         MobileRandomExpandedContent(
             randomArtists = randomArtists,
             randomAlbums = randomAlbums,
@@ -2006,7 +2021,7 @@ private fun MobileCollectionsSection(
     collectionRows: List<List<HomeCollectionEntry>>,
     onCollections: (CollectionEntry) -> Unit,
 ) {
-    SectionLabel("COLLECTIONS", PhoebeUi.mutedText)
+    HomeSectionLabel("COLLECTIONS")
     HomeHorizontalCarousel(Modifier.fillMaxWidth(), horizontalSpacing = 9.dp) {
         items(collectionRows.flatten(), key = { it.collectionEntry.toString() }, contentType = { "mobile-collection" }) { entry ->
             HomeMixPosterCard(
@@ -2031,7 +2046,7 @@ private fun MobileFavoritePlaylistsSection(
 ) {
     val playlistActions = LocalPlaylistActions.current
     if (playlists.isEmpty()) {
-        SectionLabel("FAVORITE PLAYLISTS", PhoebeUi.mutedText)
+        HomeSectionLabel("FAVORITE PLAYLISTS")
         HomeEmptyState("Favorite playlists will appear here.")
     } else {
         val visiblePlaylists = remember(playlists) {
@@ -2061,7 +2076,7 @@ private fun MobileFavoriteArtistsSection(
     totalCount: Int = artists.size,
 ) {
     if (artists.isEmpty()) {
-        SectionLabel("FAVORITE ARTISTS", PhoebeUi.mutedText)
+        HomeSectionLabel("FAVORITE ARTISTS")
         HomeEmptyState("Favorite artists will appear here.")
     } else {
         val visibleArtists = remember(artists) { artists.take(10) }
@@ -2085,7 +2100,7 @@ private fun MobileFavoriteAlbumsSection(
     totalCount: Int = albums.size,
 ) {
     if (albums.isEmpty()) {
-        SectionLabel("FAVORITE ALBUMS", PhoebeUi.mutedText)
+        HomeSectionLabel("FAVORITE ALBUMS")
         HomeEmptyState("Favorite albums will appear here.")
     } else {
         val visibleAlbums = remember(albums) { albums.take(10) }
@@ -2106,7 +2121,7 @@ private fun MobilePlayedHistoryShortcuts(
     onMostPlayed: () -> Unit,
 ) {
     HomePanel(Modifier.fillMaxWidth()) {
-        SectionLabel("LISTENING HISTORY", PhoebeUi.mutedText)
+        HomeSectionLabel("LISTENING HISTORY")
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             MobileActionCard("Recently Played", PhoebeIcon.Music, Modifier.weight(1f), onClick = onRecentlyPlayed)
             MobileActionCard("Most Played", PhoebeIcon.PlaylistPlay, Modifier.weight(1f), onClick = onMostPlayed)
@@ -2121,10 +2136,11 @@ private fun DesktopMixesPanel(
     radioStartingIds: Set<String>,
     onPlayRadioStation: (PlexRadioStation) -> Unit,
     onClearDecadeMixNotice: () -> Unit,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
     onShowDecadeMix: () -> Unit,
 ) {
-    HomePanel(Modifier.fillMaxWidth()) {
-        SectionLabel("CREATE A MIX", PhoebeUi.mutedText)
+    HomePanel(Modifier.fillMaxWidth(), style = panelStyle) {
+        HomeSectionLabel("CREATE A MIX")
         LazyRow(
             modifier = Modifier.fillMaxWidth().height(148.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -2188,7 +2204,7 @@ private fun MobileMixesSection(
     onClearDecadeMixNotice: () -> Unit,
     onShowDecadeMix: () -> Unit,
 ) {
-    SectionLabel("CREATE A MIX", PhoebeUi.mutedText)
+    HomeSectionLabel("CREATE A MIX")
     HomeHorizontalCarousel(Modifier.fillMaxWidth(), horizontalSpacing = 9.dp) {
         item(key = "personal-mix", contentType = "mobile-mix-action") {
             HomeMixPosterCard("Personal Mix", PhoebeIcon.Person, Res.drawable.mix_personal, Modifier.width(MobileHomePosterCardSize), onClick = onPlayPersonalMix)
@@ -2233,8 +2249,9 @@ private fun DesktopRecentSongsPanel(
     tracks: List<Track>,
     onRecentSongs: () -> Unit,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
-    HomePanel(Modifier.fillMaxWidth()) {
+    HomePanel(Modifier.fillMaxWidth(), style = panelStyle) {
         SectionHeader("RECENTLY ADDED SONGS", "See all", onRecentSongs)
         if (tracks.isEmpty()) {
             HomeEmptyState("New songs from Plex and local folders will appear here.")
@@ -2257,8 +2274,9 @@ private fun DesktopRecentArtistsPanel(
     artistThumbs: Map<String, String>,
     onRecentArtists: () -> Unit,
     onArtist: (Artist) -> Unit,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
-    HomePanel(Modifier.fillMaxWidth()) {
+    HomePanel(Modifier.fillMaxWidth(), style = panelStyle) {
         SectionHeader("RECENTLY ADDED ARTISTS", "See all", onRecentArtists)
         if (artists.isEmpty()) {
             HomeEmptyState("New artists from Plex and local folders will appear here.")
@@ -2278,8 +2296,9 @@ private fun DesktopRecentAlbumsPanel(
     albumArtworkFallbacks: Map<String, String>,
     onRecentAlbums: () -> Unit,
     onAlbum: (Album) -> Unit,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
-    HomePanel(Modifier.fillMaxWidth()) {
+    HomePanel(Modifier.fillMaxWidth(), style = panelStyle) {
         SectionHeader("RECENTLY ADDED ALBUMS", "See all", onRecentAlbums)
         if (albums.isEmpty()) {
             HomeEmptyState("New albums from Plex and local folders will appear here.")
@@ -2299,11 +2318,12 @@ private fun DesktopFavoritePlaylistsPanel(
     onPlaylist: (Playlist) -> Unit,
     onViewAll: () -> Unit,
     totalCount: Int = playlists.size,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
     val playlistActions = LocalPlaylistActions.current
-    HomePanel(Modifier.fillMaxWidth()) {
+    HomePanel(Modifier.fillMaxWidth(), style = panelStyle) {
         if (playlists.isEmpty()) {
-            SectionLabel("FAVORITE PLAYLISTS", PhoebeUi.mutedText)
+            HomeSectionLabel("FAVORITE PLAYLISTS")
             HomeEmptyState("Favorite playlists will appear here.")
         } else {
             val displayPlaylists = remember(playlists) {
@@ -2335,10 +2355,11 @@ private fun DesktopFavoriteArtistsPanel(
     onArtist: (Artist) -> Unit,
     onViewAll: () -> Unit,
     totalCount: Int = artists.size,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
-    HomePanel(Modifier.fillMaxWidth()) {
+    HomePanel(Modifier.fillMaxWidth(), style = panelStyle) {
         if (artists.isEmpty()) {
-            SectionLabel("FAVORITE ARTISTS", PhoebeUi.mutedText)
+            HomeSectionLabel("FAVORITE ARTISTS")
             HomeEmptyState("Favorite artists will appear here.")
         } else {
             val displayArtists = remember(artists) {
@@ -2365,10 +2386,11 @@ private fun DesktopFavoriteAlbumsPanel(
     onAlbum: (Album) -> Unit,
     onViewAll: () -> Unit,
     totalCount: Int = albums.size,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
-    HomePanel(Modifier.fillMaxWidth()) {
+    HomePanel(Modifier.fillMaxWidth(), style = panelStyle) {
         if (albums.isEmpty()) {
-            SectionLabel("FAVORITE ALBUMS", PhoebeUi.mutedText)
+            HomeSectionLabel("FAVORITE ALBUMS")
             HomeEmptyState("Favorite albums will appear here.")
         } else {
             val displayAlbums = remember(albums) {
@@ -2486,18 +2508,20 @@ private fun DesktopPlayedPanels(
     onRecentlyPlayed: () -> Unit,
     playedPanelMaxRows: Int,
     sharedKeyForPlayedTrack: (Track) -> String?,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
-    val panelHeight = 320.dp
+    val panelHeight = 480.dp
+    val desktopRowHeight = 72.dp
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         if (maxWidth < 820.dp) {
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                MostPlayedPanel(state.mostPlayedTracks, onPlayTracks, onAddToUpNext, onDownload, onMostPlayed, Modifier.fillMaxWidth(), maxRows = playedPanelMaxRows, sharedKeyForTrack = sharedKeyForPlayedTrack)
-                RecentPlayedPanel(state, onPlayTracks, onAddToUpNext, onDownload, onRecentlyPlayed, Modifier.fillMaxWidth(), maxRows = playedPanelMaxRows, sharedKeyForTrack = sharedKeyForPlayedTrack)
+                MostPlayedPanel(state.mostPlayedTracks, onPlayTracks, onAddToUpNext, onDownload, onMostPlayed, Modifier.fillMaxWidth(), maxRows = playedPanelMaxRows, sharedKeyForTrack = sharedKeyForPlayedTrack, panelStyle = panelStyle)
+                RecentPlayedPanel(state, onPlayTracks, onAddToUpNext, onDownload, onRecentlyPlayed, Modifier.fillMaxWidth(), maxRows = playedPanelMaxRows, sharedKeyForTrack = sharedKeyForPlayedTrack, panelStyle = panelStyle)
             }
         } else {
             Row(Modifier.fillMaxWidth().height(panelHeight), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                MostPlayedPanel(state.mostPlayedTracks, onPlayTracks, onAddToUpNext, onDownload, onMostPlayed, Modifier.weight(1f).fillMaxHeight(), maxRows = playedPanelMaxRows, sharedKeyForTrack = sharedKeyForPlayedTrack, rowHeight = 78.dp)
-                RecentPlayedPanel(state, onPlayTracks, onAddToUpNext, onDownload, onRecentlyPlayed, Modifier.weight(1f).fillMaxHeight(), maxRows = playedPanelMaxRows, sharedKeyForTrack = sharedKeyForPlayedTrack, rowHeight = 78.dp)
+                MostPlayedPanel(state.mostPlayedTracks, onPlayTracks, onAddToUpNext, onDownload, onMostPlayed, Modifier.weight(1f).fillMaxHeight(), maxRows = playedPanelMaxRows, sharedKeyForTrack = sharedKeyForPlayedTrack, rowHeight = desktopRowHeight, panelStyle = panelStyle)
+                RecentPlayedPanel(state, onPlayTracks, onAddToUpNext, onDownload, onRecentlyPlayed, Modifier.weight(1f).fillMaxHeight(), maxRows = playedPanelMaxRows, sharedKeyForTrack = sharedKeyForPlayedTrack, rowHeight = desktopRowHeight, panelStyle = panelStyle)
             }
         }
     }
@@ -2514,32 +2538,47 @@ private fun DesktopRandomPanels(
     onRefreshAlbums: () -> Unit,
     onPrefetchArtist: (Artist) -> Unit,
     onPrefetchAlbum: (Album) -> Unit,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         if (maxWidth < 820.dp) {
             val randomPanelHeight = 336.dp
             Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                RandomArtistPanel(state.randomArtists.firstOrNull(), state.randomArtistStats, catalogRefreshing, onArtist, onRefreshArtists, onPrefetchArtist, Modifier.fillMaxWidth().height(randomPanelHeight))
-                RandomAlbumPanel(state.randomAlbums.firstOrNull(), state.randomAlbumStats, catalogRefreshing, albumArtworkFallbacks, onAlbum, onRefreshAlbums, onPrefetchAlbum, Modifier.fillMaxWidth().height(randomPanelHeight))
+                RandomArtistPanel(state.randomArtists.firstOrNull(), state.randomArtistStats, catalogRefreshing, onArtist, onRefreshArtists, onPrefetchArtist, Modifier.fillMaxWidth().height(randomPanelHeight), panelStyle = panelStyle)
+                RandomAlbumPanel(state.randomAlbums.firstOrNull(), state.randomAlbumStats, catalogRefreshing, albumArtworkFallbacks, onAlbum, onRefreshAlbums, onPrefetchAlbum, Modifier.fillMaxWidth().height(randomPanelHeight), panelStyle = panelStyle)
             }
         } else {
             val randomPanelHeight = 304.dp
             Row(Modifier.fillMaxWidth().height(randomPanelHeight), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                RandomArtistPanel(state.randomArtists.firstOrNull(), state.randomArtistStats, catalogRefreshing, onArtist, onRefreshArtists, onPrefetchArtist, Modifier.weight(1f).fillMaxHeight())
-                RandomAlbumPanel(state.randomAlbums.firstOrNull(), state.randomAlbumStats, catalogRefreshing, albumArtworkFallbacks, onAlbum, onRefreshAlbums, onPrefetchAlbum, Modifier.weight(1f).fillMaxHeight())
+                RandomArtistPanel(state.randomArtists.firstOrNull(), state.randomArtistStats, catalogRefreshing, onArtist, onRefreshArtists, onPrefetchArtist, Modifier.weight(1f).fillMaxHeight(), panelStyle = panelStyle)
+                RandomAlbumPanel(state.randomAlbums.firstOrNull(), state.randomAlbumStats, catalogRefreshing, albumArtworkFallbacks, onAlbum, onRefreshAlbums, onPrefetchAlbum, Modifier.weight(1f).fillMaxHeight(), panelStyle = panelStyle)
             }
         }
     }
 }
 
+private enum class HomePanelStyle {
+    Card,
+    Bare,
+}
+
 @Composable
-private fun HomePanel(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        modifier
-            .clip(RoundedCornerShape(8.dp))
+private fun HomePanel(
+    modifier: Modifier = Modifier,
+    style: HomePanelStyle = HomePanelStyle.Card,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    val shape = RoundedCornerShape(8.dp)
+    val panelModifier = when (style) {
+        HomePanelStyle.Card -> modifier
+            .clip(shape)
             .background(PhoebeUi.panel)
-            .border(BorderStroke(1.dp, PhoebeUi.border), RoundedCornerShape(8.dp))
-            .padding(14.dp),
+            .border(BorderStroke(1.dp, PhoebeUi.border), shape)
+            .padding(14.dp)
+        HomePanelStyle.Bare -> modifier
+    }
+    Column(
+        panelModifier,
         verticalArrangement = Arrangement.spacedBy(10.dp),
         content = content,
     )
@@ -3051,8 +3090,9 @@ private fun RecentPlayedPanel(
     sharedKeyForTrack: (Track) -> String? = { track -> "song:${track.id}" },
     showFavoriteAction: Boolean = true,
     rowHeight: Dp = 88.dp,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
-    HomePanel(modifier) {
+    HomePanel(modifier, style = panelStyle) {
         SectionHeader("RECENTLY PLAYED", "View all", onViewAll)
         if (state.recentlyPlayedTracks.isEmpty()) {
             HomeEmptyState("Nothing here yet. Play something and your recent listening history will appear.")
@@ -3139,13 +3179,14 @@ private fun RandomArtistPanel(
     onRefresh: () -> Unit,
     onPrefetch: (Artist) -> Unit,
     modifier: Modifier = Modifier,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
     val homeTracksReady = LocalHomeTrackSectionsReady.current
     LaunchedEffect(artist?.id, homeTracksReady) {
         if (!homeTracksReady) return@LaunchedEffect
         artist?.let(onPrefetch)
     }
-    HomePanel(modifier) {
+    HomePanel(modifier, style = panelStyle) {
         RandomPanelHeader("Random artist", onRefresh)
         if (artist == null) {
             HomeEmptyState("Add music to your library to discover artists here.")
@@ -3173,13 +3214,14 @@ private fun RandomAlbumPanel(
     onRefresh: () -> Unit,
     onPrefetch: (Album) -> Unit,
     modifier: Modifier = Modifier,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
     val homeTracksReady = LocalHomeTrackSectionsReady.current
     LaunchedEffect(album?.id, homeTracksReady) {
         if (!homeTracksReady) return@LaunchedEffect
         album?.let(onPrefetch)
     }
-    HomePanel(modifier) {
+    HomePanel(modifier, style = panelStyle) {
         RandomPanelHeader("Random album", onRefresh)
         if (album == null) {
             HomeEmptyState("Add music to your library to discover albums here.")
@@ -3492,9 +3534,10 @@ private fun MostPlayedPanel(
     showFavoriteAction: Boolean = true,
     rowHeight: Dp = 88.dp,
     maxDecodeDimension: Int = ListArtworkMaxDecodeDimension,
+    panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
     val mostPlayedResolving = LocalMostPlayedResolving.current
-    HomePanel(modifier) {
+    HomePanel(modifier, style = panelStyle) {
         SectionHeader("MOST PLAYED", "View all", onViewAll)
         if (rows.isEmpty()) {
             if (mostPlayedResolving) {
@@ -3531,7 +3574,7 @@ private fun MostPlayedPanel(
 @Composable
 private fun SectionHeader(title: String, action: String?, onAction: () -> Unit) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        SectionLabel(title, PhoebeUi.mutedText)
+        HomeSectionLabel(title)
         Spacer(Modifier.weight(1f))
         if (action != null) {
             Text(
@@ -3555,7 +3598,7 @@ private fun FavoritePagerHeader(
     onAction: () -> Unit = {},
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        SectionLabel(title, PhoebeUi.mutedText)
+        HomeSectionLabel(title)
         Spacer(Modifier.weight(1f))
         if (action != null) {
             Text(
@@ -3589,7 +3632,7 @@ private fun FavoriteScrollHeader(
     onNext: () -> Unit,
 ) {
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        SectionLabel(title, PhoebeUi.mutedText)
+        HomeSectionLabel(title)
         Spacer(Modifier.weight(1f))
         if (action != null) {
             Text(
@@ -3677,6 +3720,7 @@ private fun HomePlayedTrackRow(
     val canLike = likeActions.likesEnabled && track.canTogglePlexLike()
     val liked = likeActions.isLiked(track)
     val downloaded = downloads.isComplete(track)
+    val verticalPadding = if (rowHeight < 78.dp) 8.dp else 11.dp
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -3686,7 +3730,7 @@ private fun HomePlayedTrackRow(
             .background(
                 if (isNowPlaying) PhoebeUi.accent.copy(alpha = 0.12f) else Color.White.copy(alpha = 0.045f),
             )
-            .padding(horizontal = 12.dp, vertical = 11.dp),
+            .padding(horizontal = 12.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {

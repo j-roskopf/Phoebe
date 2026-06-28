@@ -188,6 +188,7 @@ internal fun Sidebar(
     onRemoveLocalFolder: (String) -> Unit,
     onToggleLocalFolder: (String, Boolean) -> Unit,
     onRefreshLibrary: () -> Unit,
+    tintedBackgroundGradient: Boolean,
     appUpdateState: AppUpdateState = AppUpdateState.Idle,
     onInstallUpdate: () -> Unit = {},
 ) {
@@ -221,7 +222,7 @@ internal fun Sidebar(
         modifier = Modifier
             .width(236.dp)
             .fillMaxHeight()
-            .background(PhoebeUi.sidebar)
+            .then(if (tintedBackgroundGradient) Modifier else Modifier.background(PhoebeUi.sidebar))
             .padding(start = 14.dp, top = sidebarTopPadding, end = 24.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(26.dp),
     ) {

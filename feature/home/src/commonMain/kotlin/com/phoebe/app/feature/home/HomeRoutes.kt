@@ -22,6 +22,7 @@ data class DesktopHomeRouteState(
     val catalogRefreshing: Boolean,
     val homeSections: List<HomeSection>,
     val supportedCollectionEntries: Set<CollectionEntry>,
+    val useBarePanels: Boolean = false,
     val decadeMixNotice: String? = null,
     val radioStations: List<PlexRadioStation> = emptyList(),
     val radioStartingIds: Set<String> = emptySet(),
@@ -95,6 +96,7 @@ fun DesktopHomeRoute(
         onDownload = actions.onDownload,
         homeSections = state.homeSections,
         supportedCollectionEntries = state.supportedCollectionEntries,
+        useBarePanels = state.useBarePanels,
     )
 }
 

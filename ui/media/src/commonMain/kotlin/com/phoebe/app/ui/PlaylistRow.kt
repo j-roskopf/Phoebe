@@ -40,17 +40,16 @@ fun PlaylistRow(
     val shape = RoundedCornerShape(8.dp)
     val artworkSize = if (contentCellStyle) 38.dp else 36.dp
     val artworkRadius = if (contentCellStyle) 8.dp else 6.dp
+    val rowBackground = when {
+        contentCellStyle && active -> PhoebeUi.accent.copy(alpha = 0.09f)
+        contentCellStyle -> PhoebeUi.elevatedFill
+        else -> Color.Transparent
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(
-                when {
-                    active -> PhoebeUi.accent.copy(alpha = 0.09f)
-                    contentCellStyle -> PhoebeUi.elevatedFill
-                    else -> PhoebeUi.sidebar
-                },
-            )
+            .background(rowBackground)
             .then(
                 if (contentCellStyle) {
                     Modifier.border(BorderStroke(1.dp, PhoebeUi.border), shape)

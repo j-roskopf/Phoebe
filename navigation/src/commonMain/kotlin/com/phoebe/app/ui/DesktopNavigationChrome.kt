@@ -44,7 +44,6 @@ fun NavRow(
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .phoebeClickable(enabled = enabled, onClick = onClick)
-            .background(if (showActive) PhoebeUi.elevatedFill else PhoebeUi.sidebar)
             .padding(horizontal = 8.dp, vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(14.dp),

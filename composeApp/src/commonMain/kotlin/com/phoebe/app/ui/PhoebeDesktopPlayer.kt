@@ -100,6 +100,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
 
 private const val DesktopSharedTransitionRetainMs = 400L
+private const val DesktopShellRadialTintStrength = 0.72f
+private const val DesktopShellRadialTintRadius = 930f
 
 @OptIn(ExperimentalSharedTransitionApi::class)
 @Composable
@@ -327,8 +329,9 @@ internal fun DesktopPlayer(
                 .fillMaxSize()
                 .phoebeShellBackground(
                     tintedGradient = appSettings.tintedBackgroundGradient,
-                    center = Offset(520f, 48f),
-                    radius = 1_420f,
+                    center = Offset(420f, 48f),
+                    radius = DesktopShellRadialTintRadius,
+                    radialTintStrength = DesktopShellRadialTintStrength,
                 ),
         ) {
                 Row(Modifier.fillMaxSize()) {
@@ -347,6 +350,7 @@ internal fun DesktopPlayer(
                         onRemoveLocalFolder = onRemoveLocalFolder,
                         onToggleLocalFolder = onToggleLocalFolder,
                         onRefreshLibrary = onRefreshLibrary,
+                        tintedBackgroundGradient = appSettings.tintedBackgroundGradient,
                         appUpdateState = shellState.updateState,
                         onInstallUpdate = browseActions.onInstallUpdate,
                     )
@@ -698,6 +702,7 @@ internal fun DesktopPlayer(
                                                 catalogRefreshing = catalogRefreshing,
                                                 homeSections = libraryUi.homeSections,
                                                 supportedCollectionEntries = supportedCollectionEntries,
+                                                useBarePanels = appSettings.tintedBackgroundGradient,
                                                 decadeMixNotice = decadeMixNotice,
                                                 radioStations = radioStations,
                                                 radioStartingIds = radioStartingIds,

@@ -377,6 +377,7 @@ internal fun PhoebeDesktopScreenshotScenario(
     fixture: PhoebeScreenshotFixtureData,
     useLightAppearance: Boolean,
     tintId: String = PhoebeTintOption.Purple.id,
+    tintedBackgroundGradient: Boolean = AppSettings.Default.tintedBackgroundGradient,
     settingsInitialCategory: SettingsCategory = SettingsCategory.AudioPlayback,
     showQueue: Boolean,
     compact: Boolean,
@@ -570,6 +571,7 @@ internal fun PhoebeDesktopScreenshotScenario(
             appSettings = AppSettings.Default.copy(
                 fullBleedDetailArtwork = scenario != PhoebeScreenshotScenario.ArtistOldLayout &&
                     scenario != PhoebeScreenshotScenario.AlbumOldLayout,
+                tintedBackgroundGradient = tintedBackgroundGradient,
             ),
             downloadDirectory = null,
             downloadCount = fixture.catalog.downloads.size,
