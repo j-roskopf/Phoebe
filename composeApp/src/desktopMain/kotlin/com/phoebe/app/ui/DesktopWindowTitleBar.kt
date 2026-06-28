@@ -8,8 +8,6 @@ import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.captionBar
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,7 +24,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.awt.ComposeWindow
@@ -35,7 +32,6 @@ import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
 import javax.swing.JFrame
 
-private val MinTitleBarHeight = 40.dp
 private val SidebarWidth = 236.dp
 private val ControlButtonWidth = 56.dp
 
@@ -45,10 +41,7 @@ fun WindowScope.DesktopWindowTitleBar(
     onClose: () -> Unit,
 ) {
     val palette = if (useLightAppearance) PhoebePaletteLight else PhoebePaletteDark
-    val density = LocalDensity.current
-    val captionHeight = with(density) {
-        WindowInsets.captionBar.getTop(density).toDp().coerceAtLeast(MinTitleBarHeight)
-    }
+    val captionHeight = desktopTitleBarHeight()
     val composeWindow = window as? ComposeWindow
     var isMaximized by remember(composeWindow) {
         mutableStateOf(((composeWindow?.extendedState ?: 0) and JFrame.MAXIMIZED_BOTH) != 0)
@@ -76,32 +69,28 @@ fun WindowScope.DesktopWindowTitleBar(
                 WindowDraggableArea(
                     modifier = Modifier
                         .width(SidebarWidth)
-                        .fillMaxHeight()
-                        .background(palette.sidebar),
+                        .fillMaxHeight(),
                 ) {}
             }
             WindowDraggableArea(
                 modifier = Modifier
                     .weight(1f)
-                    .fillMaxHeight()
-                    .background(palette.shellTop),
+                    .fillMaxHeight(),
             ) {}
             Row(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .background(palette.shellTop),
+                modifier = Modifier.fillMaxHeight(),
             ) {
             TitleBarControlButton(
                 label = "−",
                 contentColor = palette.primaryText,
-                idleBackground = palette.shellTop,
+                idleBackground = Color.Transparent,
                 hoverBackground = palette.elevatedFill,
                 onClick = { composeWindow?.isMinimized = true },
             )
             TitleBarControlButton(
                 label = if (isMaximized) "❐" else "□",
                 contentColor = palette.primaryText,
-                idleBackground = palette.shellTop,
+                idleBackground = Color.Transparent,
                 hoverBackground = palette.elevatedFill,
                 onClick = {
                     composeWindow?.let { target ->
@@ -118,7 +107,7 @@ fun WindowScope.DesktopWindowTitleBar(
             TitleBarControlButton(
                 label = "×",
                 contentColor = palette.primaryText,
-                idleBackground = palette.shellTop,
+                idleBackground = Color.Transparent,
                 hoverBackground = Color(0xFFE81123),
                 hoverForeground = Color.White,
                 onClick = onClose,

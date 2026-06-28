@@ -15,6 +15,18 @@ import com.phoebe.app.platform.isDesktopPlatform
 /** Matches sidebar clearance on macOS desktop with a transparent title bar. */
 private val DesktopMacTitleBarClearance = 54.dp
 
+private val DesktopMinTitleBarHeight = 40.dp
+
+/** Height of the custom Windows caption bar; 0 when the app does not merge title-bar chrome. */
+@Composable
+fun desktopTitleBarHeight(): Dp {
+    if (!LocalDesktopMergesTitleBar.current) return 0.dp
+    val density = LocalDensity.current
+    return with(density) {
+        WindowInsets.captionBar.getTop(density).toDp().coerceAtLeast(DesktopMinTitleBarHeight)
+    }
+}
+
 @Composable
 fun desktopWindowTopPadding(): Dp {
     return windowTopPadding()

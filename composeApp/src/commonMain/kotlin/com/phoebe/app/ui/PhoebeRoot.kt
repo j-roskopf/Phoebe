@@ -1145,34 +1145,33 @@ private fun PhoebeRootStateHolder(
             val mergesTitleBar = LocalDesktopMergesTitleBar.current
             val shellTintStrength = if (isDesktopPlatform()) 0.72f else 1f
             val shellTintRadius = if (isDesktopPlatform()) 930f else 960f
-            val compactDesktopTopPadding = if (compact && isDesktopPlatform()) desktopWindowTopPadding() else 0.dp
-            val shellModifier = if (compact) {
+            val contentTopPadding = when {
+                mergesTitleBar -> desktopTitleBarHeight()
+                compact && isDesktopPlatform() -> desktopWindowTopPadding()
+                else -> 0.dp
+            }
+            val contentInsetModifier = if (compact) {
                 Modifier
-                    .fillMaxSize()
-                    .phoebeShellBackground(
-                        tintedGradient = appSettings.tintedBackgroundGradient,
-                        radius = shellTintRadius,
-                        radialTintStrength = shellTintStrength,
-                    )
-                    .padding(top = compactDesktopTopPadding)
-            } else {
-                val shellInsets = if (mergesTitleBar) {
+            } else if (mergesTitleBar) {
+                Modifier.windowInsetsPadding(
                     WindowInsets.safeDrawing.only(
                         WindowInsetsSides.Start + WindowInsetsSides.End + WindowInsetsSides.Bottom,
-                    )
-                } else {
-                    WindowInsets.safeDrawing
-                }
-                Modifier
+                    ),
+                )
+            } else {
+                Modifier.windowInsetsPadding(WindowInsets.safeDrawing)
+            }
+            Box(
+                modifier = Modifier
                     .fillMaxSize()
                     .phoebeShellBackground(
                         tintedGradient = appSettings.tintedBackgroundGradient,
                         radius = shellTintRadius,
                         radialTintStrength = shellTintStrength,
                     )
-                    .windowInsetsPadding(shellInsets)
-            }
-            Box(modifier = shellModifier) {
+                    .padding(top = contentTopPadding)
+                    .then(contentInsetModifier),
+            ) {
             if (compact) {
                 SharedTransitionLayout(Modifier.fillMaxSize()) {
                 val sharedTransitionScope = this

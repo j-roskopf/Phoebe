@@ -1,6 +1,6 @@
 package com.phoebe.app
 
-import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -95,14 +95,8 @@ fun main(args: Array<String>) {
             }
             RegisterDesktopWindowKeyDispatcher(window)
             ApplyDesktopWindowChrome()
-            Column(Modifier.fillMaxSize()) {
-                if (useCustomWindowsTitleBar) {
-                    DesktopWindowTitleBar(
-                        useLightAppearance = useLightAppearance,
-                        onClose = closeApplication,
-                    )
-                }
-                CompositionLocalProvider(LocalDesktopMergesTitleBar provides useCustomWindowsTitleBar) {
+            CompositionLocalProvider(LocalDesktopMergesTitleBar provides useCustomWindowsTitleBar) {
+                Box(Modifier.fillMaxSize()) {
                     App(
                         onAppearanceChange = { light ->
                             useLightAppearance = light
@@ -115,6 +109,12 @@ fun main(args: Array<String>) {
                             desktopAppState.set(it)
                         },
                     )
+                    if (useCustomWindowsTitleBar) {
+                        DesktopWindowTitleBar(
+                            useLightAppearance = useLightAppearance,
+                            onClose = closeApplication,
+                        )
+                    }
                 }
             }
         }
