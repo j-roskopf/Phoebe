@@ -41,7 +41,7 @@ fun PlaylistRow(
     val artworkSize = if (contentCellStyle) 38.dp else 36.dp
     val artworkRadius = if (contentCellStyle) 8.dp else 6.dp
     val rowBackground = when {
-        contentCellStyle && active -> PhoebeUi.accent.copy(alpha = 0.09f)
+        active -> PhoebeUi.accent.copy(alpha = 0.09f)
         contentCellStyle -> PhoebeUi.elevatedFill
         else -> Color.Transparent
     }
