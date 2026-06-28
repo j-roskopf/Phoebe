@@ -178,7 +178,9 @@ private fun String.toHomeSections(): List<HomeSection> {
 }
 
 private fun List<HomeSection>.normalizedHomeSections(): List<HomeSection> =
-    flatMap { section ->
+    if (this == LegacyDefaultHomeSections) {
+        HomeSection.defaultOrder
+    } else flatMap { section ->
         when (section) {
             HomeSection.Favorites -> listOf(HomeSection.FavoritePlaylists, HomeSection.FavoriteArtists, HomeSection.FavoriteAlbums)
             HomeSection.Recents -> listOf(HomeSection.RecentSongs, HomeSection.RecentArtists, HomeSection.RecentAlbums)
@@ -187,6 +189,19 @@ private fun List<HomeSection>.normalizedHomeSections(): List<HomeSection> =
     }
         .filterNot { it == HomeSection.Favorites || it == HomeSection.Recents }
         .let { (it + HomeSection.defaultOrder).distinct() }
+
+private val LegacyDefaultHomeSections = listOf(
+    HomeSection.Mixes,
+    HomeSection.Collections,
+    HomeSection.FavoritePlaylists,
+    HomeSection.FavoriteArtists,
+    HomeSection.FavoriteAlbums,
+    HomeSection.RecentSongs,
+    HomeSection.RecentArtists,
+    HomeSection.RecentAlbums,
+    HomeSection.Played,
+    HomeSection.Random,
+)
 
 private fun String.toMobileBottomTabs(): List<MobileBottomTab> {
     val parsed = split(',')

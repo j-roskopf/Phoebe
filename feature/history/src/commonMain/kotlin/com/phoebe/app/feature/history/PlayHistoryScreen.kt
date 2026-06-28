@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -94,7 +95,7 @@ fun PlayHistoryScreen(
         }
     }
 
-    Column(
+    BoxWithConstraints(
         modifier
             .fillMaxSize()
             .padding(
@@ -103,60 +104,90 @@ fun PlayHistoryScreen(
                 top = mobileContentTopPadding(12.dp),
                 bottom = 12.dp + bottomContentPadding
             ),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        PlayHistoryHeader(
-            kind = kind,
-            count = state.rows?.size,
-            rankedTotal = state.rankedTotal.takeIf { state.showResolving },
-            onBack = onBack,
-        )
+        val scrollPageHeader = !preferTableLayout && maxWidth < 640.dp
 
-        DetailSectionHeader(
-            title = "Tracks",
-            sortBy = sortBy,
-            sortKeys = listOf(
-                LibrarySortBy.PlaylistOrder,
-                LibrarySortBy.Name,
-                LibrarySortBy.Artist,
-                LibrarySortBy.Album,
-                LibrarySortBy.Year,
-                LibrarySortBy.DateAdded
-            ),
-            sortLabel = { key ->
-                when (key) {
-                    LibrarySortBy.PlaylistOrder -> when (kind) {
-                        PlayHistoryKind.RecentlyPlayed -> "Last played"
-                        PlayHistoryKind.MostPlayed -> "Play count"
-                    }
-                    LibrarySortBy.Artist -> "Artist"
-                    LibrarySortBy.Album -> "Album name"
-                    LibrarySortBy.Year -> "Release date"
-                    LibrarySortBy.DateAdded -> "Date added"
-                    else -> "Song name"
-                }
-            },
-            onSortBy = { sortBy = it },
-            ascending = ascending,
-            onAscending = { ascending = it },
-            columns = libraryUi.columns,
-            onColumns = onLibraryColumns,
-        )
-
-        Box(Modifier.weight(1f).fillMaxWidth()) {
-            when (sortedRows) {
-                null -> PlayHistoryLoading(Modifier.fillMaxSize())
-                else -> PlayHistoryTracks(
-                    rows = sortedRows,
-                    showPlayCount = kind == PlayHistoryKind.MostPlayed,
-                    libraryUi = libraryUi,
-                    preferTableLayout = preferTableLayout,
-                    nowPlaying = nowPlaying,
-                    onPlayTracks = onPlayTracks,
-                    onAddToUpNext = onAddToUpNext,
-                    onDownload = onDownload,
-                    modifier = Modifier.fillMaxSize(),
+        Column(
+            Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            val headerContent: @Composable () -> Unit = {
+                PlayHistoryHeader(
+                    kind = kind,
+                    count = state.rows?.size,
+                    rankedTotal = state.rankedTotal.takeIf { state.showResolving },
+                    onBack = onBack,
                 )
+            }
+            val sectionHeaderContent: @Composable () -> Unit = {
+                DetailSectionHeader(
+                    title = "Tracks",
+                    sortBy = sortBy,
+                    sortKeys = listOf(
+                        LibrarySortBy.PlaylistOrder,
+                        LibrarySortBy.Name,
+                        LibrarySortBy.Artist,
+                        LibrarySortBy.Album,
+                        LibrarySortBy.Year,
+                        LibrarySortBy.DateAdded
+                    ),
+                    sortLabel = { key ->
+                        when (key) {
+                            LibrarySortBy.PlaylistOrder -> when (kind) {
+                                PlayHistoryKind.RecentlyPlayed -> "Last played"
+                                PlayHistoryKind.MostPlayed -> "Play count"
+                            }
+                            LibrarySortBy.Artist -> "Artist"
+                            LibrarySortBy.Album -> "Album name"
+                            LibrarySortBy.Year -> "Release date"
+                            LibrarySortBy.DateAdded -> "Date added"
+                            else -> "Song name"
+                        }
+                    },
+                    onSortBy = { sortBy = it },
+                    ascending = ascending,
+                    onAscending = { ascending = it },
+                    columns = libraryUi.columns,
+                    onColumns = onLibraryColumns,
+                )
+            }
+
+            if (!scrollPageHeader) {
+                headerContent()
+                sectionHeaderContent()
+            }
+
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                when (sortedRows) {
+                    null -> if (scrollPageHeader) {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(14.dp),
+                            contentPadding = PaddingValues(bottom = 12.dp),
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            item(contentType = "history-page-header") { headerContent() }
+                            item(contentType = "history-section-header") { sectionHeaderContent() }
+                            item(contentType = "loading") {
+                                PlayHistoryLoading(Modifier.fillMaxWidth().height(240.dp))
+                            }
+                        }
+                    } else {
+                        PlayHistoryLoading(Modifier.fillMaxSize())
+                    }
+                    else -> PlayHistoryTracks(
+                        rows = sortedRows,
+                        showPlayCount = kind == PlayHistoryKind.MostPlayed,
+                        libraryUi = libraryUi,
+                        preferTableLayout = preferTableLayout,
+                        pageHeader = headerContent.takeIf { scrollPageHeader },
+                        sectionHeader = sectionHeaderContent.takeIf { scrollPageHeader },
+                        nowPlaying = nowPlaying,
+                        onPlayTracks = onPlayTracks,
+                        onAddToUpNext = onAddToUpNext,
+                        onDownload = onDownload,
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             }
         }
     }
@@ -227,6 +258,8 @@ private fun PlayHistoryTracks(
     showPlayCount: Boolean,
     libraryUi: LibraryUiPreferences,
     preferTableLayout: Boolean,
+    pageHeader: (@Composable () -> Unit)? = null,
+    sectionHeader: (@Composable () -> Unit)? = null,
     nowPlaying: HistoryNowPlayingState,
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
@@ -234,7 +267,13 @@ private fun PlayHistoryTracks(
     modifier: Modifier = Modifier,
 ) {
     if (rows.isEmpty()) {
-        PlayHistoryEmpty("Play songs and your listening history will appear here.", modifier)
+        if (pageHeader == null && sectionHeader == null) {
+            PlayHistoryEmpty("Play songs and your listening history will appear here.", modifier)
+            return
+        }
+    }
+    val hasScrollablePageHeader = pageHeader != null || sectionHeader != null
+    if (rows.isEmpty() && !hasScrollablePageHeader) {
         return
     }
     val tracks = rows.map { it.track }
@@ -271,19 +310,34 @@ private fun PlayHistoryTracks(
                     )
                 }
             } else {
-                itemsIndexed(rows, key = { _, row -> row.track.id }, contentType = { _, _ -> "track" }) { index, row ->
-                    MobileSongRow(
-                        track = row.track,
-                        columns = libraryUi.columns,
-                        isNowPlaying = row.track.id == nowPlaying.trackId,
-                        nowPlayingIsPlaying = nowPlaying.isPlaying,
-                        nowPlayingIsBuffering = nowPlaying.isBuffering,
-                        onPlay = { onPlayTracks(tracks, index) },
-                        onAddToUpNext = { onAddToUpNext(row.track) },
-                        onDownload = { onDownload(row.track) },
-                        playCount = row.playCount.takeIf { showPlayCount },
-                        lastPlayedMs = row.lastPlayedMs.takeIf { !showPlayCount },
-                    )
+                pageHeader?.let { header ->
+                    item(contentType = "history-page-header") { header() }
+                }
+                sectionHeader?.let { header ->
+                    item(contentType = "history-section-header") { header() }
+                }
+                if (rows.isEmpty()) {
+                    item(contentType = "empty") {
+                        PlayHistoryEmpty(
+                            "Play songs and your listening history will appear here.",
+                            Modifier.fillMaxWidth().height(220.dp),
+                        )
+                    }
+                } else {
+                    itemsIndexed(rows, key = { _, row -> row.track.id }, contentType = { _, _ -> "track" }) { index, row ->
+                        MobileSongRow(
+                            track = row.track,
+                            columns = libraryUi.columns,
+                            isNowPlaying = row.track.id == nowPlaying.trackId,
+                            nowPlayingIsPlaying = nowPlaying.isPlaying,
+                            nowPlayingIsBuffering = nowPlaying.isBuffering,
+                            onPlay = { onPlayTracks(tracks, index) },
+                            onAddToUpNext = { onAddToUpNext(row.track) },
+                            onDownload = { onDownload(row.track) },
+                            playCount = row.playCount.takeIf { showPlayCount },
+                            lastPlayedMs = row.lastPlayedMs.takeIf { !showPlayCount },
+                        )
+                    }
                 }
             }
         }

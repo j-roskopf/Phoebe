@@ -225,7 +225,7 @@ class PhoneHomeAccordionTest {
         waitForIdle()
         assertTrue(onAllNodesWithText("CREATE A MIX").fetchSemanticsNodes().isNotEmpty())
         assertTrue(onAllNodesWithText("FAVORITE PLAYLISTS").fetchSemanticsNodes().isNotEmpty())
-        assertTrue(onAllNodesWithText("RECENT SONGS").fetchSemanticsNodes().isNotEmpty())
+        assertTrue(onAllNodesWithText("RECENTLY ADDED SONGS").fetchSemanticsNodes().isNotEmpty())
         assertTrue(onAllNodesWithText("RECENTLY PLAYED").fetchSemanticsNodes().isNotEmpty())
         assertTrue(onAllNodesWithText("MOST PLAYED").fetchSemanticsNodes().isNotEmpty())
         assertTrue(onAllNodesWithText("A Moment Apart").fetchSemanticsNodes().isNotEmpty())

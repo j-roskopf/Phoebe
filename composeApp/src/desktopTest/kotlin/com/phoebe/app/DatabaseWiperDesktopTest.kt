@@ -49,7 +49,7 @@ class DatabaseWiperDesktopTest {
                     colDateAdded = 1L,
                     colRating = 1L,
                     colFavorite = 1L,
-                    homeSections = "Mixes,Collections,FavoritePlaylists,FavoriteArtists,FavoriteAlbums,RecentSongs,RecentArtists,RecentAlbums,Played,Random",
+                    homeSections = "Mixes,Played,FavoritePlaylists,FavoriteArtists,FavoriteAlbums,RecentSongs,RecentArtists,RecentAlbums,Collections,Random",
                     mobileBottomTabs = "Home,Search,Library,Playlists,Radio",
                     personalMix = "{\"limit\":50,\"heavyRotationWeight\":25,\"recentWeight\":30,\"mostPlayedWeight\":25,\"similarWeight\":15,\"discoveryWeight\":5}",
                     gridColumns = 3L,

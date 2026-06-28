@@ -28,12 +28,15 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
@@ -47,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PhoebeLog
+import com.phoebe.app.platform.PlatformStorage
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -79,6 +83,8 @@ actual fun createCastController(audioPlayer: AudioPlayer): CastController =
     DesktopCastController(audioPlayer = audioPlayer)
 
 private const val DefaultMediaReceiverAppId = "CC1AD845"
+private const val AppearanceThemeFile = "appearance_theme"
+private const val AppearanceTintFile = "appearance_tint"
 
 private data class PendingDesktopCastHandoff(
     val queue: List<Track>,
@@ -1061,41 +1067,45 @@ private object ComposeDesktopCastDevicePicker : DesktopCastDevicePicker {
         onSelected: (DesktopCastDevice) -> Unit,
         onDismiss: () -> Unit,
     ) {
-        EventQueue.invokeLater {
-            val dialog = JDialog(null as Window?, "Cast to Chromecast", Dialog.ModalityType.APPLICATION_MODAL)
-            var closedBySelection = false
-            val composePanel = ComposePanel().apply {
-                setContent {
-                    DesktopCastTheme {
-                        DesktopCastDevicePickerContent(
-                            devices = devices,
-                            onCancel = {
-                                dialog.dispose()
-                            },
-                            onCast = { selected ->
-                                closedBySelection = true
-                                onSelected(selected)
-                                dialog.dispose()
-                            },
-                        )
-                    }
-                }
-            }
-            dialog.defaultCloseOperation = JDialog.DISPOSE_ON_CLOSE
-            dialog.addWindowListener(
-                object : java.awt.event.WindowAdapter() {
-                    override fun windowClosed(event: java.awt.event.WindowEvent) {
-                        if (!closedBySelection) {
-                            onDismiss()
+        CoroutineScope(Dispatchers.IO).launch {
+            val theme = readDesktopCastTheme()
+            EventQueue.invokeLater {
+                val dialog = JDialog(null as Window?, "Cast to Chromecast", Dialog.ModalityType.APPLICATION_MODAL)
+                applyDesktopCastDialogChrome(dialog, theme)
+                var closedBySelection = false
+                val composePanel = ComposePanel().apply {
+                    setContent {
+                        DesktopCastTheme(theme) {
+                            DesktopCastDevicePickerContent(
+                                devices = devices,
+                                onCancel = {
+                                    dialog.dispose()
+                                },
+                                onCast = { selected ->
+                                    closedBySelection = true
+                                    onSelected(selected)
+                                    dialog.dispose()
+                                },
+                            )
                         }
                     }
-                },
-            )
-            dialog.contentPane = composePanel
-            dialog.minimumSize = Dimension(420, 360)
-            dialog.pack()
-            dialog.setLocationRelativeTo(null)
-            dialog.isVisible = true
+                }
+                dialog.defaultCloseOperation = JDialog.DISPOSE_ON_CLOSE
+                dialog.addWindowListener(
+                    object : java.awt.event.WindowAdapter() {
+                        override fun windowClosed(event: java.awt.event.WindowEvent) {
+                            if (!closedBySelection) {
+                                onDismiss()
+                            }
+                        }
+                    },
+                )
+                dialog.contentPane = composePanel
+                dialog.minimumSize = Dimension(420, 360)
+                dialog.pack()
+                dialog.setLocationRelativeTo(null)
+                dialog.isVisible = true
+            }
         }
     }
 
@@ -1106,76 +1116,207 @@ private object ComposeDesktopCastDevicePicker : DesktopCastDevicePicker {
         onSwitchDevice: () -> Unit,
         onDismiss: () -> Unit,
     ) {
-        EventQueue.invokeLater {
-            val dialog = JDialog(null as Window?, "Chromecast", Dialog.ModalityType.APPLICATION_MODAL)
-            var closedByAction = false
-            val composePanel = ComposePanel().apply {
-                setContent {
-                    DesktopCastTheme {
-                        DesktopConnectedCastContent(
-                            state = state,
-                            onVolume = onVolume,
-                            onClose = {
-                                dialog.dispose()
-                            },
-                            onDisconnect = {
-                                closedByAction = true
-                                onDisconnect()
-                                dialog.dispose()
-                            },
-                            onSwitchDevice = {
-                                closedByAction = true
-                                dialog.dispose()
-                                onSwitchDevice()
-                            },
-                        )
-                    }
-                }
-            }
-            dialog.defaultCloseOperation = JDialog.DISPOSE_ON_CLOSE
-            dialog.addWindowListener(
-                object : java.awt.event.WindowAdapter() {
-                    override fun windowClosed(event: java.awt.event.WindowEvent) {
-                        if (!closedByAction) {
-                            onDismiss()
+        CoroutineScope(Dispatchers.IO).launch {
+            val theme = readDesktopCastTheme()
+            EventQueue.invokeLater {
+                val dialog = JDialog(null as Window?, "Chromecast", Dialog.ModalityType.APPLICATION_MODAL)
+                applyDesktopCastDialogChrome(dialog, theme)
+                var closedByAction = false
+                val composePanel = ComposePanel().apply {
+                    setContent {
+                        DesktopCastTheme(theme) {
+                            DesktopConnectedCastContent(
+                                state = state,
+                                onVolume = onVolume,
+                                onClose = {
+                                    dialog.dispose()
+                                },
+                                onDisconnect = {
+                                    closedByAction = true
+                                    onDisconnect()
+                                    dialog.dispose()
+                                },
+                                onSwitchDevice = {
+                                    closedByAction = true
+                                    dialog.dispose()
+                                    onSwitchDevice()
+                                },
+                            )
                         }
                     }
-                },
-            )
-            dialog.contentPane = composePanel
-            dialog.minimumSize = Dimension(420, 320)
-            dialog.pack()
-            dialog.setLocationRelativeTo(null)
-            dialog.isVisible = true
+                }
+                dialog.defaultCloseOperation = JDialog.DISPOSE_ON_CLOSE
+                dialog.addWindowListener(
+                    object : java.awt.event.WindowAdapter() {
+                        override fun windowClosed(event: java.awt.event.WindowEvent) {
+                            if (!closedByAction) {
+                                onDismiss()
+                            }
+                        }
+                    },
+                )
+                dialog.contentPane = composePanel
+                dialog.minimumSize = Dimension(420, 320)
+                dialog.pack()
+                dialog.setLocationRelativeTo(null)
+                dialog.isVisible = true
+            }
         }
     }
 }
 
 @Composable
-private fun DesktopCastTheme(content: @Composable () -> Unit) {
+private fun DesktopCastTheme(
+    theme: DesktopCastThemeSnapshot,
+    content: @Composable () -> Unit,
+) {
+    val palette = theme.palette
     MaterialTheme(
-        colorScheme = darkColorScheme(
-            primary = DesktopCastUi.accent,
-            secondary = DesktopCastUi.accentLight,
-            surface = DesktopCastUi.modalSurface,
-            onSurface = DesktopCastUi.primaryText,
-        ),
-        content = content,
-    )
+        colorScheme = if (theme.useLightAppearance) {
+            lightColorScheme(
+                primary = palette.accent,
+                secondary = palette.accentLight,
+                surface = palette.modalSurface,
+                onSurface = palette.primaryText,
+            )
+        } else {
+            darkColorScheme(
+                primary = palette.accent,
+                secondary = palette.accentLight,
+                surface = palette.modalSurface,
+                onSurface = palette.primaryText,
+            )
+        },
+    ) {
+        CompositionLocalProvider(LocalDesktopCastPalette provides palette) {
+            content()
+        }
+    }
 }
 
+private data class DesktopCastThemeSnapshot(
+    val useLightAppearance: Boolean,
+    val palette: DesktopCastPalette,
+)
+
+private data class DesktopCastPalette(
+    val modalSurface: Color,
+    val modalField: Color,
+    val border: Color,
+    val primaryText: Color,
+    val secondaryText: Color,
+    val mutedText: Color,
+    val accent: Color,
+    val accentLight: Color,
+    val librarySelectedRow: Color,
+    val subtleFill: Color,
+    val progressTrack: Color,
+)
+
+private val DesktopCastPaletteDark = DesktopCastPalette(
+    modalSurface = Color(0xFF161B27),
+    modalField = Color(0xFF0F131C),
+    border = Color.White.copy(alpha = 0.06f),
+    primaryText = Color(0xFFF4F5F7),
+    secondaryText = Color(0xFFB6BBC7),
+    mutedText = Color(0xFF7D8493),
+    accent = Color(0xFF9B4DFF),
+    accentLight = Color(0xFFA855F7),
+    librarySelectedRow = Color(0xFF9B4DFF).copy(alpha = 0.18f),
+    subtleFill = Color.White.copy(alpha = 0.04f),
+    progressTrack = Color.White.copy(alpha = 0.14f),
+)
+
+private val DesktopCastPaletteLight = DesktopCastPalette(
+    modalSurface = Color(0xFFFFFFFF),
+    modalField = Color(0xFFF1F2F5),
+    border = Color(0x14181B22),
+    primaryText = Color(0xFF181B22),
+    secondaryText = Color(0xFF4D5563),
+    mutedText = Color(0xFF7A8190),
+    accent = Color(0xFF8B3DFF),
+    accentLight = Color(0xFF8B3DFF),
+    librarySelectedRow = Color(0xFF8B3DFF).copy(alpha = 0.10f),
+    subtleFill = Color(0x0A101820),
+    progressTrack = Color(0x1E101820),
+)
+
+private val LocalDesktopCastPalette = staticCompositionLocalOf { DesktopCastPaletteDark }
+
 private object DesktopCastUi {
-    val modalSurface = Color(0xFF161B27)
-    val modalField = Color(0xFF0F131C)
-    val border = Color.White.copy(alpha = 0.06f)
-    val primaryText = Color(0xFFF4F5F7)
-    val secondaryText = Color(0xFFB6BBC7)
-    val mutedText = Color(0xFF7D8493)
-    val accent = Color(0xFF9B4DFF)
-    val accentLight = Color(0xFFA855F7)
-    val librarySelectedRow = accent.copy(alpha = 0.18f)
-    val subtleFill = Color.White.copy(alpha = 0.04f)
-    val progressTrack = Color.White.copy(alpha = 0.14f)
+    val modalSurface: Color @Composable get() = LocalDesktopCastPalette.current.modalSurface
+    val modalField: Color @Composable get() = LocalDesktopCastPalette.current.modalField
+    val border: Color @Composable get() = LocalDesktopCastPalette.current.border
+    val primaryText: Color @Composable get() = LocalDesktopCastPalette.current.primaryText
+    val secondaryText: Color @Composable get() = LocalDesktopCastPalette.current.secondaryText
+    val mutedText: Color @Composable get() = LocalDesktopCastPalette.current.mutedText
+    val accent: Color @Composable get() = LocalDesktopCastPalette.current.accent
+    val accentLight: Color @Composable get() = LocalDesktopCastPalette.current.accentLight
+    val librarySelectedRow: Color @Composable get() = LocalDesktopCastPalette.current.librarySelectedRow
+    val subtleFill: Color @Composable get() = LocalDesktopCastPalette.current.subtleFill
+    val progressTrack: Color @Composable get() = LocalDesktopCastPalette.current.progressTrack
+}
+
+private suspend fun readDesktopCastTheme(): DesktopCastThemeSnapshot {
+    val storage = PlatformStorage()
+    val (useLightAppearance, tintId) = withContext(Dispatchers.IO) {
+        val theme = storage.readText(AppearanceThemeFile)?.trim()?.lowercase()
+        val tint = storage.readText(AppearanceTintFile)?.trim()?.lowercase()
+        (theme == "light" || theme == "true") to tint
+    }
+    val base = if (useLightAppearance) DesktopCastPaletteLight else DesktopCastPaletteDark
+    val accent = desktopCastTintColor(tintId, useLightAppearance)
+    val palette = if (accent == null) {
+        base
+    } else {
+        base.copy(
+            accent = accent,
+            accentLight = accent,
+            librarySelectedRow = accent.copy(alpha = if (useLightAppearance) 0.10f else 0.18f),
+        )
+    }
+    return DesktopCastThemeSnapshot(useLightAppearance, palette)
+}
+
+private fun desktopCastTintColor(tintId: String?, useLightAppearance: Boolean): Color? =
+    when (tintId) {
+        "red" -> if (useLightAppearance) Color(0xFFDC2626) else Color(0xFFEF4444)
+        "scarlet" -> if (useLightAppearance) Color(0xFFE11D48) else Color(0xFFF43F5E)
+        "coral" -> if (useLightAppearance) Color(0xFFE64B3C) else Color(0xFFFF6B5F)
+        "orange" -> if (useLightAppearance) Color(0xFFEA580C) else Color(0xFFF97316)
+        "amber" -> if (useLightAppearance) Color(0xFFD97706) else Color(0xFFF59E0B)
+        "gold" -> if (useLightAppearance) Color(0xFFEAB308) else Color(0xFFFACC15)
+        "yellow" -> if (useLightAppearance) Color(0xFFCA8A04) else Color(0xFFEAB308)
+        "lime" -> if (useLightAppearance) Color(0xFF65A30D) else Color(0xFF84CC16)
+        "chartreuse" -> if (useLightAppearance) Color(0xFF84CC16) else Color(0xFFA3E635)
+        "green" -> if (useLightAppearance) Color(0xFF16A34A) else Color(0xFF22C55E)
+        "emerald" -> if (useLightAppearance) Color(0xFF059669) else Color(0xFF10B981)
+        "mint" -> if (useLightAppearance) Color(0xFF10B981) else Color(0xFF34D399)
+        "teal" -> if (useLightAppearance) Color(0xFF0D9488) else Color(0xFF14B8A6)
+        "aqua" -> if (useLightAppearance) Color(0xFF06B6D4) else Color(0xFF22D3EE)
+        "cyan" -> if (useLightAppearance) Color(0xFF0891B2) else Color(0xFF06B6D4)
+        "sky" -> if (useLightAppearance) Color(0xFF0284C7) else Color(0xFF0EA5E9)
+        "blue" -> if (useLightAppearance) Color(0xFF2563EB) else Color(0xFF3B82F6)
+        "indigo" -> if (useLightAppearance) Color(0xFF4F46E5) else Color(0xFF6366F1)
+        "violet" -> if (useLightAppearance) Color(0xFF7C3AED) else Color(0xFF8B5CF6)
+        "fuchsia" -> if (useLightAppearance) Color(0xFFC026D3) else Color(0xFFD946EF)
+        "magenta" -> if (useLightAppearance) Color(0xFFA21CAF) else Color(0xFFC026D3)
+        "pink" -> if (useLightAppearance) Color(0xFFDB2777) else Color(0xFFEC4899)
+        "plum" -> if (useLightAppearance) Color(0xFF9333EA) else Color(0xFFA855F7)
+        else -> null
+    }
+
+private fun applyDesktopCastDialogChrome(dialog: JDialog, theme: DesktopCastThemeSnapshot) {
+    val background = theme.palette.modalSurface
+    dialog.background = java.awt.Color(
+        (background.red * 255).roundToInt().coerceIn(0, 255),
+        (background.green * 255).roundToInt().coerceIn(0, 255),
+        (background.blue * 255).roundToInt().coerceIn(0, 255),
+    )
+    dialog.rootPane.putClientProperty(
+        "apple.awt.windowAppearance",
+        if (theme.useLightAppearance) "NSAppearanceNameAqua" else "NSAppearanceNameDarkAqua",
+    )
 }
 
 @Composable

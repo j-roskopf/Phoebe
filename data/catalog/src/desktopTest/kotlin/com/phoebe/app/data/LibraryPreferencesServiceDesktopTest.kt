@@ -13,6 +13,49 @@ import kotlin.test.assertFalse
 
 class LibraryPreferencesServiceDesktopTest {
     @Test
+    fun restoresLegacyDefaultHomeSectionsAsCurrentDefaultOrder() = runTest {
+        val storageRoot = Files.createTempDirectory("phoebe-library-preferences-legacy-home")
+        val previousRoot = System.getProperty(StorageRootProperty)
+        System.setProperty(StorageRootProperty, storageRoot.toAbsolutePath().toString())
+        val (database, driver) = newInMemoryPhoebeDatabase()
+        try {
+            database.libraryPrefsQueries.upsert(
+                sortBy = "Name",
+                ascending = 1L,
+                colYear = 1L,
+                colGenre = 1L,
+                colFilepath = 1L,
+                colAudioCodec = 1L,
+                colBitrate = 1L,
+                colDuration = 1L,
+                colSampleRate = 1L,
+                colFileType = 1L,
+                colDateAdded = 1L,
+                colRating = 1L,
+                colFavorite = 1L,
+                homeSections = "Mixes,Collections,FavoritePlaylists,FavoriteArtists,FavoriteAlbums,RecentSongs,RecentArtists,RecentAlbums,Played,Random",
+                mobileBottomTabs = "Home,Search,Library,Playlists,Radio",
+                personalMix = "{\"limit\":50,\"heavyRotationWeight\":25,\"recentWeight\":30,\"mostPlayedWeight\":25,\"similarWeight\":15,\"discoveryWeight\":5}",
+                gridColumns = 3L,
+                albumGridItemSizeDp = 160L,
+                artistGridItemSizeDp = 112L,
+            )
+
+            val restored = LibraryUiRepository(database, PlatformStorage()).apply { restore() }
+
+            assertEquals(HomeSection.defaultOrder, restored.preferences.value.homeSections)
+        } finally {
+            driver.close()
+            if (previousRoot == null) {
+                System.clearProperty(StorageRootProperty)
+            } else {
+                System.setProperty(StorageRootProperty, previousRoot)
+            }
+            storageRoot.toFile().deleteRecursively()
+        }
+    }
+
+    @Test
     fun persistsLibraryPreferenceMutationsThroughRepository() = runTest {
         val storageRoot = Files.createTempDirectory("phoebe-library-preferences-service")
         val previousRoot = System.getProperty(StorageRootProperty)

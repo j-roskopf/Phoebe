@@ -15,7 +15,7 @@ CREATE TABLE LibraryPrefsRow (
     colDateAdded INTEGER NOT NULL,
     colRating INTEGER NOT NULL DEFAULT 1,
     colFavorite INTEGER NOT NULL DEFAULT 1,
-    homeSections TEXT NOT NULL DEFAULT 'Mixes,Collections,FavoritePlaylists,FavoriteArtists,FavoriteAlbums,RecentSongs,RecentArtists,RecentAlbums,Played,Random',
+    homeSections TEXT NOT NULL DEFAULT 'Mixes,Played,FavoritePlaylists,FavoriteArtists,FavoriteAlbums,RecentSongs,RecentArtists,RecentAlbums,Collections,Random',
     mobileBottomTabs TEXT NOT NULL DEFAULT 'Home,Search,Library,Playlists,Radio',
     personalMix TEXT NOT NULL DEFAULT '{"limit":50,"heavyRotationWeight":25,"recentWeight":30,"mostPlayedWeight":25,"similarWeight":15,"discoveryWeight":5}',
     gridColumns INTEGER NOT NULL DEFAULT 3,

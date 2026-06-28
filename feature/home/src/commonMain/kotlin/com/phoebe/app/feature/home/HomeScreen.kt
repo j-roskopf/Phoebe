@@ -127,11 +127,14 @@ private const val HomeMixCardAspectRatio = 1f
 private fun HomeSectionLabel(label: String) {
     SectionLabel(
         label = label,
-        color = PhoebeUi.mutedText,
+        color = PhoebeUi.primaryText,
         fontSize = 12.sp,
-        fontWeight = FontWeight.ExtraBold,
+        fontWeight = FontWeight.Black,
     )
 }
+
+private fun Modifier.homeArtistArtworkBorder(color: Color): Modifier =
+    border(BorderStroke(1.5.dp, color.copy(alpha = 0.34f)), CircleShape)
 
 @Immutable
 data class MobileHomeRouteState(
@@ -1255,9 +1258,9 @@ private fun ExpandedRecentSongsShelf(
 ) {
     val displayTracks = remember(tracks) { tracks.take(10) }
     if (displayTracks.isEmpty()) {
-        ExpandedHomeEmptyShelf("RECENT SONGS", "Recently added songs will appear here.", action = "View all", onAction = onViewAll)
+        ExpandedHomeEmptyShelf("RECENTLY ADDED SONGS", "Recently added songs will appear here.", action = "View all", onAction = onViewAll)
     } else {
-        ExpandedHomeShelf("RECENT SONGS", action = "View all", onAction = onViewAll, horizontalSpacing = 10.dp) {
+        ExpandedHomeShelf("RECENTLY ADDED SONGS", action = "View all", onAction = onViewAll, horizontalSpacing = 10.dp) {
             itemsIndexed(displayTracks, key = { _, track -> "recent-song:${track.id}" }, contentType = { _, _ -> "expanded-recent-song" }) { index, track ->
                 HomeArtworkTile(
                     track.title,
@@ -3152,7 +3155,8 @@ private fun MobileArtistTile(
             Modifier
                 .size(artworkSize)
                 .sharedArtworkTransition(sharedKey)
-                .clip(CircleShape),
+                .clip(CircleShape)
+                .homeArtistArtworkBorder(PhoebeUi.primaryText),
             radius = artworkSize / 2f,
             elevated = false,
             maxDecodeDimension = 160,
@@ -3317,7 +3321,8 @@ private fun FeaturedArtistCard(
                 Modifier
                     .size(artworkSize)
                     .sharedArtworkTransition("artist:${artist.id}")
-                    .clip(CircleShape),
+                    .clip(CircleShape)
+                    .homeArtistArtworkBorder(PhoebeUi.primaryText),
                 radius = artworkSize / 2f,
                 elevated = false,
             )

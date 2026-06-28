@@ -1436,9 +1436,9 @@ enum class HomeSection(val label: String) {
     FavoriteAlbums("Favorite albums"),
     /** Kept only to migrate older saved preferences into the split recent sections. */
     Recents("Recents"),
-    RecentSongs("Recent songs"),
-    RecentArtists("Recent artists"),
-    RecentAlbums("Recent albums"),
+    RecentSongs("Recently added songs"),
+    RecentArtists("Recently added artists"),
+    RecentAlbums("Recently added albums"),
     Played("Listening history"),
     Random("Random picks");
 
@@ -1446,14 +1446,14 @@ enum class HomeSection(val label: String) {
         val defaultOrder: List<HomeSection> =
             listOf(
                 Mixes,
-                Collections,
+                Played,
                 FavoritePlaylists,
                 FavoriteArtists,
                 FavoriteAlbums,
                 RecentSongs,
                 RecentArtists,
                 RecentAlbums,
-                Played,
+                Collections,
                 Random,
             )
     }
