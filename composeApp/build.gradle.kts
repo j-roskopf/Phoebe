@@ -410,6 +410,7 @@ val macMediaKeysResourceDirName = providers.provider {
 compose.desktop {
     application {
         mainClass = "com.phoebe.app.MainKt"
+        desktopJavaLauncher.orNull?.metadata?.installationPath?.asFile?.absolutePath?.let { javaHome = it }
         jvmArgs += listOf(
             "-Xms32m",
             "-Xmx256m",
