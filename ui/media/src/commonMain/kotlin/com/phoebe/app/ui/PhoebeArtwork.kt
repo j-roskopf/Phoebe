@@ -50,10 +50,9 @@ import com.phoebe.app.platform.remoteArtworkCacheMaxEstimatedBytes
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
+import io.ktor.http.isSuccess
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
@@ -197,36 +196,29 @@ private fun rememberRemoteImageState(
                 value = RemoteImageLoadState.Ready(it)
                 return@produceState
             }
-            
+
             var loadedTarget = false
-            val dimensions = progressivePreviewDecodeDimensions(maxDecodeDimension) + maxDecodeDimension
-            var highestLoadedDim = 0
-            
-            kotlinx.coroutines.coroutineScope {
-                val jobs = mutableListOf<Job>()
-                dimensions.forEach { dim ->
-                    val job = launch {
-                        RemoteArtworkCache.awaitLoadWithFallback(target, fallback, dim)?.let { image ->
-                            if (dim > highestLoadedDim) {
-                                highestLoadedDim = dim
-                                if (dim == maxDecodeDimension) {
-                                    value = RemoteImageLoadState.Ready(image)
-                                    loadedTarget = true
-                                    jobs.forEach { it.cancel() }
-                                } else {
-                                    value = RemoteImageLoadState.Preview(image)
-                                }
-                            }
-                        }
+            for (dim in remoteArtworkFetchDecodeDimensions(maxDecodeDimension)) {
+                RemoteArtworkCache.awaitLoadWithFallback(target, fallback, dim)?.let { image ->
+                    if (dim == maxDecodeDimension.normalizedArtworkDecodeDimension()) {
+                        value = RemoteImageLoadState.Ready(image)
+                        loadedTarget = true
+                    } else {
+                        value = RemoteImageLoadState.Preview(image)
                     }
-                    jobs.add(job)
+                }
+                if (loadedTarget) break
+                RemoteArtworkCache.cachedRequested(target, maxDecodeDimension, fallback)?.let {
+                    value = RemoteImageLoadState.Ready(it)
+                    loadedTarget = true
+                    break
                 }
             }
-            
+
             if (loadedTarget) {
                 return@produceState
             }
-            
+
             val current = cachedStateForDisplay(target, maxDecodeDimension, fallback)
             value = if (current is RemoteImageLoadState.Preview) current else RemoteImageLoadState.Unavailable
             delay(RemoteArtworkRetryDelayMs)
@@ -252,6 +244,16 @@ internal fun progressivePreviewDecodeDimensions(maxDecodeDimension: Int): List<I
     return listOf(ThumbnailArtworkMaxDecodeDimension, ListArtworkMaxDecodeDimension)
         .filter { it < requested }
         .distinct()
+}
+
+internal fun remoteArtworkFetchDecodeDimensions(maxDecodeDimension: Int): List<Int> {
+    val requested = maxDecodeDimension.normalizedArtworkDecodeDimension()
+    val preview = when {
+        requested <= ListArtworkMaxDecodeDimension -> null
+        requested <= GridArtworkMaxDecodeDimension -> ThumbnailArtworkMaxDecodeDimension
+        else -> ListArtworkMaxDecodeDimension
+    }
+    return (listOfNotNull(preview?.takeIf { it < requested }) + requested).distinct()
 }
 
 data class ArtworkCacheStats(
@@ -411,25 +413,26 @@ object RemoteArtworkCache {
             val url = key.url
             val remote = url.startsWith("http://") || url.startsWith("https://")
             val decoded = runCatching {
-                val bytes: ByteArray = if (remote) {
-                    val remoteBytes = withTimeoutOrNull(RemoteArtworkLoadTimeoutMs) {
+                if (remote) {
+                    withTimeoutOrNull(RemoteArtworkLoadTimeoutMs) {
                         remoteArtworkRequestUrls(url, key.maxDecodeDimension)
                             .firstNotNullOfOrNull { fetchUrl ->
-                                runCatching {
-                                    httpClient.get(fetchUrl) {
-                                        applyEmbyFamilyArtworkAuth(url)
-                                    }.body<ByteArray>()
-                                }.getOrNull()
+                                fetchRemoteArtworkBytes(url, fetchUrl)?.let { bytes ->
+                                    yield()
+                                    decodeImageBitmap(bytes, key.maxDecodeDimension)
+                                }
                             }
                     }
-                    remoteBytes
-                        ?: storage.readBytes(cachedArtworkPathForUrl(url))
-                        ?: return@runCatching null
+                        ?: storage.readBytes(cachedArtworkPathForUrl(url))?.let { bytes ->
+                            yield()
+                            decodeImageBitmap(bytes, key.maxDecodeDimension)
+                        }
                 } else {
-                    storage.readUriBytes(url) ?: return@runCatching null
+                    storage.readUriBytes(url)?.let { bytes ->
+                        yield()
+                        decodeImageBitmap(bytes, key.maxDecodeDimension)
+                    }
                 }
-                yield()
-                decodeImageBitmap(bytes, key.maxDecodeDimension)
             }.getOrNull()
             if (decoded != null) {
                 withCacheLock { putLocked(key, decoded) }
@@ -440,6 +443,16 @@ object RemoteArtworkCache {
             }
         }
     }
+
+    private suspend fun fetchRemoteArtworkBytes(sourceUrl: String, fetchUrl: String): ByteArray? =
+        runCatching {
+            val response = httpClient.get(fetchUrl) {
+                applyEmbyFamilyArtworkAuth(sourceUrl)
+            }
+            val bytes = response.body<ByteArray>()
+            if (!response.status.isSuccess()) return@runCatching null
+            bytes.takeIf { it.isNotEmpty() }
+        }.getOrNull()
 
     private fun cachedLocked(key: CacheKey): ImageBitmap? {
         val image = images[key] ?: return null
@@ -555,11 +568,14 @@ object RemoteArtworkCache {
     }
 
     private fun Int.normalizedDecodeDimension(): Int =
-        takeIf { it > 0 } ?: Int.MAX_VALUE
+        normalizedArtworkDecodeDimension()
 
     private fun ImageBitmap.estimatedBytes(): Long =
         width.toLong() * height.toLong() * 4L
 }
+
+private fun Int.normalizedArtworkDecodeDimension(): Int =
+    takeIf { it > 0 } ?: Int.MAX_VALUE
 
 /** Ask remote servers for a smaller JPEG when the URL supports sizing query params. */
 internal fun remoteArtworkRequestUrls(url: String, maxDecodeDimension: Int): List<String> {
@@ -570,12 +586,78 @@ internal fun remoteArtworkRequestUrls(url: String, maxDecodeDimension: Int): Lis
 private fun String.withRequestImageSize(maxDecodeDimension: Int): String {
     if (!startsWith("http://") && !startsWith("https://")) return this
     val pixels = maxDecodeDimension.coerceIn(64, HeroArtworkMaxDecodeDimension)
-    val separator = if (contains('?')) "&" else "?"
     return when {
         contains("maxWidth=", ignoreCase = true) || contains("maxHeight=", ignoreCase = true) -> this
         contains("width=", ignoreCase = true) || contains("height=", ignoreCase = true) -> this
-        isEmbyFamilyArtworkUrl() -> "$this${separator}maxWidth=$pixels&maxHeight=$pixels"
-        else -> "$this${separator}width=$pixels&height=$pixels"
+        isEmbyFamilyArtworkUrl() -> appendQueryParameters(
+            "maxWidth" to pixels.toString(),
+            "maxHeight" to pixels.toString(),
+        )
+        isSubsonicCoverArtUrl() || isMusicAssistantImageProxyUrl() -> withQueryParameter("size", pixels.toString())
+        isPlexArtworkUrl() -> appendQueryParameters("width" to pixels.toString(), "height" to pixels.toString())
+        else -> this
+    }
+}
+
+private fun String.isPlexArtworkUrl(): Boolean =
+    hasQueryParameter("X-Plex-Token")
+
+private fun String.isSubsonicCoverArtUrl(): Boolean =
+    contains("/rest/getCoverArt", ignoreCase = true) || contains("getCoverArt.view", ignoreCase = true)
+
+private fun String.isMusicAssistantImageProxyUrl(): Boolean =
+    contains("/imageproxy", ignoreCase = true)
+
+private fun String.hasQueryParameter(name: String): Boolean {
+    val query = substringAfter('?', "").substringBefore('#')
+    if (query.isBlank()) return false
+    return query.split('&').any { parameter ->
+        parameter.substringBefore('=').equals(name, ignoreCase = true)
+    }
+}
+
+private fun String.withQueryParameter(name: String, value: String): String {
+    val fragmentStart = indexOf('#')
+    val beforeFragment = if (fragmentStart >= 0) substring(0, fragmentStart) else this
+    val fragment = if (fragmentStart >= 0) substring(fragmentStart) else ""
+    val queryStart = beforeFragment.indexOf('?')
+    if (queryStart < 0) return appendQueryParameters(name to value)
+
+    val base = beforeFragment.substring(0, queryStart)
+    val query = beforeFragment.substring(queryStart + 1)
+    var replaced = false
+    val updatedQuery = query
+        .split('&')
+        .joinToString("&") { parameter ->
+            val key = parameter.substringBefore('=')
+            if (key.equals(name, ignoreCase = true)) {
+                replaced = true
+                "$key=$value"
+            } else {
+                parameter
+            }
+        }
+    return if (replaced) {
+        "$base?$updatedQuery$fragment"
+    } else {
+        appendQueryParameters(name to value)
+    }
+}
+
+private fun String.appendQueryParameters(vararg parameters: Pair<String, String>): String {
+    val fragmentStart = indexOf('#')
+    val beforeFragment = if (fragmentStart >= 0) substring(0, fragmentStart) else this
+    val fragment = if (fragmentStart >= 0) substring(fragmentStart) else ""
+    val separator = when {
+        beforeFragment.endsWith('?') || beforeFragment.endsWith('&') -> ""
+        beforeFragment.contains('?') -> "&"
+        else -> "?"
+    }
+    return buildString {
+        append(beforeFragment)
+        append(separator)
+        append(parameters.joinToString("&") { (name, value) -> "$name=$value" })
+        append(fragment)
     }
 }
 

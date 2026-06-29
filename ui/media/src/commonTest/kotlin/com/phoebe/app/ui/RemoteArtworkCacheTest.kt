@@ -110,6 +110,26 @@ class RemoteArtworkCacheTest {
     }
 
     @Test
+    fun remoteArtworkFetchDecodeDimensionsAvoidsExtraPreviewForListArtwork() {
+        assertEquals(
+            listOf(ListArtworkMaxDecodeDimension),
+            remoteArtworkFetchDecodeDimensions(ListArtworkMaxDecodeDimension),
+        )
+    }
+
+    @Test
+    fun remoteArtworkFetchDecodeDimensionsUsesSinglePreviewForLargeArtwork() {
+        assertEquals(
+            listOf(ThumbnailArtworkMaxDecodeDimension, GridArtworkMaxDecodeDimension),
+            remoteArtworkFetchDecodeDimensions(GridArtworkMaxDecodeDimension),
+        )
+        assertEquals(
+            listOf(ListArtworkMaxDecodeDimension, HeroArtworkMaxDecodeDimension),
+            remoteArtworkFetchDecodeDimensions(HeroArtworkMaxDecodeDimension),
+        )
+    }
+
+    @Test
     fun recentFailureDoesNotBlockCachedFallbackArtwork() {
         RemoteArtworkCache.configureLimitsForTest(maxEntries = 10, maxEstimatedBytes = Long.MAX_VALUE)
         RemoteArtworkCache.markFailedForTest("primary", ListArtworkMaxDecodeDimension)
@@ -234,18 +254,95 @@ class RemoteArtworkCacheTest {
     }
 
     @Test
-    fun remoteArtworkRequestUrlsFallBackToOriginalUrlAfterSizedUrl() {
+    fun remoteArtworkRequestUrlsLeaveGenericUrlsAlone() {
         val urls = remoteArtworkRequestUrls(
             "https://images.example/cover.jpg?token=abc",
             maxDecodeDimension = 160,
         )
 
         assertEquals(
+            listOf("https://images.example/cover.jpg?token=abc"),
+            urls,
+        )
+    }
+
+    @Test
+    fun remoteArtworkRequestUrlsFallBackToOriginalPlexUrlAfterSizedUrl() {
+        val urls = remoteArtworkRequestUrls(
+            "https://plex.example/library/metadata/1/thumb/2?X-Plex-Token=token",
+            maxDecodeDimension = 160,
+        )
+
+        assertEquals(
             listOf(
-                "https://images.example/cover.jpg?token=abc&width=160&height=160",
-                "https://images.example/cover.jpg?token=abc",
+                "https://plex.example/library/metadata/1/thumb/2?X-Plex-Token=token&width=160&height=160",
+                "https://plex.example/library/metadata/1/thumb/2?X-Plex-Token=token",
             ),
             urls,
+        )
+    }
+
+    @Test
+    fun remoteArtworkRequestUrlsDoNotAddExtraSeparators() {
+        assertEquals(
+            listOf(
+                "https://plex.example/library/metadata/1/thumb/2?X-Plex-Token=token&width=160&height=160",
+                "https://plex.example/library/metadata/1/thumb/2?X-Plex-Token=token&",
+            ),
+            remoteArtworkRequestUrls(
+                "https://plex.example/library/metadata/1/thumb/2?X-Plex-Token=token&",
+                maxDecodeDimension = 160,
+            ),
+        )
+        assertEquals(
+            listOf(
+                "https://jellyfin.example/Items/album/Images/Primary?api_key=token&maxWidth=160&maxHeight=160",
+                "https://jellyfin.example/Items/album/Images/Primary?api_key=token&",
+            ),
+            remoteArtworkRequestUrls(
+                "https://jellyfin.example/Items/album/Images/Primary?api_key=token&",
+                maxDecodeDimension = 160,
+            ),
+        )
+    }
+
+    @Test
+    fun remoteArtworkRequestUrlsUseEmbyFamilyMaxDimensions() {
+        val urls = remoteArtworkRequestUrls(
+            "https://jellyfin.example/Items/album/Images/Primary?tag=abc&api_key=token",
+            maxDecodeDimension = 256,
+        )
+
+        assertEquals(
+            listOf(
+                "https://jellyfin.example/Items/album/Images/Primary?tag=abc&api_key=token&maxWidth=256&maxHeight=256",
+                "https://jellyfin.example/Items/album/Images/Primary?tag=abc&api_key=token",
+            ),
+            urls,
+        )
+    }
+
+    @Test
+    fun remoteArtworkRequestUrlsUseSizeParameterForCoverArtProxyUrls() {
+        assertEquals(
+            listOf(
+                "https://subsonic.example/rest/getCoverArt.view?id=cover&size=256",
+                "https://subsonic.example/rest/getCoverArt.view?id=cover",
+            ),
+            remoteArtworkRequestUrls(
+                "https://subsonic.example/rest/getCoverArt.view?id=cover",
+                maxDecodeDimension = 256,
+            ),
+        )
+        assertEquals(
+            listOf(
+                "https://ma.example/imageproxy?provider=filesystem_local&size=256&path=album%252Fart.jpg",
+                "https://ma.example/imageproxy?provider=filesystem_local&size=0&path=album%252Fart.jpg",
+            ),
+            remoteArtworkRequestUrls(
+                "https://ma.example/imageproxy?provider=filesystem_local&size=0&path=album%252Fart.jpg",
+                maxDecodeDimension = 256,
+            ),
         )
     }
 }

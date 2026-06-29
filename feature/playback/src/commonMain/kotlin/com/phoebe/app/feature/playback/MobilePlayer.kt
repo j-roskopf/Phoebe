@@ -718,6 +718,7 @@ fun MobilePlayer(
                                 isPlaying = isPlaying,
                                 positionMs = positionMs,
                                 modifier = Modifier.fillMaxSize(),
+                                fullscreenButtonAlpha = fullPlayerElementsAlpha,
                                 useFilamentVisualizers = useFilamentVisualizers,
                             )
                         }

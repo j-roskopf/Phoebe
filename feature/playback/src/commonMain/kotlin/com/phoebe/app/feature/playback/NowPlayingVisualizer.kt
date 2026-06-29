@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
@@ -81,9 +82,11 @@ fun NowPlayingVisualizerSurface(
     modifier: Modifier = Modifier,
     desktopArtworkConstrained: Boolean = false,
     showFullscreenButton: Boolean = true,
+    fullscreenButtonAlpha: Float = 1f,
     useFilamentVisualizers: Boolean = true,
 ) {
     var fullscreen by remember(preset) { mutableStateOf(false) }
+    val clampedFullscreenButtonAlpha = fullscreenButtonAlpha.coerceIn(0f, 1f)
 
     Box(modifier.clipToBounds()) {
         if (fullscreen) {
@@ -101,7 +104,7 @@ fun NowPlayingVisualizerSurface(
             )
         }
 
-        if (!fullscreen && showFullscreenButton && preset.isVisualizer) {
+        if (!fullscreen && showFullscreenButton && preset.isVisualizer && clampedFullscreenButtonAlpha > 0f) {
             VisualizerIconButton(
                 description = "Open visualizer full screen",
                 onClick = { fullscreen = true },
@@ -109,6 +112,7 @@ fun NowPlayingVisualizerSurface(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(10.dp)
+                    .graphicsLayer { alpha = clampedFullscreenButtonAlpha }
                     .zIndex(1f),
                 icon = PhoebeIcon.Fullscreen,
             )
