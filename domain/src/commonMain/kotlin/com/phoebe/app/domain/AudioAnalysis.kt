@@ -15,7 +15,18 @@ enum class NowPlayingVisualizerPreset(
     Plenoptic("Plenoptic"),
     VortexSpectrum("Vortex Spectrum"),
     ClassicEQ("Classic EQ"),
-    HaloSpectrum("Halo Spectrum");
+    HaloSpectrum("Halo Spectrum"),
+    WireframeSpectrum3D("Wireframe Spectrum 3D", familyLabel = "3D visualizer"),
+    CanyonWire3D("Canyon Wire 3D", familyLabel = "3D visualizer"),
+    PulseTunnel3D("Pulse Tunnel 3D", familyLabel = "3D visualizer"),
+    OrbitalHalo3D("Orbital Halo 3D", familyLabel = "3D visualizer"),
+    SpiralGalaxy3D("Spiral Galaxy 3D", familyLabel = "3D visualizer"),
+    AuroraRibbon3D("Aurora Ribbon 3D", familyLabel = "3D visualizer"),
+    CrystalPeaks3D("Crystal Peaks 3D", familyLabel = "3D visualizer"),
+    PrismFan3D("Prism Fan 3D", familyLabel = "3D visualizer"),
+    WaveRibbon3D("Wave Ribbon 3D", familyLabel = "3D visualizer"),
+    KaleidoscopeWeb3D("Kaleidoscope Web 3D", familyLabel = "3D visualizer"),
+    StarfieldWeb3D("Starfield Web 3D", familyLabel = "3D visualizer");
 
     val isVisualizer: Boolean
         get() = this != Artwork

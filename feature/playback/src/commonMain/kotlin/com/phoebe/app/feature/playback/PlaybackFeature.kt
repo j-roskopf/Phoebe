@@ -35,6 +35,7 @@ data class MobilePlaybackRouteState(
     val blurredArtworkAppearance: Boolean = true,
     val tintedBackgroundGradient: Boolean = false,
     val audioAnalysis: AudioAnalysisFrame = AudioAnalysisFrame.Empty,
+    val useFilamentVisualizers: Boolean = true,
     val handleSystemBack: Boolean = true,
     val initialUpNextExpanded: Boolean = false,
     val expansionFraction: Float = 0f,
@@ -92,6 +93,7 @@ data class DesktopVisualizerRouteState(
     val audioAnalysis: AudioAnalysisFrame,
     val isPlaying: Boolean,
     val positionMs: Long,
+    val useFilamentVisualizers: Boolean = true,
 )
 
 @Composable
@@ -121,6 +123,7 @@ fun MobilePlaybackRoute(
         blurredArtworkAppearance = state.blurredArtworkAppearance,
         tintedBackgroundGradient = state.tintedBackgroundGradient,
         audioAnalysis = state.audioAnalysis,
+        useFilamentVisualizers = state.useFilamentVisualizers,
         onToggle = actions.onToggle,
         onPrevious = actions.onPrevious,
         onNext = actions.onNext,
@@ -190,5 +193,6 @@ fun DesktopVisualizerRoute(
         positionMs = state.positionMs,
         onPreset = onPreset,
         modifier = modifier,
+        useFilamentVisualizers = state.useFilamentVisualizers,
     )
 }

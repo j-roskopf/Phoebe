@@ -45,5 +45,6 @@ enum class PhoebeIcon {
     Close,
     Check,
     Visualizer,
+    Fullscreen,
     Update,
 }

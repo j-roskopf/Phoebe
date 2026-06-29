@@ -17,6 +17,7 @@ junit = "4.13.2"
 javafx = "21.0.11"
 jaudiotagger = "3.0.1"
 jnativehook = "2.2.2"
+filamentKmp = "0.1.3-beta02"
 jna = "5.18.1"
 soundlibs-mp3spi = "1.9.5.4"
 soundlibs-vorbisspi = "1.0.3.3"
@@ -93,6 +94,7 @@ serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-jso
 junit = { module = "junit:junit", version.ref = "junit" }
 jaudiotagger = { module = "net.jthink:jaudiotagger", version.ref = "jaudiotagger" }
 jnativehook = { module = "com.github.kwhat:jnativehook", version.ref = "jnativehook" }
+filament-compose = { module = "io.github.erkko68.filament:filament-compose", version.ref = "filamentKmp" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
 soundlibs-mp3spi = { module = "com.googlecode.soundlibs:mp3spi", version.ref = "soundlibs-mp3spi" }

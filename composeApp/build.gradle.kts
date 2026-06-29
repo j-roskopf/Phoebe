@@ -1,4 +1,5 @@
 import org.jetbrains.compose.desktop.application.dsl.TargetFormat
+import org.gradle.jvm.toolchain.JavaLanguageVersion
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.testing.Test
@@ -47,6 +48,14 @@ val phoebeRealAudioTests = providers.gradleProperty("phoebe.realAudioTests")
     .orElse(providers.environmentVariable("PHOEBE_REAL_AUDIO_TESTS"))
     .map(String::toBoolean)
     .orElse(false)
+
+val desktopJavaLanguageVersion = JavaLanguageVersion.of(22)
+val desktopJavaLauncher = javaToolchains.launcherFor {
+    languageVersion.set(desktopJavaLanguageVersion)
+}
+val desktopJavaExecutable = desktopJavaLauncher.map { launcher ->
+    launcher.executablePath.asFile.absolutePath
+}
 
 fun providerValue(name: String, envName: String): String? =
     providers.gradleProperty(name).orElse(providers.environmentVariable(envName)).orNull
@@ -134,7 +143,7 @@ plugins {
 }
 
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(22)
     compilerOptions {
         freeCompilerArgs.add("-Xexpect-actual-classes")
     }
@@ -160,7 +169,11 @@ kotlin {
         }
     }
 
-    jvm("desktop")
+    jvm("desktop") {
+        compilerOptions {
+            jvmTarget.set(JvmTarget.JVM_22)
+        }
+    }
 
     @OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
     wasmJs {
@@ -468,24 +481,26 @@ val compileMacMediaKeysNative = tasks.register<Exec>("compileMacMediaKeysNative"
     inputs.file(src)
     outputs.file(outFile)
     doFirst { outDir.mkdirs() }
-    val javaHome = System.getProperty("java.home") ?: error("java.home is not set")
-    commandLine(
-        "clang",
-        "-dynamiclib",
-        "-fobjc-arc",
-        "-framework",
-        "Foundation",
-        "-framework",
-        "AppKit",
-        "-framework",
-        "MediaPlayer",
-        "-I$javaHome/include",
-        "-I$javaHome/include/darwin",
-        "-mmacosx-version-min=11.0",
-        "-o",
-        outFile.absolutePath,
-        src.absolutePath,
-    )
+    doFirst {
+        val javaHome = desktopJavaLauncher.get().metadata.installationPath.asFile.absolutePath
+        commandLine(
+            "clang",
+            "-dynamiclib",
+            "-fobjc-arc",
+            "-framework",
+            "Foundation",
+            "-framework",
+            "AppKit",
+            "-framework",
+            "MediaPlayer",
+            "-I$javaHome/include",
+            "-I$javaHome/include/darwin",
+            "-mmacosx-version-min=11.0",
+            "-o",
+            outFile.absolutePath,
+            src.absolutePath,
+        )
+    }
 }
 
 val syncMacMediaKeyResources = tasks.register<Sync>("syncMacMediaKeyResources") {
@@ -506,6 +521,10 @@ val desktopDevRunTaskNames = setOf("run", "hotRunDesktop", "hotDevDesktop", "des
 tasks.withType<JavaExec>().configureEach {
     if (name !in desktopDevRunTaskNames) return@configureEach
 
+    javaLauncher.set(desktopJavaLauncher)
+    doFirst {
+        setExecutable(desktopJavaExecutable.get())
+    }
     systemProperty("phoebe.debug", "true")
     val debugHome = File(System.getProperty("user.home"), ".phoebe-debug")
     systemProperty("phoebe.storage.root", debugHome.absolutePath)
@@ -537,6 +556,7 @@ tasks.withType<Test>().configureEach {
     }
 
     if (name.contains("desktop", ignoreCase = true)) {
+        javaLauncher.set(desktopJavaLauncher)
         systemProperty("phoebe.debug", "true")
         jvmArgs(linuxX64SuperWordWorkaroundJvmArgs)
     }

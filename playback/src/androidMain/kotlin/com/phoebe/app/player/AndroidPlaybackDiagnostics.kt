@@ -135,9 +135,7 @@ internal object AndroidAudioAnalysisState {
 }
 
 @OptIn(UnstableApi::class)
-internal fun Player.applyPhoebeAudioOffloadPreference(
-    profile: EqualizerProfile = AndroidEqualizerState.profile,
-) {
+internal fun Player.applyPhoebeAudioOffloadPreference() {
     // Audio offload bypasses custom AudioProcessors (including analysis + EQ processors),
     // so we always keep it disabled to ensure live visualizer data and EQ remain functional.
     trackSelectionParameters = trackSelectionParameters

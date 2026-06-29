@@ -131,6 +131,7 @@ class PhoebeDesktopScreenshotTest {
             PhoebeScreenshotScenario.PlayerVisualizerVortexSpectrum to "vortex-spectrum",
             PhoebeScreenshotScenario.PlayerVisualizerClassicEQ to "classic-eq",
             PhoebeScreenshotScenario.PlayerVisualizerHaloSpectrum to "halo-spectrum",
+            PhoebeScreenshotScenario.PlayerVisualizerWireframeSpectrum3D to "wireframe-spectrum-3d",
         ).forEach { (scenario, slug) ->
             setContent {
                 Box(Modifier.size(1365.dp, 900.dp)) {

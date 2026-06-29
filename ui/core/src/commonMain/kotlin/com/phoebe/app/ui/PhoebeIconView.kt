@@ -168,6 +168,16 @@ fun PhoebeIconView(
                     )
                 }
             }
+            PhoebeIcon.Fullscreen -> {
+                line(0.24f, 0.42f, 0.24f, 0.24f)
+                line(0.24f, 0.24f, 0.42f, 0.24f)
+                line(0.58f, 0.24f, 0.76f, 0.24f)
+                line(0.76f, 0.24f, 0.76f, 0.42f)
+                line(0.76f, 0.58f, 0.76f, 0.76f)
+                line(0.76f, 0.76f, 0.58f, 0.76f)
+                line(0.42f, 0.76f, 0.24f, 0.76f)
+                line(0.24f, 0.76f, 0.24f, 0.58f)
+            }
             PhoebeIcon.Update -> {
                 line(0.50f, 0.22f, 0.50f, 0.76f)
                 line(0.27f, 0.44f, 0.50f, 0.22f)
@@ -225,6 +235,7 @@ private fun PhoebeIcon.drawableResource(filled: Boolean): DrawableResource? =
         PhoebeIcon.Close,
         PhoebeIcon.Check,
         PhoebeIcon.Visualizer,
+        PhoebeIcon.Fullscreen,
         PhoebeIcon.Update,
         -> null
     }

@@ -25,6 +25,21 @@ class AudioPlayerEqualizerTest {
         assertEquals(10, applied.gainsDb.size)
         assertTrue(applied.enabled)
     }
+
+    @Test
+    fun setEqualizerSkipsUnchangedNormalizedProfile() {
+        val player = EqualizerRecordingPlayer()
+        val profile = EqualizerProfile(
+            enabled = true,
+            bandCount = 10,
+            gainsDb = List(10) { 1f },
+        )
+
+        player.setEqualizer(profile)
+        player.setEqualizer(profile.copy(gainsDb = List(10) { 1.1f }))
+
+        assertEquals(1, player.appliedProfiles.size)
+    }
 }
 
 private class EqualizerRecordingPlayer : SimpleAudioPlayer() {

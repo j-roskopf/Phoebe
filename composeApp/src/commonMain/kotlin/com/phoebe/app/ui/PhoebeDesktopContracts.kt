@@ -89,6 +89,7 @@ internal data class PlaybackUiState(
     val equalizerRemoteUnavailable: Boolean = false,
     val visualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
     val audioAnalysis: AudioAnalysisFrame = AudioAnalysisFrame.Empty,
+    val useFilamentVisualizers: Boolean = true,
 )
 
 internal data class PlaybackActions(

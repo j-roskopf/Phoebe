@@ -207,6 +207,7 @@ fun MobilePlayer(
     blurredArtworkAppearance: Boolean = true,
     tintedBackgroundGradient: Boolean = false,
     audioAnalysis: AudioAnalysisFrame = AudioAnalysisFrame.Empty,
+    useFilamentVisualizers: Boolean = true,
     onToggle: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -717,6 +718,7 @@ fun MobilePlayer(
                                 isPlaying = isPlaying,
                                 positionMs = positionMs,
                                 modifier = Modifier.fillMaxSize(),
+                                useFilamentVisualizers = useFilamentVisualizers,
                             )
                         }
                     }

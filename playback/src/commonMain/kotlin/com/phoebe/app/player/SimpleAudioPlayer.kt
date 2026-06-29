@@ -382,6 +382,7 @@ abstract class SimpleAudioPlayer(
 
     override fun setEqualizer(profile: EqualizerProfile) {
         val normalized = profile.normalized()
+        if (equalizerProfile == normalized) return
         equalizerProfile = normalized
         applyEqualizer(normalized)
     }

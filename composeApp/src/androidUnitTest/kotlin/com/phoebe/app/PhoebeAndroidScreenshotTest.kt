@@ -65,6 +65,7 @@ class PhoebeAndroidPhoneScreenshotTest {
     @Test fun phonePlayerVisualizerVortexSpectrumLight() = capturePhone("player-visualizer-vortex-spectrum", PhoebeScreenshotScenario.PlayerVisualizerVortexSpectrum, useLightAppearance = true)
     @Test fun phonePlayerVisualizerClassicEQLight() = capturePhone("player-visualizer-classic-eq", PhoebeScreenshotScenario.PlayerVisualizerClassicEQ, useLightAppearance = true)
     @Test fun phonePlayerVisualizerHaloSpectrumLight() = capturePhone("player-visualizer-halo-spectrum", PhoebeScreenshotScenario.PlayerVisualizerHaloSpectrum, useLightAppearance = true)
+    @Test fun phonePlayerVisualizerWireframeSpectrum3DLight() = capturePhone("player-visualizer-wireframe-spectrum-3d", PhoebeScreenshotScenario.PlayerVisualizerWireframeSpectrum3D, useLightAppearance = true)
     @Test fun phonePlayerUpNextExpandedLight() = capturePhone("player-upnext-expanded", PhoebeScreenshotScenario.PlayerUpNextExpanded, useLightAppearance = true)
 
     @Test fun phoneHomeRedTintDark() = capturePhone("home-red-tint", PhoebeScreenshotScenario.Home, tintId = PhoebeTintOption.fromId("red").id)

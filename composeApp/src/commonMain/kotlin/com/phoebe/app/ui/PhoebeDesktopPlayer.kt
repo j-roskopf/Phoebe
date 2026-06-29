@@ -688,6 +688,7 @@ internal fun DesktopPlayer(
                                             audioAnalysis = audioAnalysis,
                                             isPlaying = isPlaying,
                                             positionMs = positionMs,
+                                            useFilamentVisualizers = playbackState.useFilamentVisualizers,
                                         ),
                                         onPreset = onVisualizerPreset,
                                         modifier = Modifier.fillMaxSize(),

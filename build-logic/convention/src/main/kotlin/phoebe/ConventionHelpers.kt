@@ -6,6 +6,7 @@ import org.gradle.api.artifacts.VersionCatalog
 import org.gradle.api.artifacts.VersionCatalogsExtension
 import org.gradle.api.plugins.BasePluginExtension
 import org.gradle.kotlin.dsl.getByType
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 
 internal val Project.libs: VersionCatalog
@@ -67,12 +68,16 @@ internal fun Project.configurePhoebeKmp(
     }
 
     extension.apply {
-        jvmToolchain(17)
+        jvmToolchain(22)
         compilerOptions {
             freeCompilerArgs.add("-Xexpect-actual-classes")
         }
 
-        jvm("desktop")
+        jvm("desktop") {
+            compilerOptions {
+                jvmTarget.set(JvmTarget.JVM_22)
+            }
+        }
 
         @OptIn(org.jetbrains.kotlin.gradle.ExperimentalWasmDsl::class)
         wasmJs {

@@ -269,6 +269,7 @@ internal enum class PhoebeScreenshotScenario {
     PlayerVisualizerVortexSpectrum,
     PlayerVisualizerClassicEQ,
     PlayerVisualizerHaloSpectrum,
+    PlayerVisualizerWireframeSpectrum3D,
     PlayerUpNextExpanded,
     Settings,
     SignIn,
@@ -294,6 +295,7 @@ private fun PhoebeScreenshotScenario.visualizerPreset(): NowPlayingVisualizerPre
         PhoebeScreenshotScenario.PlayerVisualizerVortexSpectrum -> NowPlayingVisualizerPreset.VortexSpectrum
         PhoebeScreenshotScenario.PlayerVisualizerClassicEQ -> NowPlayingVisualizerPreset.ClassicEQ
         PhoebeScreenshotScenario.PlayerVisualizerHaloSpectrum -> NowPlayingVisualizerPreset.HaloSpectrum
+        PhoebeScreenshotScenario.PlayerVisualizerWireframeSpectrum3D -> NowPlayingVisualizerPreset.WireframeSpectrum3D
         else -> NowPlayingVisualizerPreset.Default
     }
 
@@ -409,6 +411,7 @@ internal fun PhoebeDesktopScreenshotScenario(
         PhoebeScreenshotScenario.PlayerVisualizerVortexSpectrum,
         PhoebeScreenshotScenario.PlayerVisualizerClassicEQ,
         PhoebeScreenshotScenario.PlayerVisualizerHaloSpectrum,
+        PhoebeScreenshotScenario.PlayerVisualizerWireframeSpectrum3D,
         -> AppScreen.Player
         else -> AppScreen.Home
     }
@@ -479,6 +482,7 @@ internal fun PhoebeDesktopScreenshotScenario(
             currentIndex = 0,
             visualizerPreset = visualizerPreset,
             audioAnalysis = if (visualizerPreset.isVisualizer) ScreenshotAudioAnalysisFrame else AudioAnalysisFrame.Empty,
+            useFilamentVisualizers = false,
         ),
         playbackActions = PlaybackActions(
             onToggle = {},
@@ -808,6 +812,7 @@ internal fun PhoebeMobileScreenshotScenario(
             PhoebeScreenshotScenario.PlayerVisualizerVortexSpectrum,
             PhoebeScreenshotScenario.PlayerVisualizerClassicEQ,
             PhoebeScreenshotScenario.PlayerVisualizerHaloSpectrum,
+            PhoebeScreenshotScenario.PlayerVisualizerWireframeSpectrum3D,
             PhoebeScreenshotScenario.PlayerUpNextExpanded,
             -> MobilePlaybackRoute(
                 state = MobilePlaybackRouteState(
@@ -825,6 +830,7 @@ internal fun PhoebeMobileScreenshotScenario(
                     } else {
                         AudioAnalysisFrame.Empty
                     },
+                    useFilamentVisualizers = false,
                     blurredArtworkAppearance = scenario != PhoebeScreenshotScenario.PlayerBlurredArtworkOff,
                     initialUpNextExpanded = scenario == PhoebeScreenshotScenario.PlayerUpNextExpanded,
                     expansionFraction = 1f,

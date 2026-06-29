@@ -273,7 +273,7 @@ class PlaybackService : MediaLibraryService() {
             .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus= */ true)
             .setWakeMode(C.WAKE_MODE_LOCAL)
             .build()
-            .also { it.applyPhoebeAudioOffloadPreference(AndroidEqualizerState.profile) }
+            .also { it.applyPhoebeAudioOffloadPreference() }
         val sessionPlayer = CastMediaSessionPlayer(player)
         AndroidPlaybackBridge.onCastMediaSessionState = { state ->
             sessionPlayer.updateCastState(state)

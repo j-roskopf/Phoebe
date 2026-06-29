@@ -2330,6 +2330,7 @@ class AppState(
 
     private fun applyEqualizerProfile(profile: EqualizerProfile) {
         val normalized = profile.normalized()
+        if (mutableEqualizerProfile.value == normalized) return
         mutableEqualizerProfile.value = normalized
         dependencies.audioPlayer.setEqualizer(normalized)
         if (mutablePersistEqualizerSettings.value) {

@@ -10,6 +10,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +27,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -42,18 +44,24 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import androidx.compose.ui.zIndex
 import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.AudioAnalysisSource
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.player.AudioAnalysisAccumulator
+import kotlin.math.abs
 import kotlin.math.PI
 import kotlin.math.cos
 import kotlin.math.min
@@ -72,6 +80,107 @@ fun NowPlayingVisualizerSurface(
     positionMs: Long,
     modifier: Modifier = Modifier,
     desktopArtworkConstrained: Boolean = false,
+    showFullscreenButton: Boolean = true,
+    useFilamentVisualizers: Boolean = true,
+) {
+    var fullscreen by remember(preset) { mutableStateOf(false) }
+
+    Box(modifier.clipToBounds()) {
+        if (fullscreen) {
+            Box(Modifier.fillMaxSize().background(Color.Black))
+        } else {
+            NowPlayingVisualizerContent(
+                preset = preset,
+                track = track,
+                audioAnalysis = audioAnalysis,
+                isPlaying = isPlaying,
+                positionMs = positionMs,
+                modifier = Modifier.fillMaxSize(),
+                desktopArtworkConstrained = desktopArtworkConstrained,
+                useFilamentVisualizers = useFilamentVisualizers,
+            )
+        }
+
+        if (!fullscreen && showFullscreenButton && preset.isVisualizer) {
+            VisualizerIconButton(
+                description = "Open visualizer full screen",
+                onClick = { fullscreen = true },
+                active = true,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(10.dp)
+                    .zIndex(1f),
+                icon = PhoebeIcon.Fullscreen,
+            )
+        }
+    }
+
+    if (fullscreen) {
+        FullscreenVisualizerDialog(
+            preset = preset,
+            track = track,
+            audioAnalysis = audioAnalysis,
+            isPlaying = isPlaying,
+            positionMs = positionMs,
+            onDismiss = { fullscreen = false },
+            useFilamentVisualizers = useFilamentVisualizers,
+        )
+    }
+}
+
+@Composable
+private fun FullscreenVisualizerDialog(
+    preset: NowPlayingVisualizerPreset,
+    track: Track?,
+    audioAnalysis: AudioAnalysisFrame,
+    isPlaying: Boolean,
+    positionMs: Long,
+    onDismiss: () -> Unit,
+    useFilamentVisualizers: Boolean,
+) {
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black),
+        ) {
+            NowPlayingVisualizerContent(
+                preset = preset,
+                track = track,
+                audioAnalysis = audioAnalysis,
+                isPlaying = isPlaying,
+                positionMs = positionMs,
+                modifier = Modifier.fillMaxSize(),
+                desktopArtworkConstrained = false,
+                useFilamentVisualizers = useFilamentVisualizers,
+            )
+            VisualizerIconButton(
+                description = "Close full screen visualizer",
+                onClick = onDismiss,
+                active = true,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(18.dp)
+                    .zIndex(1f),
+                icon = PhoebeIcon.Close,
+            )
+        }
+    }
+}
+
+@Composable
+private fun NowPlayingVisualizerContent(
+    preset: NowPlayingVisualizerPreset,
+    track: Track?,
+    audioAnalysis: AudioAnalysisFrame,
+    isPlaying: Boolean,
+    positionMs: Long,
+    modifier: Modifier = Modifier,
+    desktopArtworkConstrained: Boolean = false,
+    useFilamentVisualizers: Boolean = true,
 ) {
     if (preset == NowPlayingVisualizerPreset.Artwork) {
         if (desktopArtworkConstrained) {
@@ -121,6 +230,47 @@ fun NowPlayingVisualizerSurface(
             )
         }
     }
+    if (preset.isFilament3DVisualizer()) {
+        var wireframeYaw by remember { mutableFloatStateOf(0f) }
+        var wireframePitch by remember { mutableFloatStateOf(0f) }
+        val renderState = remember(frame, positionMs, isPlaying) {
+            AudioVisualizerRenderState.from(frame, positionMs, isPlaying)
+        }
+        val fallbackInteraction = Modifier.pointerInput(Unit) {
+            detectDragGestures { change, dragAmount ->
+                change.consume()
+                wireframeYaw = wrapFullTurn(wireframeYaw + dragAmount.x * 0.012f)
+                wireframePitch = wrapFullTurn(wireframePitch + dragAmount.y * 0.010f)
+            }
+        }
+        val visualizerModifier = modifier
+            .clipToBounds()
+            .background(Brush.radialGradient(preset.backgroundColors(), radius = 900f))
+            .semantics { contentDescription = "${preset.label} visualizer" }
+        val fallbackContent: @Composable (Modifier) -> Unit = { fallbackModifier ->
+            Canvas(fallbackModifier.then(fallbackInteraction)) {
+                drawRect(Color.Black.copy(alpha = 0.18f))
+                drawWireframeSpectrum3D(
+                    state = renderState,
+                    yaw = wireframeYaw,
+                    pitch = wireframePitch,
+                )
+            }
+        }
+        if (useFilamentVisualizers) {
+            FilamentVisualizerHost(
+                preset = preset,
+                renderState = renderState,
+                isPlaying = isPlaying,
+                motionEnabled = motionEnabled,
+                modifier = visualizerModifier,
+                fallback = fallbackContent,
+            )
+        } else {
+            fallbackContent(visualizerModifier)
+        }
+        return
+    }
 
     Canvas(
         modifier
@@ -138,7 +288,19 @@ fun NowPlayingVisualizerSurface(
             NowPlayingVisualizerPreset.VortexSpectrum -> drawVortexSpectrum(frame, phase)
             NowPlayingVisualizerPreset.ClassicEQ -> drawClassicEQ(frame, phase)
             NowPlayingVisualizerPreset.HaloSpectrum -> drawHaloSpectrum(frame, phase)
-            NowPlayingVisualizerPreset.Artwork -> Unit
+            NowPlayingVisualizerPreset.WireframeSpectrum3D,
+            NowPlayingVisualizerPreset.CanyonWire3D,
+            NowPlayingVisualizerPreset.PulseTunnel3D,
+            NowPlayingVisualizerPreset.OrbitalHalo3D,
+            NowPlayingVisualizerPreset.SpiralGalaxy3D,
+            NowPlayingVisualizerPreset.AuroraRibbon3D,
+            NowPlayingVisualizerPreset.CrystalPeaks3D,
+            NowPlayingVisualizerPreset.PrismFan3D,
+            NowPlayingVisualizerPreset.WaveRibbon3D,
+            NowPlayingVisualizerPreset.KaleidoscopeWeb3D,
+            NowPlayingVisualizerPreset.StarfieldWeb3D,
+            NowPlayingVisualizerPreset.Artwork,
+            -> Unit
         }
     }
 }
@@ -211,9 +373,11 @@ private fun VisualizerIconButton(
     description: String,
     onClick: () -> Unit,
     active: Boolean,
+    modifier: Modifier = Modifier,
+    icon: PhoebeIcon = PhoebeIcon.Visualizer,
 ) {
     Box(
-        Modifier
+        modifier
             .size(44.dp)
             .clip(RoundedCornerShape(999.dp))
             .background(if (active) PhoebeUi.accent.copy(alpha = 0.16f) else Color.Transparent)
@@ -222,7 +386,7 @@ private fun VisualizerIconButton(
         contentAlignment = Alignment.Center,
     ) {
         PhoebeIconView(
-            PhoebeIcon.Visualizer,
+            icon,
             tint = if (active) PhoebeUi.accentLight else PhoebeUi.primaryText,
             modifier = Modifier.size(20.dp),
         )
@@ -294,6 +458,7 @@ fun DesktopNowPlayingVisualizerView(
     positionMs: Long,
     onPreset: (NowPlayingVisualizerPreset) -> Unit,
     modifier: Modifier = Modifier,
+    useFilamentVisualizers: Boolean = true,
 ) {
     Column(
         modifier = modifier.padding(horizontal = 28.dp, vertical = 24.dp),
@@ -331,6 +496,7 @@ fun DesktopNowPlayingVisualizerView(
                 positionMs = positionMs,
                 modifier = Modifier.fillMaxSize(),
                 desktopArtworkConstrained = true,
+                useFilamentVisualizers = useFilamentVisualizers,
             )
         }
     }
@@ -793,6 +959,103 @@ private fun DrawScope.drawHaloSpectrum(frame: AudioAnalysisFrame, phase: Float) 
     }
 }
 
+private fun DrawScope.drawWireframeSpectrum3D(
+    state: AudioVisualizerRenderState,
+    yaw: Float,
+    pitch: Float,
+) {
+    drawRect(Color.Black)
+
+    val mesh = state.mesh
+    val centerY = size.height * 0.52f
+    val centerGlow = (0.16f + state.envelope * 0.36f).coerceIn(0f, 0.62f)
+    val centerStroke = (1.1f + state.envelope * 2.4f).dp.toPx()
+    drawLine(
+        color = Color(0xFF7D8CFF).copy(alpha = 0.16f + centerGlow),
+        start = Offset(0f, centerY),
+        end = Offset(size.width, centerY),
+        strokeWidth = centerStroke * 3.2f,
+        cap = StrokeCap.Round,
+    )
+    drawLine(
+        color = Color(0xFFE8E8FF).copy(alpha = 0.48f + state.envelope * 0.28f),
+        start = Offset(0f, centerY),
+        end = Offset(size.width, centerY),
+        strokeWidth = centerStroke,
+        cap = StrokeCap.Round,
+    )
+
+    fun point(vertex: WireframeVertex): Offset {
+        val centeredX = (vertex.x - 0.5f) * 2f
+        val recency = 1f - vertex.z
+        val depth = (recency - 0.5f) * 2f
+        val yawX = centeredX * cosF(yaw) + depth * sinF(yaw)
+        val yawDepth = depth * cosF(yaw) - centeredX * sinF(yaw)
+        val rotatedY = vertex.y * cosF(pitch) - yawDepth * sinF(pitch) * 0.46f
+        val rotatedDepth = yawDepth * cosF(pitch) + vertex.y * sinF(pitch) * 0.46f
+        val perspective = 0.64f + (rotatedDepth + 1f) * 0.20f + recency * 0.22f
+        val backSideFade = 0.72f + 0.28f * ((rotatedDepth + 1f) * 0.5f).coerceIn(0f, 1f)
+        val x = size.width * (0.5f + yawX * 0.50f * perspective)
+        val yScale = size.height * (0.11f + recency * 0.31f)
+        val y = centerY - rotatedY * yScale * backSideFade
+        return Offset(x, y)
+    }
+
+    fun colorFor(vertex: WireframeVertex): Color {
+        val upper = vertex.y >= 0f
+        val height = abs(vertex.y).coerceIn(0f, 1f)
+        val base = when {
+            upper && height > 0.46f -> lerp(Color(0xFF48F28B), Color(0xFF00FF2F), vertex.intensity)
+            upper -> lerp(Color(0xFF4DABF7), Color(0xFF8CEBFF), height)
+            height > 0.46f -> lerp(Color(0xFFFF8E8E), Color(0xFFFFFFD2), vertex.intensity)
+            else -> lerp(Color(0xFFA889FF), Color(0xFFFFB6A8), height)
+        }
+        val alpha = (0.18f + (1f - vertex.z) * 0.44f + state.envelope * 0.2f).coerceIn(0.14f, 0.92f)
+        return base.copy(alpha = alpha)
+    }
+
+    fun drawSegments(segments: List<WireframeSegment>, strokeWidth: Float, alphaScale: Float) {
+        segments.forEach { segment ->
+            val from = mesh.vertices[segment.from]
+            val to = mesh.vertices[segment.to]
+            val color = lerp(colorFor(from), colorFor(to), 0.5f)
+            drawLine(
+                color = color.copy(alpha = (color.alpha * alphaScale).coerceIn(0f, 1f)),
+                start = point(from),
+                end = point(to),
+                strokeWidth = strokeWidth,
+                cap = StrokeCap.Round,
+            )
+        }
+    }
+
+    drawSegments(mesh.diagonalSegments, strokeWidth = 0.7.dp.toPx(), alphaScale = 0.54f)
+    drawSegments(mesh.horizontalSegments, strokeWidth = 0.9.dp.toPx(), alphaScale = 0.86f)
+
+    mesh.centerSegments.forEach { segment ->
+        val from = mesh.vertices[segment.from].copy(y = 0f)
+        val to = mesh.vertices[segment.to].copy(y = 0f)
+        drawLine(
+            color = Color(0xFFC8D4FF).copy(alpha = 0.32f + state.envelope * 0.36f),
+            start = point(from),
+            end = point(to),
+            strokeWidth = 1.2.dp.toPx(),
+            cap = StrokeCap.Round,
+        )
+    }
+
+    val glowRadius = size.minDimension * (0.16f + state.envelope * 0.22f)
+    drawCircle(
+        brush = Brush.radialGradient(
+            colors = listOf(Color(0x447D8CFF), Color.Transparent),
+            center = Offset(size.width * 0.5f, centerY),
+            radius = glowRadius,
+        ),
+        center = Offset(size.width * 0.5f, centerY),
+        radius = glowRadius,
+    )
+}
+
 // ─── Color palettes ──────────────────────────────────────────────────────────
 private fun NowPlayingVisualizerPreset.backgroundColors(): List<Color> =
     when (this) {
@@ -804,6 +1067,18 @@ private fun NowPlayingVisualizerPreset.backgroundColors(): List<Color> =
         NowPlayingVisualizerPreset.VortexSpectrum -> listOf(Color(0xFF0A0A0A), Color(0xFF000000), Color(0xFF000000))
         NowPlayingVisualizerPreset.ClassicEQ -> listOf(Color(0xFF0F0F0F), Color(0xFF050505), Color(0xFF000000))
         NowPlayingVisualizerPreset.HaloSpectrum -> listOf(Color(0xFF1A1A24), Color(0xFF08080C), Color(0xFF05050A))
+        NowPlayingVisualizerPreset.WireframeSpectrum3D -> listOf(Color.Black, Color.Black)
+        NowPlayingVisualizerPreset.CanyonWire3D,
+        NowPlayingVisualizerPreset.PulseTunnel3D,
+        NowPlayingVisualizerPreset.OrbitalHalo3D,
+        NowPlayingVisualizerPreset.SpiralGalaxy3D,
+        NowPlayingVisualizerPreset.AuroraRibbon3D,
+        NowPlayingVisualizerPreset.CrystalPeaks3D,
+        NowPlayingVisualizerPreset.PrismFan3D,
+        NowPlayingVisualizerPreset.WaveRibbon3D,
+        NowPlayingVisualizerPreset.KaleidoscopeWeb3D,
+        NowPlayingVisualizerPreset.StarfieldWeb3D,
+        -> listOf(Color.Black, Color.Black)
         NowPlayingVisualizerPreset.Artwork -> listOf(Color.Transparent, Color.Transparent)
     }
 
@@ -833,7 +1108,40 @@ private fun NowPlayingVisualizerPreset.visualColors(): List<Color> =
         NowPlayingVisualizerPreset.VortexSpectrum -> listOf(Color.White)
         NowPlayingVisualizerPreset.ClassicEQ -> listOf(Color(0xFF00FF00), Color(0xFFFFFF00), Color(0xFFFF0000))
         NowPlayingVisualizerPreset.HaloSpectrum -> listOf(Color.White)
+        NowPlayingVisualizerPreset.WireframeSpectrum3D -> listOf(
+            Color(0xFF00FF2F),
+            Color(0xFF4DABF7),
+            Color(0xFFA889FF),
+            Color(0xFFFF8E8E),
+        )
+        NowPlayingVisualizerPreset.CanyonWire3D -> listOf(Color(0xFF8CE99A), Color(0xFF74C0FC), Color(0xFFFF8787))
+        NowPlayingVisualizerPreset.PulseTunnel3D -> listOf(Color(0xFF66D9E8), Color(0xFFA889FF), Color(0xFFFFD43B))
+        NowPlayingVisualizerPreset.OrbitalHalo3D -> listOf(Color(0xFFFFFFFF), Color(0xFF91A7FF), Color(0xFFFFA8A8))
+        NowPlayingVisualizerPreset.SpiralGalaxy3D -> listOf(Color(0xFFB197FC), Color(0xFF63E6BE), Color(0xFFFFD43B))
+        NowPlayingVisualizerPreset.AuroraRibbon3D -> listOf(Color(0xFF69DB7C), Color(0xFF66D9E8), Color(0xFFE599F7))
+        NowPlayingVisualizerPreset.CrystalPeaks3D -> listOf(Color(0xFFA5D8FF), Color(0xFFFFFFFF), Color(0xFFB2F2BB))
+        NowPlayingVisualizerPreset.PrismFan3D -> listOf(Color(0xFFFFD43B), Color(0xFFFF8787), Color(0xFF74C0FC))
+        NowPlayingVisualizerPreset.WaveRibbon3D -> listOf(Color(0xFF74C0FC), Color(0xFF63E6BE), Color(0xFFA889FF))
+        NowPlayingVisualizerPreset.KaleidoscopeWeb3D -> listOf(Color(0xFF00FF2F), Color(0xFFFFD43B), Color(0xFFFF8E8E))
+        NowPlayingVisualizerPreset.StarfieldWeb3D -> listOf(Color(0xFFFFFFFF), Color(0xFF91A7FF), Color(0xFF66D9E8))
         NowPlayingVisualizerPreset.Artwork -> listOf(Color(0xFF74C0FC))
+    }
+
+private fun NowPlayingVisualizerPreset.isFilament3DVisualizer(): Boolean =
+    when (this) {
+        NowPlayingVisualizerPreset.WireframeSpectrum3D,
+        NowPlayingVisualizerPreset.CanyonWire3D,
+        NowPlayingVisualizerPreset.PulseTunnel3D,
+        NowPlayingVisualizerPreset.OrbitalHalo3D,
+        NowPlayingVisualizerPreset.SpiralGalaxy3D,
+        NowPlayingVisualizerPreset.AuroraRibbon3D,
+        NowPlayingVisualizerPreset.CrystalPeaks3D,
+        NowPlayingVisualizerPreset.PrismFan3D,
+        NowPlayingVisualizerPreset.WaveRibbon3D,
+        NowPlayingVisualizerPreset.KaleidoscopeWeb3D,
+        NowPlayingVisualizerPreset.StarfieldWeb3D,
+        -> true
+        else -> false
     }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -845,6 +1153,11 @@ private fun AudioAnalysisFrame.band(index: Int): Float {
 private fun sinF(value: Float): Float = sin(value.toDouble()).toFloat()
 
 private fun cosF(value: Float): Float = cos(value.toDouble()).toFloat()
+
+private fun wrapFullTurn(value: Float): Float {
+    val wrapped = value % FullTurn
+    return if (wrapped < 0f) wrapped + FullTurn else wrapped
+}
 
 private fun Int.floorMod(divisor: Int): Int =
     ((this % divisor) + divisor) % divisor

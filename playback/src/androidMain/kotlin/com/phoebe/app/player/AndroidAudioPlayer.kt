@@ -396,13 +396,7 @@ class AndroidAudioPlayer(
     }
 
     override fun applyEqualizer(profile: EqualizerProfile) {
-        val normalized = profile.normalized()
-        AndroidEqualizerState.profile = normalized
-        scope.launch {
-            AndroidPlaybackBridge.servicePlayer?.applyPhoebeAudioOffloadPreference(normalized)
-            crossfadePlayer?.applyPhoebeAudioOffloadPreference(normalized)
-            crossfadeIncomingPlayer?.applyPhoebeAudioOffloadPreference(normalized)
-        }
+        AndroidEqualizerState.profile = profile.normalized()
     }
 
     override fun startCrossfadeOnPlatform(
@@ -438,6 +432,7 @@ class AndroidAudioPlayer(
                     val incomingPlayer = AndroidPlaybackDiagnostics.newPlayerBuilder(appContext, PlaybackEnginePath.Media3Crossfade)
                         .setAudioAttributes(AudioAttributes.DEFAULT, /* handleAudioFocus= */ false)
                         .build()
+                        .also { it.applyPhoebeAudioOffloadPreference() }
                     incomingPlayer.volume = 0f
                     incomingPlayer.setMediaItem(playbackMediaItem(track, inAppPlayback = true))
                     crossfadeIncomingPlayer = incomingPlayer

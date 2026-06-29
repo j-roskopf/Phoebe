@@ -80,10 +80,10 @@ class AppSettingsRepositoryDesktopTest {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d
 
-        AppSettingsRepository(db).setNowPlayingVisualizerPreset(NowPlayingVisualizerPreset.Alchemy)
+        AppSettingsRepository(db).setNowPlayingVisualizerPreset(NowPlayingVisualizerPreset.WireframeSpectrum3D)
         val restored = AppSettingsRepository(db).apply { restore() }
 
-        assertEquals(NowPlayingVisualizerPreset.Alchemy, restored.settings.value.nowPlayingVisualizerPreset)
+        assertEquals(NowPlayingVisualizerPreset.WireframeSpectrum3D, restored.settings.value.nowPlayingVisualizerPreset)
     }
 
     @Test
