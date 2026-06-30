@@ -553,7 +553,7 @@ internal fun radioMapHtml(
 
 internal fun Set<String>.toRadioMapStartingIdsJson(): String =
     joinToString(prefix = "[", postfix = "]", separator = ",") { id ->
-        """"${id.escapeJs()}""""
+        "\"${id.escapeJs()}\""
     }
 
 internal fun List<RadioMapItem>.toRadioMapMarkerJson(
