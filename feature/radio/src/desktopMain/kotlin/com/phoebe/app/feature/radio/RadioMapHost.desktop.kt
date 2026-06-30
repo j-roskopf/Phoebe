@@ -141,12 +141,12 @@ internal actual fun radioMapGoogleMapsApiKey(): String? =
     if (System.getProperty("org.gradle.test.worker") != null) {
         null
     } else {
-        RadioMapBuildConfig.googleMapsDesktopApiKey.takeIf { it.isNotBlank() }
-            ?: RadioMapBuildConfig.googleMapsWebApiKey.takeIf { it.isNotBlank() }
-            ?: RadioMapBuildConfig.googleMapsApiKey.takeIf { it.isNotBlank() }
-            ?: System.getenv("PHOEBE_GOOGLE_MAPS_DESKTOP_API_KEY")?.takeIf { it.isNotBlank() }
+        System.getenv("PHOEBE_GOOGLE_MAPS_DESKTOP_API_KEY")?.takeIf { it.isNotBlank() }
+            ?: RadioMapBuildConfig.googleMapsDesktopApiKey.takeIf { it.isNotBlank() }
             ?: System.getenv("PHOEBE_GOOGLE_MAPS_WEB_API_KEY")?.takeIf { it.isNotBlank() }
+            ?: RadioMapBuildConfig.googleMapsWebApiKey.takeIf { it.isNotBlank() }
             ?: System.getenv("PHOEBE_GOOGLE_MAPS_API_KEY")?.takeIf { it.isNotBlank() }
+            ?: RadioMapBuildConfig.googleMapsApiKey.takeIf { it.isNotBlank() }
     }
 
 internal actual fun radioMapUsesExternalBrowser(): Boolean = !desktopRadioMapInlineBrowserEnabled()
@@ -416,6 +416,11 @@ private class DesktopRadioMapChromiumHolder(
                         line: Int,
                     ): Boolean {
                         log("console [$level] $source:$line $message")
+                        if (message.contains("Google Maps JavaScript API error", ignoreCase = true)) {
+                            showFallback(
+                                "Google Maps rejected the desktop map key. Check API restrictions, billing, and allow http://127.0.0.1:*/* for the desktop key.",
+                            )
+                        }
                         return false
                     }
                 },

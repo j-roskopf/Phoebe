@@ -195,6 +195,8 @@ phoebe.googleMaps.desktopApiKey=your-desktop-key
 phoebe.googleMaps.webApiKey=your-web-key
 ```
 
+The desktop map serves its embedded browser from a random local `127.0.0.1` port. If your desktop key uses HTTP referrer restrictions, allow `http://127.0.0.1:*/*` in Google Cloud Console and enable the Maps JavaScript API for that key.
+
 You can also pass keys with environment variables for a single shell session:
 
 ```bash
@@ -205,7 +207,7 @@ export PHOEBE_GOOGLE_MAPS_DESKTOP_API_KEY=your-desktop-key
 export PHOEBE_GOOGLE_MAPS_WEB_API_KEY=your-web-key
 ```
 
-Platform-specific keys take precedence over the shared `phoebe.googleMaps.apiKey` / `PHOEBE_GOOGLE_MAPS_API_KEY` fallback. Keep these values out of git; release keys are configured separately as GitHub secrets in [docs/github-actions.md](docs/github-actions.md).
+Platform-specific keys take precedence over the shared `phoebe.googleMaps.apiKey` / `PHOEBE_GOOGLE_MAPS_API_KEY` fallback. Desktop environment variables are checked before build-time keys so you can override a packaged/local key for one run. Keep these values out of git; release keys are configured separately as GitHub secrets in [docs/github-actions.md](docs/github-actions.md).
 
 **iOS debug build:**
 
