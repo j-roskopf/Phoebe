@@ -16,6 +16,7 @@ import java.awt.BorderLayout
 import java.awt.Component
 import java.awt.Desktop
 import java.io.File
+import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.URI
 import java.net.URLDecoder
@@ -171,7 +172,7 @@ private class DesktopRadioMapBrowserServer(
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "Phoebe-radio-map-browser").apply { isDaemon = true }
     }
-    private val server: HttpServer = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+    private val server: HttpServer = createDesktopRadioMapServer()
     val url: String = "http://127.0.0.1:${server.address.port}/radio-map"
 
     @Volatile
@@ -355,6 +356,27 @@ private class DesktopRadioMapExternalLauncherPanel(
     }
 }
 
+private const val PreferredDesktopRadioMapPort = 41473
+
+private fun createDesktopRadioMapServer(): HttpServer =
+    try {
+        HttpServer.create(InetSocketAddress("127.0.0.1", PreferredDesktopRadioMapPort), 0)
+    } catch (_: IOException) {
+        HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+    }
+
+private fun desktopRadioMapReferrerInstruction(url: String): String {
+    val port = runCatching { URI(url).port }
+        .getOrDefault(PreferredDesktopRadioMapPort)
+        .takeIf { it > 0 }
+        ?: PreferredDesktopRadioMapPort
+    return if (port == PreferredDesktopRadioMapPort) {
+        "allow 127.0.0.1:$port/*"
+    } else {
+        "allow 127.0.0.1:$port/*, or free port $PreferredDesktopRadioMapPort and restart Phoebe to use the stable desktop map port"
+    }
+}
+
 private class DesktopRadioMapChromiumHolder(
     initialUrl: String,
     private val onOpenExternal: () -> Unit,
@@ -417,8 +439,9 @@ private class DesktopRadioMapChromiumHolder(
                     ): Boolean {
                         log("console [$level] $source:$line $message")
                         if (message.contains("Google Maps JavaScript API error", ignoreCase = true)) {
+                            val referrerInstruction = desktopRadioMapReferrerInstruction(loadedUrl ?: pendingUrl)
                             showFallback(
-                                "Google Maps rejected the desktop map key. Check API restrictions, billing, and allow http://127.0.0.1:*/* for the desktop key.",
+                                "Google Maps rejected the desktop map key. Use Website restrictions, not IP address restrictions, and $referrerInstruction for the desktop key.",
                             )
                         }
                         return false

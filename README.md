@@ -195,7 +195,7 @@ phoebe.googleMaps.desktopApiKey=your-desktop-key
 phoebe.googleMaps.webApiKey=your-web-key
 ```
 
-The desktop map serves its embedded browser from a random local `127.0.0.1` port. If your desktop key uses HTTP referrer restrictions, allow `http://127.0.0.1:*/*` in Google Cloud Console and enable the Maps JavaScript API for that key.
+The desktop map serves its embedded browser from `127.0.0.1:41473` when that port is available. In Google Cloud Console, set the desktop key's application restriction to **Websites** / HTTP referrers, not **IP addresses**, then allow `127.0.0.1:41473/*` and enable the Maps JavaScript API for that key. IP address restrictions only accept CIDR addresses and cannot include the port or path used by the desktop map. If another process already has port `41473`, Phoebe falls back to a random free port; close the other process and restart Phoebe to use the restricted desktop key.
 
 You can also pass keys with environment variables for a single shell session:
 
