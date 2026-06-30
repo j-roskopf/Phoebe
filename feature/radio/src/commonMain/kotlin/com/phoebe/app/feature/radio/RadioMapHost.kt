@@ -14,6 +14,7 @@ import kotlin.math.sin
 internal expect fun RadioMapHost(
     items: List<RadioMapItem>,
     selectedItem: RadioMapItem?,
+    startingStationIds: Set<String>,
     mapLoading: Boolean,
     markerTintColor: Color,
     googleMapsApiKey: String?,
@@ -61,11 +62,13 @@ internal fun radioMapHtml(
     desktopBridgeBaseUrl: String? = null,
     useLightTheme: Boolean = false,
     mapLoading: Boolean = false,
+    startingStationIds: Set<String> = emptySet(),
 ): String {
     val markerJson = items.toRadioMapMarkerJson(prefix = "", postfix = "")
     val selected = selectedItem
         ?.let { """"${it.id.escapeJs()}"""" }
         ?: "null"
+    val startingIdsJson = startingStationIds.toRadioMapStartingIdsJson()
     val desktopBridge = desktopBridgeBaseUrl
         ?.let { """"${it.trimEnd('/').escapeJs()}"""" }
         ?: "null"
@@ -166,10 +169,29 @@ internal fun radioMapHtml(
               font: 800 12px system-ui, -apple-system, sans-serif;
               cursor: pointer;
             }
+            #selection button[disabled] {
+              cursor: default;
+              opacity: 0.92;
+            }
             #selection button.secondary {
               color: var(--phoebe-map-popup-secondary);
               background: var(--phoebe-map-popup-secondary-action);
             }
+            #selectionPlaySpinner {
+              display: none;
+              width: 11px;
+              height: 11px;
+              border-radius: 50%;
+              border: 2px solid rgba(7, 17, 30, 0.24);
+              border-top-color: var(--phoebe-map-popup-action-text);
+              animation: phoebe-radio-map-spin 0.8s linear infinite;
+            }
+            #selectionPlay[data-starting="true"] {
+              display: inline-flex;
+              align-items: center;
+              gap: 6px;
+            }
+            #selectionPlay[data-starting="true"] #selectionPlaySpinner { display: inline-block; }
             @media (min-width: 560px) {
               #selection {
                 left: 12px;
@@ -182,6 +204,7 @@ internal fun radioMapHtml(
           <script>
             const markers = [$markerJson];
             const selectedId = $selected;
+            const initialStartingStationIds = new Set($startingIdsJson);
             const initialSearchLoading = $mapLoading;
             const markerTint = '${markerTintCssHex.escapeJs()}';
             const mapTheme = '$mapTheme';
@@ -206,6 +229,7 @@ internal fun radioMapHtml(
             let clusterer = null;
             let sourceMarkers = markers;
             let sourceSelectedId = selectedId;
+            let sourceStartingStationIds = initialStartingStationIds;
             let selectedStationForAction = null;
             let searchLoadingFallback = null;
             const desktopBridgeBaseUrl = $desktopBridge;
@@ -230,6 +254,27 @@ internal fun radioMapHtml(
               const pieces = [station.country, station.language, station.codec].filter((value) => value && String(value).trim().length > 0);
               return pieces.length > 0 ? pieces.join(' · ') : (station.approximate ? 'Approximate country location' : 'Station location');
             };
+            const setSelectionStarting = (starting) => {
+              const playButton = document.getElementById('selectionPlay');
+              const playLabel = document.getElementById('selectionPlayLabel');
+              const subLabel = document.getElementById('selectionSub');
+              if (playButton) {
+                playButton.dataset.starting = String(starting);
+                playButton.disabled = Boolean(starting);
+              }
+              if (playLabel) playLabel.textContent = starting ? 'Starting' : 'Play';
+              if (subLabel && selectedStationForAction) {
+                subLabel.textContent = starting
+                  ? 'Starting stream...'
+                  : (selectedStationForAction.subtitle || (selectedStationForAction.approximate ? 'Approximate location' : 'Ready to play'));
+              }
+            };
+            window.setRadioMapStartingStationIds = (ids) => {
+              sourceStartingStationIds = new Set(Array.isArray(ids) ? ids.map(String) : []);
+              if (selectedStationForAction) {
+                setSelectionStarting(sourceStartingStationIds.has(String(selectedStationForAction.id)));
+              }
+            };
             const showSelection = (station) => {
               selectedStationForAction = station;
               const selection = document.getElementById('selection');
@@ -237,6 +282,7 @@ internal fun radioMapHtml(
               document.getElementById('selectionName').textContent = station.name || 'Radio station';
               document.getElementById('selectionMeta').textContent = stationMeta(station);
               document.getElementById('selectionSub').textContent = station.subtitle || (station.approximate ? 'Approximate location' : 'Ready to play');
+              setSelectionStarting(sourceStartingStationIds.has(String(station.id)));
               selection.style.display = 'block';
             };
             window.dismissRadioMapSelection = () => {
@@ -247,13 +293,14 @@ internal fun radioMapHtml(
             window.playSelectedRadioMapStation = () => {
               const station = selectedStationForAction;
               if (!station) return;
+              window.setRadioMapStartingStationIds([station.id]);
               if (window.parent && window.parent !== window) {
                 postMapMessage('playItem', station.id, null, null);
               } else {
                 window.PhoebeRadioMap?.playItem?.(station.id);
               }
               postDesktopBridge('play', station.id, null, null);
-              setStatus('Playing ' + (station.name || 'radio station') + '.', true);
+              setStatus('Starting ' + (station.name || 'radio station') + '.', true);
             };
             const currentViewportPayload = () => {
               if (!map || !map.getBounds) return null;
@@ -453,17 +500,21 @@ internal fun radioMapHtml(
                 const parentMap = window.parent && window.parent.PhoebeRadioMap;
                 let markersToLoad = markers;
                 let selectedIdToLoad = selectedId;
+                let startingIdsToLoad = initialStartingStationIds;
                 if (window.PhoebeRadioMapLatest && window.PhoebeRadioMapLatest.markers) {
                   markersToLoad = window.PhoebeRadioMapLatest.markers;
                   selectedIdToLoad = window.PhoebeRadioMapLatest.selectedId;
+                  startingIdsToLoad = new Set(window.PhoebeRadioMapLatest.startingIds || []);
                 }
                 if (parentMap && parentMap.getLatestData) {
                   const latest = parentMap.getLatestData();
                   if (latest && latest.markers) {
                     markersToLoad = latest.markers;
                     selectedIdToLoad = latest.selectedId;
+                    startingIdsToLoad = new Set(latest.startingIds || []);
                   }
                 }
+                window.setRadioMapStartingStationIds(Array.from(startingIdsToLoad));
                 window.updateRadioMapMarkers(markersToLoad, selectedIdToLoad);
                 window.setRadioMapSearchLoading(initialSearchLoading);
               } catch (error) {
@@ -488,7 +539,10 @@ internal fun radioMapHtml(
               <div id="selectionSub">Ready to play</div>
             </div>
             <div id="selectionActions">
-              <button type="button" onclick="window.playSelectedRadioMapStation()">Play</button>
+              <button id="selectionPlay" type="button" onclick="window.playSelectedRadioMapStation()">
+                <span id="selectionPlaySpinner"></span>
+                <span id="selectionPlayLabel">Play</span>
+              </button>
               <button class="secondary" type="button" onclick="window.dismissRadioMapSelection()">Close</button>
             </div>
           </div>
@@ -496,6 +550,11 @@ internal fun radioMapHtml(
         </html>
     """.trimIndent()
 }
+
+internal fun Set<String>.toRadioMapStartingIdsJson(): String =
+    joinToString(prefix = "[", postfix = "]", separator = ",") { id ->
+        """"${id.escapeJs()}""""
+    }
 
 internal fun List<RadioMapItem>.toRadioMapMarkerJson(
     prefix: String = "[",

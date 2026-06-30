@@ -44,6 +44,7 @@ import org.cef.handler.CefLoadHandlerAdapter
 internal actual fun RadioMapHost(
     items: List<RadioMapItem>,
     selectedItem: RadioMapItem?,
+    startingStationIds: Set<String>,
     mapLoading: Boolean,
     markerTintColor: Color,
     googleMapsApiKey: String?,
@@ -100,11 +101,11 @@ internal actual fun RadioMapHost(
             modifier = modifier,
             factory = {
                 DesktopRadioMapExternalLauncherPanel(onOpenExternal = { server.openInBrowser() }).also {
-                    server.update(items, selectedItem = null, mapLoading = mapLoading)
+                    server.update(items, selectedItem = null, startingStationIds = startingStationIds, mapLoading = mapLoading)
                 }
             },
             update = {
-                server.update(items, selectedItem = null, mapLoading = mapLoading)
+                server.update(items, selectedItem = null, startingStationIds = startingStationIds, mapLoading = mapLoading)
             },
         )
         return
@@ -125,12 +126,12 @@ internal actual fun RadioMapHost(
         modifier = modifier,
         factory = {
             browserHolder.panel.also {
-                val snapshot = server.update(items, selectedItem, mapLoading)
+                val snapshot = server.update(items, selectedItem, startingStationIds, mapLoading)
                 browserHolder.update(snapshot)
             }
         },
         update = {
-            val snapshot = server.update(items, selectedItem, mapLoading)
+            val snapshot = server.update(items, selectedItem, startingStationIds, mapLoading)
             browserHolder.update(snapshot)
         },
     )
@@ -180,6 +181,9 @@ private class DesktopRadioMapBrowserServer(
     private var selectedItem: RadioMapItem? = null
 
     @Volatile
+    private var startingStationIds: Set<String> = emptySet()
+
+    @Volatile
     private var mapLoading: Boolean = false
 
     @Volatile
@@ -204,17 +208,24 @@ private class DesktopRadioMapBrowserServer(
         server.start()
     }
 
-    fun update(items: List<RadioMapItem>, selectedItem: RadioMapItem?, mapLoading: Boolean): DesktopRadioMapSnapshot {
+    fun update(
+        items: List<RadioMapItem>,
+        selectedItem: RadioMapItem?,
+        startingStationIds: Set<String>,
+        mapLoading: Boolean,
+    ): DesktopRadioMapSnapshot {
         if (items != this.items) {
             revision += 1
         }
         this.items = items
         this.selectedItem = selectedItem
+        this.startingStationIds = startingStationIds
         this.mapLoading = mapLoading
         return DesktopRadioMapSnapshot(
             url = cacheBustedUrl,
             markersJson = items.toRadioMapMarkerJson(),
             selectedId = selectedItem?.id,
+            startingIdsJson = startingStationIds.toRadioMapStartingIdsJson(),
             mapLoading = mapLoading,
         )
     }
@@ -235,6 +246,7 @@ private class DesktopRadioMapBrowserServer(
         radioMapHtml(
             items = items,
             selectedItem = selectedItem,
+            startingStationIds = startingStationIds,
             mapLoading = mapLoading,
             googleMapsApiKey = googleMapsApiKey,
             markerTintCssHex = markerTintCssHex,
@@ -293,22 +305,28 @@ private data class DesktopRadioMapSnapshot(
     val url: String,
     val markersJson: String,
     val selectedId: String?,
+    val startingIdsJson: String,
     val mapLoading: Boolean,
 )
 
 private fun DesktopRadioMapSnapshot.toJavaScript(): String {
     val markerPayload = markersJson.escapeJs()
     val selected = selectedId?.let { """"${it.escapeJs()}"""" } ?: "null"
+    val startingIdsPayload = startingIdsJson.escapeJs()
     return """
         (function() {
           const markers = JSON.parse("$markerPayload");
           const selectedId = $selected;
-          window.PhoebeRadioMapLatest = { markers: markers, selectedId: selectedId };
+          const startingIds = JSON.parse("$startingIdsPayload");
+          window.PhoebeRadioMapLatest = { markers: markers, selectedId: selectedId, startingIds: startingIds };
           if (window.updateRadioMapMarkers) {
             window.updateRadioMapMarkers(markers, selectedId);
           }
           if (window.setRadioMapSearchLoading) {
             window.setRadioMapSearchLoading($mapLoading);
+          }
+          if (window.setRadioMapStartingStationIds) {
+            window.setRadioMapStartingStationIds(startingIds);
           }
         })();
     """.trimIndent()

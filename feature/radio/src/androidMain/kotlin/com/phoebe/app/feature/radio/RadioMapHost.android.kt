@@ -39,6 +39,7 @@ import com.google.maps.android.clustering.view.DefaultClusterRenderer
 internal actual fun RadioMapHost(
     items: List<RadioMapItem>,
     selectedItem: RadioMapItem?,
+    startingStationIds: Set<String>,
     mapLoading: Boolean,
     markerTintColor: Color,
     googleMapsApiKey: String?,

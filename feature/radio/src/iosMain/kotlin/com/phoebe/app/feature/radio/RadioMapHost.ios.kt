@@ -17,6 +17,7 @@ import kotlinx.cinterop.ExperimentalForeignApi
 internal actual fun RadioMapHost(
     items: List<RadioMapItem>,
     selectedItem: RadioMapItem?,
+    startingStationIds: Set<String>,
     mapLoading: Boolean,
     markerTintColor: Color,
     googleMapsApiKey: String?,

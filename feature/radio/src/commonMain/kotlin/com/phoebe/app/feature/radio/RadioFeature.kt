@@ -833,6 +833,7 @@ private fun RadioMapRoute(
                     RadioMapHost(
                         items = items,
                         selectedItem = if (externalBrowserMap) null else selectedItem,
+                        startingStationIds = startingStationIds,
                         mapLoading = directory.globeLoading,
                         markerTintColor = PhoebeUi.accentLight,
                         googleMapsApiKey = radioMapGoogleMapsApiKey(),
@@ -912,6 +913,7 @@ private fun RadioMapRoute(
             RadioMapHost(
                 items = items,
                 selectedItem = selectedItem,
+                startingStationIds = startingStationIds,
                 mapLoading = directory.globeLoading,
                 markerTintColor = PhoebeUi.accentLight,
                 googleMapsApiKey = radioMapGoogleMapsApiKey(),

@@ -439,7 +439,18 @@ compose.desktop {
         nativeDistributions {
             appResourcesRootDir.set(macMediaKeysAppResources)
             targetFormats(TargetFormat.Dmg, TargetFormat.Pkg, TargetFormat.Msi, TargetFormat.Deb)
-            modules("java.desktop", "java.instrument", "java.logging", "java.management", "java.net.http", "java.sql", "java.xml", "jdk.jfr", "jdk.unsupported")
+            modules(
+                "java.desktop",
+                "java.instrument",
+                "java.logging",
+                "java.management",
+                "java.net.http",
+                "java.sql",
+                "java.xml",
+                "jdk.httpserver",
+                "jdk.jfr",
+                "jdk.unsupported",
+            )
             packageName = if (phoebeDebugDistribution.get()) "Phoebe Debug" else "Phoebe"
             packageVersion = phoebeVersionName.get()
             val iconsDir = project.layout.projectDirectory.dir(
