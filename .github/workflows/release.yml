@@ -533,7 +533,7 @@ jobs:
             echo "::error::Could not find macOS DMG artifact"
             exit 1
           fi
-          fixture="${PWD}/composeApp/src/commonTest/resources/test-audio/wikimedia-example.mp3"
+          fixture="${PWD}/composeApp/src/commonTest/resources/test-audio/wikimedia-example.wav"
           if [[ ! -f "${fixture}" ]]; then
             echo "::error::Missing playback smoke fixture: ${fixture}"
             exit 1
