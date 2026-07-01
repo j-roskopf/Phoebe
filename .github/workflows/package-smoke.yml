@@ -95,12 +95,17 @@ jobs:
           smoke_dir="${HOME}/Downloads/phoebe-smoke"
           mkdir -p "${smoke_dir}"
           cp composeApp/src/commonTest/resources/test-audio/wikimedia-example.mp3 "${smoke_dir}/wikimedia-example.mp3"
+          cp composeApp/src/commonTest/resources/test-audio/wikimedia-example.ogg "${smoke_dir}/wikimedia-example.ogg"
           if [[ -f composeApp/src/commonTest/resources/test-audio/wikimedia-example.wav ]]; then
             cp composeApp/src/commonTest/resources/test-audio/wikimedia-example.wav "${smoke_dir}/wikimedia-example.wav"
           fi
+          smoke_fixture="${smoke_dir}/wikimedia-example.mp3"
+          if [[ "${RUNNER_OS}" == "macOS" ]]; then
+            smoke_fixture="${smoke_dir}/wikimedia-example.ogg"
+          fi
           {
             echo "PHOEBE_SMOKE_DIR=${smoke_dir}"
-            echo "PHOEBE_SMOKE_FIXTURE=${smoke_dir}/wikimedia-example.mp3"
+            echo "PHOEBE_SMOKE_FIXTURE=${smoke_fixture}"
             echo "PHOEBE_FLATPAK_SMOKE_FIXTURE=${smoke_dir}/wikimedia-example.wav"
           } >> "${GITHUB_ENV}"
 
