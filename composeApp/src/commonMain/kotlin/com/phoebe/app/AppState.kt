@@ -117,6 +117,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class PendingDuplicatePlaylistAdd(
     val playlist: Playlist,
@@ -1637,17 +1638,17 @@ class AppState(
 
     fun playPopularMix() = scope.launch {
         val popularPool = runCatching {
-            withTimeout(MixProviderLoadTimeoutMs) {
+            withTimeoutOrNull(MixProviderLoadTimeoutMs) {
                 dependencies.catalogRepository.popularSongsForLibrary(
                     session = session.value,
                     limit = PopularMixTrackLimit,
                 )
             }
         }.getOrElse { error ->
-            if (error is CancellationException && error !is TimeoutCancellationException) throw error
+            if (error is CancellationException) throw error
             PhoebeLog.d("AppState") { "popular mix provider load failed: ${error.message}" }
-            emptyList()
-        }
+            null
+        }.orEmpty()
         if (popularPool.isEmpty()) {
             mutableMessage.value = "No popular songs found yet."
             return@launch
@@ -1668,17 +1669,17 @@ class AppState(
         val cachedPool = dependencies.catalogRepository.cachedPopularTracksForLibrary(currentSession)
         val topTracksPool = cachedPool.takeIf { it.isNotEmpty() }
             ?: runCatching {
-                withTimeout(MixProviderLoadTimeoutMs) {
+                withTimeoutOrNull(MixProviderLoadTimeoutMs) {
                     dependencies.catalogRepository.popularSongsForLibrary(
                         session = currentSession,
                         limit = PopularMixTrackLimit,
                     )
                 }
             }.getOrElse { error ->
-                if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                if (error is CancellationException) throw error
                 PhoebeLog.d("AppState") { "top tracks mix quick provider load failed: ${error.message}" }
-                emptyList()
-            }
+                null
+            }.orEmpty()
         if (topTracksPool.isEmpty()) {
             mutableMessage.value = "No top tracks found yet."
             return@launch
