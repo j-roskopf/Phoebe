@@ -9,6 +9,9 @@ internal actual fun defaultArtworkDiskCacheBackend(): ArtworkDiskCacheBackend =
     AndroidArtworkDiskCacheBackend()
 
 private class AndroidArtworkDiskCacheBackend : ArtworkDiskCacheBackend {
+    @Volatile
+    private var lastTrimTimeMs = 0L
+
     private val root: File
         get() = AndroidContextHolder.application.cacheDir
             .resolve(ArtworkDiskCacheDirectory)
@@ -39,7 +42,11 @@ private class AndroidArtworkDiskCacheBackend : ArtworkDiskCacheBackend {
                     temp.delete()
                 }
                 target.setLastModified(System.currentTimeMillis())
-                trimToMaxBytes(directory)
+                val now = System.currentTimeMillis()
+                if (now - lastTrimTimeMs > TrimIntervalMs) {
+                    lastTrimTimeMs = now
+                    trimToMaxBytes(directory)
+                }
             } catch (error: Throwable) {
                 temp.delete()
                 throw error
@@ -80,3 +87,4 @@ private class AndroidArtworkDiskCacheBackend : ArtworkDiskCacheBackend {
 
 private const val ArtworkDiskCacheDirectory = "phoebe-artwork"
 private const val MaxArtworkDiskCacheBytes = 128L * 1024L * 1024L
+private const val TrimIntervalMs = 5L * 60L * 1000L

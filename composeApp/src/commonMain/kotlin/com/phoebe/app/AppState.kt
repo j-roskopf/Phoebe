@@ -1699,7 +1699,13 @@ class AppState(
             ?.takeIf { topTracksMixBuildSignature == signature && it.isActive }
             ?.let { return it }
         val deferred = scope.async {
-            dependencies.catalogRepository.popularTracksForLibrary(session)
+            runCatching {
+                dependencies.catalogRepository.popularTracksForLibrary(session)
+            }.getOrElse { error ->
+                if (error is CancellationException) throw error
+                PhoebeLog.d("AppState") { "top tracks mix provider load failed: ${error.message}" }
+                emptyList()
+            }
         }
         topTracksMixBuildSignature = signature
         topTracksMixBuildDeferred = deferred
@@ -1707,9 +1713,11 @@ class AppState(
             if (error != null && error !is CancellationException) {
                 PhoebeLog.d("AppState") { "top tracks mix provider load failed: ${error.message}" }
             }
-            if (topTracksMixBuildDeferred === deferred) {
-                topTracksMixBuildDeferred = null
-                topTracksMixBuildSignature = null
+            scope.launch {
+                if (topTracksMixBuildDeferred === deferred) {
+                    topTracksMixBuildDeferred = null
+                    topTracksMixBuildSignature = null
+                }
             }
         }
         return deferred

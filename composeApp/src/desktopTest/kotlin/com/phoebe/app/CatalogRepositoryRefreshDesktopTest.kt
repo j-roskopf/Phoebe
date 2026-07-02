@@ -31,6 +31,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
@@ -667,7 +668,7 @@ class CatalogRepositoryRefreshDesktopTest {
         )
 
         repo.refreshAggregated(testSession())
-        Thread.sleep(100)
+        delay(100)
 
         assertEquals(0, popularArtistRequests.get())
     }

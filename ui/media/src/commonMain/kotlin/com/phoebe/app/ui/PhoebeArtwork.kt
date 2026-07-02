@@ -146,7 +146,12 @@ private fun CoilArtworkImage(
     val painterState by painter.state.collectAsState()
 
     LaunchedEffect(painterState) {
-        if (painterState is AsyncImagePainter.State.Error && candidateIndex < candidates.lastIndex) {
+        val state = painterState
+        if (
+            state is AsyncImagePainter.State.Error &&
+            state.result.throwable !is CancellationException &&
+            candidateIndex < candidates.lastIndex
+        ) {
             candidateIndex += 1
         }
     }
