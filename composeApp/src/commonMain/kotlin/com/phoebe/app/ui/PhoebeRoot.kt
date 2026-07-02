@@ -971,7 +971,7 @@ private fun PhoebeRootStateHolder(
     LaunchedEffect(screen, browseSection, session?.selectedServer?.id, session?.selectedLibrary?.key) {
         if (screen == AppScreen.Home && browseSection == BrowseSection.Home) {
             delay(1_200L)
-            state.warmTopTracksMixTracks()
+            state.warmHomeMixStartupTracks()
         }
     }
     LaunchedEffect(screen, browseSection, topMostPlayed, topRecentlyPlayed, session?.selectedServer) {

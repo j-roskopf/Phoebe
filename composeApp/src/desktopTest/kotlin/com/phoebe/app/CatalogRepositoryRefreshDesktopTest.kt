@@ -644,6 +644,39 @@ class CatalogRepositoryRefreshDesktopTest {
     }
 
     @Test
+    fun popularSongsForLibraryHonorsSeedLimit() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        var capturedLimit: String? = null
+        var capturedContainerSize: String? = null
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/library/sections/1/all" -> {
+                    capturedLimit = request.url.parameters["limit"]
+                    capturedContainerSize = request.headers["X-Plex-Container-Size"]
+                    respondJson(popularTracksJson("t1" to "Library Top Seed Song"))
+                }
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val http = testHttpClient(engine)
+        val media = MediaSourcesRepository(db, PlatformStorage())
+        val repo = testCatalogRepository(
+            plexClient = PlexClient(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+
+        val tracks = repo.popularSongsForLibrary(testSession(), limit = 50)
+
+        assertEquals("50", capturedLimit)
+        assertEquals("50", capturedContainerSize)
+        assertEquals(listOf("plex:t1"), tracks.map { it.id })
+    }
+
+    @Test
     fun refreshAggregatedDoesNotWarmPopularMixArtistTracks() = runTest {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d

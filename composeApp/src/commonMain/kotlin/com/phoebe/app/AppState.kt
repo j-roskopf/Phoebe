@@ -314,6 +314,10 @@ class AppState(
     private var recentAlbumWarmSignature: String? = null
     private var playedAlbumWarmSignature: String? = null
     private var mostPlayedWarmSignature: String? = null
+    private var popularMixSeedSignature: String? = null
+    private var popularMixSeedTracks: List<Track> = emptyList()
+    private var popularMixSeedBuildSignature: String? = null
+    private var popularMixSeedBuildDeferred: Deferred<List<Track>>? = null
     private var topTracksMixWarmSignature: String? = null
     private var topTracksMixBuildSignature: String? = null
     private var topTracksMixBuildDeferred: Deferred<List<Track>>? = null
@@ -343,6 +347,7 @@ class AppState(
             lightweightRemoteSyncJob,
             downloadedArtworkCacheJob,
             artistDetailPreloadJob,
+            popularMixSeedBuildDeferred,
             topTracksMixBuildDeferred,
         ).forEach { it.cancel() }
         activeDownloadJobs.toList().forEach { it.cancel() }
@@ -353,6 +358,10 @@ class AppState(
         lightweightRemoteSyncJob = null
         downloadedArtworkCacheJob = null
         artistDetailPreloadJob = null
+        popularMixSeedBuildDeferred = null
+        popularMixSeedBuildSignature = null
+        popularMixSeedSignature = null
+        popularMixSeedTracks = emptyList()
         topTracksMixBuildDeferred = null
         topTracksMixBuildSignature = null
         if (!closeDependenciesOnDispose) return
@@ -1602,6 +1611,27 @@ class AppState(
         }
     }
 
+    fun warmHomeMixStartupTracks() {
+        val currentSession = session.value
+        val plexSession = currentSession?.takeIf { it.isPlex() }
+        val signature = currentSession.topTracksMixSessionSignature()
+        if (plexSession != null &&
+            signature != null &&
+            (popularMixSeedSignature != signature || popularMixSeedTracks.isEmpty()) &&
+            !(popularMixSeedBuildSignature == signature && popularMixSeedBuildDeferred?.isActive == true)
+        ) {
+            scope.launch {
+                runCatching {
+                    startPopularMixSeedBuild(plexSession, signature).await()
+                }.onFailure { error ->
+                    if (error is CancellationException) throw error
+                    PhoebeLog.d("AppState") { "popular mix seed warm failed: ${error.message}" }
+                }
+            }
+        }
+        warmTopTracksMixTracks()
+    }
+
     fun playDecadeMix(decade: Int) = scope.launch {
         mutableDecadeMixNotice.value = "Searching the ${decade}s…"
         val firstTracks = runCatching {
@@ -1637,19 +1667,9 @@ class AppState(
     }
 
     fun playPopularMix() = scope.launch {
-        val popularPool = runCatching {
-            withTimeoutOrNull(MixProviderLoadTimeoutMs) {
-                dependencies.catalogRepository.popularSongsForLibrary(
-                    session = session.value,
-                    limit = PopularMixTrackLimit,
-                )
-            }
-        }.getOrElse { error ->
-            if (error is CancellationException) throw error
-            PhoebeLog.d("AppState") { "popular mix provider load failed: ${error.message}" }
-            null
-        }.orEmpty()
-        if (popularPool.isEmpty()) {
+        val seed = popularMixSeedForSession(session.value)
+        val popularPool = seed?.tracks.orEmpty()
+        if (seed == null || popularPool.isEmpty()) {
             mutableMessage.value = "No popular songs found yet."
             return@launch
         }
@@ -1661,25 +1681,15 @@ class AppState(
         if (playTracks(mix, 0)) {
             requestNavigation(AppNavigationRequest.Player)
             mutableMessage.value = "Playing ${mix.size} popular songs."
+            appendPopularMixRemainder(seed, mix)
         }
     }
 
     fun playTopTracksMix() = scope.launch {
         val currentSession = session.value
         val cachedPool = dependencies.catalogRepository.cachedPopularTracksForLibrary(currentSession)
-        val topTracksPool = cachedPool.takeIf { it.isNotEmpty() }
-            ?: runCatching {
-                withTimeoutOrNull(MixProviderLoadTimeoutMs) {
-                    dependencies.catalogRepository.popularSongsForLibrary(
-                        session = currentSession,
-                        limit = PopularMixTrackLimit,
-                    )
-                }
-            }.getOrElse { error ->
-                if (error is CancellationException) throw error
-                PhoebeLog.d("AppState") { "top tracks mix quick provider load failed: ${error.message}" }
-                null
-            }.orEmpty()
+        val seed = if (cachedPool.isEmpty()) popularMixSeedForSession(currentSession) else null
+        val topTracksPool = cachedPool.takeIf { it.isNotEmpty() } ?: seed?.tracks.orEmpty()
         if (topTracksPool.isEmpty()) {
             mutableMessage.value = "No top tracks found yet."
             return@launch
@@ -1692,8 +1702,122 @@ class AppState(
         if (playTracks(mix, 0)) {
             requestNavigation(AppNavigationRequest.Player)
             mutableMessage.value = "Playing ${mix.size} top tracks."
+            if (seed != null) {
+                appendTopTracksMixRemainder(seed, mix)
+            } else {
+                warmTopTracksMixTracks()
+            }
         }
-        warmTopTracksMixTracks()
+    }
+
+    private suspend fun popularMixSeedForSession(currentSession: PlexSession?): PopularMixSeed? {
+        val plexSession = currentSession?.takeIf { it.isPlex() } ?: return null
+        val signature = currentSession.topTracksMixSessionSignature() ?: return null
+        val cachedTracks = popularMixSeedTracks
+            .takeIf { popularMixSeedSignature == signature && it.isNotEmpty() }
+            ?: startPopularMixSeedBuild(plexSession, signature).await()
+        return PopularMixSeed(
+            session = plexSession,
+            signature = signature,
+            tracks = cachedTracks,
+        )
+    }
+
+    private fun startPopularMixSeedBuild(session: PlexSession, signature: String): Deferred<List<Track>> {
+        popularMixSeedBuildDeferred
+            ?.takeIf { popularMixSeedBuildSignature == signature && it.isActive }
+            ?.let { return it }
+        val deferred = scope.async {
+            val tracks = runCatching {
+                withTimeoutOrNull(MixProviderLoadTimeoutMs) {
+                    dependencies.catalogRepository.popularSongsForLibrary(
+                        session = session,
+                        limit = PopularMixSeedTrackLimit,
+                    )
+                }
+            }.getOrElse { error ->
+                if (error is CancellationException) throw error
+                PhoebeLog.d("AppState") { "popular mix seed provider load failed: ${error.message}" }
+                null
+            }.orEmpty()
+            if (tracks.isNotEmpty()) {
+                popularMixSeedSignature = signature
+                popularMixSeedTracks = tracks
+            } else if (popularMixSeedSignature == signature) {
+                popularMixSeedSignature = null
+                popularMixSeedTracks = emptyList()
+            }
+            tracks
+        }
+        popularMixSeedBuildSignature = signature
+        popularMixSeedBuildDeferred = deferred
+        deferred.invokeOnCompletion { error ->
+            if (error != null && error !is CancellationException) {
+                PhoebeLog.d("AppState") { "popular mix seed provider load failed: ${error.message}" }
+            }
+            scope.launch {
+                if (popularMixSeedBuildDeferred === deferred) {
+                    popularMixSeedBuildDeferred = null
+                    popularMixSeedBuildSignature = null
+                }
+            }
+        }
+        return deferred
+    }
+
+    private fun appendPopularMixRemainder(seed: PopularMixSeed, seedQueue: List<Track>) {
+        if (dependencies.castController.state.value.isPlaybackActive) return
+        scope.launch {
+            if (dependencies.castController.state.value.isPlaybackActive) return@launch
+            val fullPool = runCatching {
+                withTimeoutOrNull(MixProviderLoadTimeoutMs) {
+                    dependencies.catalogRepository.popularSongsForLibrary(
+                        session = seed.session,
+                        limit = PopularMixTrackLimit,
+                    )
+                }
+            }.getOrElse { error ->
+                if (error is CancellationException) throw error
+                PhoebeLog.d("AppState") { "popular mix provider load failed: ${error.message}" }
+                null
+            }.orEmpty()
+            appendMixRemainderIfActive(
+                signature = seed.signature,
+                seedQueue = seedQueue,
+                fullMix = fullPool.popularMixQueue(),
+            )
+        }
+    }
+
+    private fun appendTopTracksMixRemainder(seed: PopularMixSeed, seedQueue: List<Track>) {
+        if (dependencies.castController.state.value.isPlaybackActive) return
+        scope.launch {
+            if (dependencies.castController.state.value.isPlaybackActive) return@launch
+            val fullPool = dependencies.catalogRepository.cachedPopularTracksForLibrary(seed.session)
+                .takeIf { it.isNotEmpty() }
+                ?: startTopTracksMixBuild(seed.session, seed.signature).await()
+            appendMixRemainderIfActive(
+                signature = seed.signature,
+                seedQueue = seedQueue,
+                fullMix = fullPool.topTracksMixQueue(),
+            )
+        }
+    }
+
+    private fun appendMixRemainderIfActive(
+        signature: String,
+        seedQueue: List<Track>,
+        fullMix: List<Track>,
+    ) {
+        if (fullMix.isEmpty()) return
+        if (session.value.topTracksMixSessionSignature() != signature) return
+        if (dependencies.castController.state.value.isPlaybackActive) return
+        val current = dependencies.audioPlayer.state.value
+        if (!mixQueueStillActiveForAppend(current.queue, seedQueue, current.currentIndex)) return
+        val additions = mixAppendCandidates(fullMix, current.queue)
+        if (additions.isNotEmpty()) {
+            appendToQueue(additions)
+        }
     }
 
     private fun startTopTracksMixBuild(session: PlexSession, signature: String): Deferred<List<Track>> {
@@ -2913,6 +3037,11 @@ class AppState(
         mostPlayedWarmSignature = null
         recentAlbumWarmSignature = null
         playedAlbumWarmSignature = null
+        popularMixSeedSignature = null
+        popularMixSeedTracks = emptyList()
+        popularMixSeedBuildSignature = null
+        popularMixSeedBuildDeferred?.cancel()
+        popularMixSeedBuildDeferred = null
         topTracksMixWarmSignature = null
         topTracksMixBuildSignature = null
         topTracksMixBuildDeferred?.cancel()
@@ -3105,6 +3234,12 @@ private data class PlaybackHistoryRecord(
     val playedAtMs: Long = Long.MIN_VALUE,
 )
 
+private data class PopularMixSeed(
+    val session: PlexSession,
+    val signature: String,
+    val tracks: List<Track>,
+)
+
 internal fun List<Track>.popularMixQueue(random: Random = Random.Default): List<Track> =
     distinctBy { it.id }
         .chunked(PopularMixShuffleChunkSize)
@@ -3113,8 +3248,25 @@ internal fun List<Track>.popularMixQueue(random: Random = Random.Default): List<
 internal fun List<Track>.topTracksMixQueue(random: Random = Random.Default): List<Track> =
     distinctBy { it.id }.shuffled(random)
 
+internal fun mixQueueStillActiveForAppend(
+    currentQueue: List<Track>,
+    seedQueue: List<Track>,
+    currentIndex: Int,
+): Boolean {
+    if (seedQueue.isEmpty()) return false
+    if (currentIndex !in currentQueue.indices) return false
+    if (currentQueue.size < seedQueue.size) return false
+    return currentQueue.take(seedQueue.size).map { it.id } == seedQueue.map { it.id }
+}
+
+internal fun mixAppendCandidates(fullMix: List<Track>, existingQueue: List<Track>): List<Track> {
+    val existingIds = existingQueue.mapTo(mutableSetOf()) { it.id }
+    return fullMix.filter { existingIds.add(it.id) }
+}
+
 private const val PlaybackHistoryDedupeWindowMs = 30_000L
 
+private const val PopularMixSeedTrackLimit = 50
 private const val PopularMixTrackLimit = 500
 private const val PopularMixShuffleChunkSize = 50
 private const val MixProviderLoadTimeoutMs = 20_000L
