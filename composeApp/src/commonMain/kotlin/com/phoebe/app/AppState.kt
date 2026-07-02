@@ -1724,9 +1724,10 @@ class AppState(
     }
 
     private fun startPopularMixSeedBuild(session: PlexSession, signature: String): Deferred<List<Track>> {
-        popularMixSeedBuildDeferred
-            ?.takeIf { popularMixSeedBuildSignature == signature && it.isActive }
-            ?.let { return it }
+        popularMixSeedBuildDeferred?.let { active ->
+            if (popularMixSeedBuildSignature == signature && active.isActive) return active
+            if (active.isActive) active.cancel()
+        }
         val deferred = scope.async {
             val tracks = runCatching {
                 withTimeoutOrNull(MixProviderLoadTimeoutMs) {
@@ -3256,7 +3257,10 @@ internal fun mixQueueStillActiveForAppend(
     if (seedQueue.isEmpty()) return false
     if (currentIndex !in currentQueue.indices) return false
     if (currentQueue.size < seedQueue.size) return false
-    return currentQueue.take(seedQueue.size).map { it.id } == seedQueue.map { it.id }
+    for (index in seedQueue.indices) {
+        if (currentQueue[index].id != seedQueue[index].id) return false
+    }
+    return true
 }
 
 internal fun mixAppendCandidates(fullMix: List<Track>, existingQueue: List<Track>): List<Track> {
