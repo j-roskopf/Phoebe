@@ -2827,7 +2827,9 @@ class CatalogRepository(
         val pendingBatch = mutableListOf<Track>()
         val batchMutex = Mutex()
         val progressMutex = Mutex()
+        val incompleteMutex = Mutex()
         var loadedTrackEstimate = firstPage.tracks.size
+        var incomplete = false
 
         suspend fun flushBatch(publishToMemory: Boolean) {
             val batch = batchMutex.withLock {
@@ -2846,6 +2848,13 @@ class CatalogRepository(
                 pendingBatch.size >= TrackIndexPageSize
             }
             if (shouldFlush) flushBatch(publishToMemory = false)
+        }
+
+        suspend fun markIncomplete(start: Int, reason: String) {
+            incompleteMutex.withLock { incomplete = true }
+            PhoebeLog.d("CatalogRepository") {
+                "Plex track index incomplete at start=$start: $reason"
+            }
         }
 
         enqueueTracks(firstPage.tracks)
@@ -2893,8 +2902,16 @@ class CatalogRepository(
                         token = token,
                         start = offset,
                         size = pageSize,
-                    ) ?: continue
+                    )
+                    if (page == null) {
+                        markIncomplete(offset, "page unavailable")
+                        pageQueue.cancel()
+                        break
+                    }
                     if (page.tracks.isEmpty()) {
+                        if (totalTracks != null && offset < maxOffset) {
+                            markIncomplete(offset, "empty page before expected total")
+                        }
                         pageQueue.cancel()
                         break
                     }
@@ -2912,7 +2929,7 @@ class CatalogRepository(
         trace?.disk("hydrateInMemoryTracksFromDatabase") {
             hydrateInMemoryTracksFromDatabase(preserveFrom = preserveTracksFrom)
         } ?: hydrateInMemoryTracksFromDatabase(preserveFrom = preserveTracksFrom)
-        true
+        !incompleteMutex.withLock { incomplete }
     }
 
     private suspend fun plexTrackIndexPageOrNull(
@@ -2932,6 +2949,7 @@ class CatalogRepository(
                         token = token,
                         start = start,
                         size = size,
+                        timeoutMs = timeoutMs,
                     )
                 }.onFailure { error ->
                     if (error is CancellationException) throw error

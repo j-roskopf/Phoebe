@@ -478,10 +478,11 @@ class CatalogRepositoryRefreshDesktopTest {
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Test
-    fun refreshCompletesWhenPlexTrackPageHangs() = runTest {
+    fun refreshFallsBackToAlbumTracksWhenPlexTrackPageHangs() = runTest {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d
         val hungTrackPageStarted = CompletableDeferred<Unit>()
+        var albumTrackFallbackRequested = false
         val engine = MockEngine { request ->
             when (request.url.encodedPath) {
                 "/library/sections/1/all" -> if (request.url.parameters["type"] == "10") {
@@ -497,6 +498,10 @@ class CatalogRepositoryRefreshDesktopTest {
                     respondJson(artistsJson())
                 }
                 "/library/sections/1/albums" -> respondJson(albumsJson())
+                "/library/metadata/a1/children" -> {
+                    albumTrackFallbackRequested = true
+                    respondJson(albumTracksJson())
+                }
                 "/playlists" -> respondJson(playlistsJson(trackCount = 0))
                 else -> respond("", HttpStatusCode.NotFound)
             }
@@ -525,6 +530,7 @@ class CatalogRepositoryRefreshDesktopTest {
 
         assertFalse(repo.catalogRefreshing.value)
         assertEquals(CatalogSyncPhase.Complete, repo.catalogSyncState.value.phase)
+        assertTrue(albumTrackFallbackRequested)
         assertEquals(listOf("plex:t1"), repo.catalog.value.tracksByParent["plex:a1"].orEmpty().map { it.id })
     }
 

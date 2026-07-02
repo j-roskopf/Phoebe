@@ -16,6 +16,7 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
+import io.ktor.client.plugins.timeout
 import io.ktor.client.request.get
 import io.ktor.client.request.delete
 import io.ktor.client.request.header
@@ -889,9 +890,11 @@ class PlexClient(
         token: String,
         start: Int,
         size: Int,
+        timeoutMs: Long? = null,
     ): PlexTrackPage {
         val response: PlexMediaContainerResponse = withReachableBase(server) { base ->
             val response = httpClient.get("$base/library/sections/${library.key}/all") {
+                timeoutMs?.let { timeout { requestTimeoutMillis = it } }
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
                 header("X-Plex-Container-Start", start.toString())
