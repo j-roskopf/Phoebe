@@ -1581,13 +1581,15 @@ class AppState(
 
     fun warmTopTracksMixTracks() {
         val currentSession = session.value
-        if (!currentSession.isPlex()) return
+        val plexSession = currentSession?.takeIf { it.isPlex() } ?: return
         val signature = currentSession.topTracksMixSessionSignature() ?: return
         if (signature == topTracksMixWarmSignature) return
         topTracksMixWarmSignature = signature
         scope.launch {
             runCatching {
                 val tracks = dependencies.catalogRepository.cachedPopularTracksForLibrary(currentSession)
+                    .takeIf { it.isNotEmpty() }
+                    ?: startTopTracksMixBuild(plexSession, signature).await()
                 if (tracks.isEmpty()) {
                     topTracksMixWarmSignature = null
                 }
@@ -1635,12 +1637,14 @@ class AppState(
 
     fun playPopularMix() = scope.launch {
         val popularPool = runCatching {
-            dependencies.catalogRepository.popularSongsForLibrary(
-                session = session.value,
-                limit = PopularMixTrackLimit,
-            )
+            withTimeout(MixProviderLoadTimeoutMs) {
+                dependencies.catalogRepository.popularSongsForLibrary(
+                    session = session.value,
+                    limit = PopularMixTrackLimit,
+                )
+            }
         }.getOrElse { error ->
-            if (error is CancellationException) throw error
+            if (error is CancellationException && error !is TimeoutCancellationException) throw error
             PhoebeLog.d("AppState") { "popular mix provider load failed: ${error.message}" }
             emptyList()
         }
@@ -1662,21 +1666,18 @@ class AppState(
     fun playTopTracksMix() = scope.launch {
         val currentSession = session.value
         val cachedPool = dependencies.catalogRepository.cachedPopularTracksForLibrary(currentSession)
-        val signature = currentSession.topTracksMixSessionSignature()
         val topTracksPool = cachedPool.takeIf { it.isNotEmpty() }
-            ?: run {
-                val plexSession = currentSession?.takeIf { it.isPlex() } ?: return@run emptyList()
-                val buildSignature = signature ?: return@run emptyList()
-                val build = startTopTracksMixBuild(plexSession, buildSignature)
-                runCatching {
-                    build.await()
-                }.getOrElse { error ->
-                    if (error is CancellationException) throw error
-                    PhoebeLog.d("AppState") { "top tracks mix provider load failed: ${error.message}" }
-                    emptyList()
-                }.also { tracks ->
-                    if (tracks.isNotEmpty()) topTracksMixWarmSignature = buildSignature
+            ?: runCatching {
+                withTimeout(MixProviderLoadTimeoutMs) {
+                    dependencies.catalogRepository.popularSongsForLibrary(
+                        session = currentSession,
+                        limit = PopularMixTrackLimit,
+                    )
                 }
+            }.getOrElse { error ->
+                if (error is CancellationException && error !is TimeoutCancellationException) throw error
+                PhoebeLog.d("AppState") { "top tracks mix quick provider load failed: ${error.message}" }
+                emptyList()
             }
         if (topTracksPool.isEmpty()) {
             mutableMessage.value = "No top tracks found yet."
@@ -3115,6 +3116,7 @@ private const val PlaybackHistoryDedupeWindowMs = 30_000L
 
 private const val PopularMixTrackLimit = 500
 private const val PopularMixShuffleChunkSize = 50
+private const val MixProviderLoadTimeoutMs = 20_000L
 
 private const val PlayHistoryCatalogResolveTimeoutMs = 1_500L
 
