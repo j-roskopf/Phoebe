@@ -1302,11 +1302,18 @@ fun String.isEmbyFamilyArtworkUrl(): Boolean =
                 (contains("/Artists/", ignoreCase = true) && contains("/Images/", ignoreCase = true))
             )
 
+fun embyFamilyArtworkAuthHeaders(url: String): Map<String, String> {
+    if (!url.isEmbyFamilyArtworkUrl()) return emptyMap()
+    val token = embyFamilyApiKeyFromUrl(url) ?: return emptyMap()
+    return mapOf(
+        "X-Emby-Authorization" to EmbyFamilyClientAuthorization,
+        "X-Emby-Token" to token,
+    )
+}
+
 fun io.ktor.client.request.HttpRequestBuilder.applyEmbyFamilyArtworkAuth(url: String) {
-    if (!url.isEmbyFamilyArtworkUrl()) return
-    embyFamilyApiKeyFromUrl(url)?.let { token ->
-        header("X-Emby-Authorization", EmbyFamilyClientAuthorization)
-        header("X-Emby-Token", token)
+    embyFamilyArtworkAuthHeaders(url).forEach { (name, value) ->
+        header(name, value)
     }
 }
 

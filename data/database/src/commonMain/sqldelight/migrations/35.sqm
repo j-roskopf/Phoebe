@@ -1,0 +1,1 @@
+ALTER TABLE AppSettingsRow ADD COLUMN nowPlayingVisualizerInTvFrame INTEGER NOT NULL DEFAULT 0;

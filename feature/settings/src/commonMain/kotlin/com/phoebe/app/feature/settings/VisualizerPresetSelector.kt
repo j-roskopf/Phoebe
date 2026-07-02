@@ -32,9 +32,43 @@ internal fun VisualizerPresetSelector(
     selected: NowPlayingVisualizerPreset,
     onSelected: (NowPlayingVisualizerPreset) -> Unit,
     compact: Boolean = false,
+    showInTvFrame: Boolean = false,
+    onShowInTvFrameChange: (Boolean) -> Unit = {},
 ) {
     val rowSize = if (compact) 2 else 4
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (compact) 42.dp else 46.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (showInTvFrame) PhoebeUi.accent.copy(alpha = 0.16f) else PhoebeUi.subtleFill)
+                .border(
+                    BorderStroke(
+                        1.dp,
+                        if (showInTvFrame) PhoebeUi.accent.copy(alpha = 0.36f) else PhoebeUi.border,
+                    ),
+                    RoundedCornerShape(8.dp),
+                )
+                .clickable { onShowInTvFrameChange(!showInTvFrame) }
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            PhoebeIconView(
+                if (showInTvFrame) PhoebeIcon.Check else PhoebeIcon.Visualizer,
+                tint = if (showInTvFrame) PhoebeUi.accentLight else PhoebeUi.secondaryText,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                "Show In TV",
+                color = if (showInTvFrame) PhoebeUi.accentLight else PhoebeUi.secondaryText,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         NowPlayingVisualizerPreset.entries.chunked(rowSize).forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),

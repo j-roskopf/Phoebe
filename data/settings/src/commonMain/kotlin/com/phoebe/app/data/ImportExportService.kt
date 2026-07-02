@@ -77,6 +77,7 @@ class ImportExportService(
         appSettingsRepository.setScanLibraryOnLaunch(backup.settings.scanLibraryOnLaunch)
         appSettingsRepository.setNotifyWhenDownloadFinishes(backup.settings.notifyWhenDownloadFinishes)
         appSettingsRepository.setNowPlayingVisualizerPreset(backup.settings.nowPlayingVisualizerPreset)
+        appSettingsRepository.setNowPlayingVisualizerInTvFrame(backup.settings.nowPlayingVisualizerInTvFrame)
         appSettingsRepository.setBlurredArtworkAppearance(backup.settings.blurredArtworkAppearance)
         appSettingsRepository.setFullBleedDetailArtwork(backup.settings.fullBleedDetailArtwork)
         return previewBackupPackage(payload)

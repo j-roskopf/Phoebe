@@ -253,6 +253,7 @@ class CatalogRepository(
     private val pendingCatalogDbWritesMutex = Mutex()
     private val smartPlaylistLastPlayedByTrack = MutableStateFlow<Map<String, Long>>(emptyMap())
     private val smartPlaylistPlayCountsByTrack = MutableStateFlow<Map<String, Int>>(emptyMap())
+    private var plexTrackIndexPageTimeoutMs = DefaultPlexTrackIndexPageTimeoutMs
 
     init {
         observeSmartPlaylistPlayHistory()
@@ -701,6 +702,9 @@ class CatalogRepository(
                 } else {
                     syncTrace.network("plex.prepareForCatalogRequests") {
                         runCatching { plexClient.prepareForCatalogRequests(server, token) }
+                            .onFailure { error ->
+                                if (error is CancellationException) throw error
+                            }
                     }
                     val metadata = syncTrace.network("plex.buildMetadataCatalog") {
                         plexBuilder.buildMetadataCatalog(
@@ -791,6 +795,7 @@ class CatalogRepository(
                             )
                         }
                     }.onFailure { error ->
+                        if (error is CancellationException) throw error
                         PhoebeLog.d("CatalogRepository") { "paged Plex track index failed: ${error.message}" }
                     }.getOrDefault(false)
                     if (!indexed && plexRawMetadata.albums.isNotEmpty()) {
@@ -2809,15 +2814,13 @@ class CatalogRepository(
         preserveTracksFrom: Map<String, List<Track>> = emptyMap(),
         trace: CatalogSyncTrace? = null,
     ): Boolean = coroutineScope {
-        val firstPage = runCatching {
-            plexClient.libraryTracksPage(
-                server = server,
-                library = library,
-                token = token,
-                start = 0,
-                size = TrackIndexPageSize,
-            )
-        }.getOrElse { return@coroutineScope false }
+        val firstPage = plexTrackIndexPageOrNull(
+            server = server,
+            library = library,
+            token = token,
+            start = 0,
+            size = TrackIndexPageSize,
+        ) ?: return@coroutineScope false
         if (firstPage.tracks.isEmpty()) return@coroutineScope false
 
         val totalTracks = firstPage.totalSize
@@ -2884,15 +2887,13 @@ class CatalogRepository(
         val workers = List(parallelism) {
             launch {
                 for (offset in pageQueue) {
-                    val page = runCatching {
-                        plexClient.libraryTracksPage(
-                            server = server,
-                            library = library,
-                            token = token,
-                            start = offset,
-                            size = pageSize,
-                        )
-                    }.getOrNull() ?: continue
+                    val page = plexTrackIndexPageOrNull(
+                        server = server,
+                        library = library,
+                        token = token,
+                        start = offset,
+                        size = pageSize,
+                    ) ?: continue
                     if (page.tracks.isEmpty()) {
                         pageQueue.cancel()
                         break
@@ -2912,6 +2913,41 @@ class CatalogRepository(
             hydrateInMemoryTracksFromDatabase(preserveFrom = preserveTracksFrom)
         } ?: hydrateInMemoryTracksFromDatabase(preserveFrom = preserveTracksFrom)
         true
+    }
+
+    private suspend fun plexTrackIndexPageOrNull(
+        server: PlexServer,
+        library: MusicLibrary,
+        token: String,
+        start: Int,
+        size: Int,
+    ): PlexTrackPage? {
+        val timeoutMs = plexTrackIndexPageTimeoutMs
+        val page = withContext(Dispatchers.Default) {
+            withTimeoutOrNull(timeoutMs) {
+                runCatching {
+                    plexClient.libraryTracksPage(
+                        server = server,
+                        library = library,
+                        token = token,
+                        start = start,
+                        size = size,
+                    )
+                }.onFailure { error ->
+                    if (error is CancellationException) throw error
+                    PhoebeLog.d("CatalogRepository") {
+                        "Plex track page start=$start failed: ${error.message}"
+                    }
+                }.getOrNull()
+            }
+        }
+        if (page == null) {
+            currentCoroutineContext().ensureActive()
+            PhoebeLog.d("CatalogRepository") {
+                "Plex track page start=$start timed out after ${timeoutMs}ms"
+            }
+        }
+        return page
     }
 
     private suspend fun tracksToPreserveDuringRefresh(previous: CatalogSnapshot): Map<String, List<Track>> {
@@ -3601,18 +3637,79 @@ class CatalogRepository(
         return tracks
     }
 
-    suspend fun popularTracksForLibrary(session: PlexSession?, limit: Int = LibraryPopularTrackLimit): List<Track> {
+    suspend fun popularSongsForLibrary(
+        session: PlexSession?,
+        limit: Int = LibraryPopularSongLimit,
+    ): List<Track> {
         val plexSession = session?.takeIf { it.isPlex() } ?: return emptyList()
         val server = plexSession.selectedServer ?: return emptyList()
         val library = plexSession.selectedLibrary ?: return emptyList()
         val token = plexSession.serverAuthToken() ?: return emptyList()
-        val libraryKey = plexSession.libraryPopularTrackCacheKey() ?: return emptyList()
+        if (limit <= 0) return emptyList()
         val tracks = plexClient.popularTracksForLibrary(
             server = server,
             library = library,
             token = token,
             limit = limit,
-        ).map { it.withPlexPrefix() }
+        )
+            .map { it.withPlexPrefix() }
+            .distinctBy { it.id }
+        if (tracks.isNotEmpty()) {
+            publishIndexedPlexTracks(tracks)
+            runCatalogDbWrite { persistTrackBatch(tracks) }
+        }
+        return tracks
+    }
+
+    suspend fun popularTracksForLibrary(
+        session: PlexSession?,
+        tracksPerArtist: Int = LibraryPopularTracksPerArtist,
+    ): List<Track> {
+        val plexSession = session?.takeIf { it.isPlex() } ?: return emptyList()
+        val server = plexSession.selectedServer ?: return emptyList()
+        val library = plexSession.selectedLibrary ?: return emptyList()
+        val token = plexSession.serverAuthToken() ?: return emptyList()
+        val libraryKey = plexSession.libraryPopularTrackCacheKey() ?: return emptyList()
+        if (tracksPerArtist <= 0) return emptyList()
+        val artistRatingKeys = mutableCatalog.value.artists
+            .asSequence()
+            .mapNotNull { artist -> artist.plexPopularMixRatingKey()?.let { key -> key to artist } }
+            .distinctBy { it.first }
+            .toList()
+        if (artistRatingKeys.isEmpty()) {
+            publishLibraryPopularTracks(libraryKey, emptyList())
+            runCatalogDbWrite { persistLibraryPopularTracks(libraryKey, emptyList()) }
+            return emptyList()
+        }
+        val tracks = coroutineScope {
+            val collected = mutableListOf<Track>()
+            artistRatingKeys
+                .chunked(catalogTrackIndexParallelism().coerceAtLeast(1))
+                .forEach { chunk ->
+                    collected += chunk.map { (ratingKey, artist) ->
+                        async {
+                            try {
+                                plexClient.popularTracksForArtist(
+                                    server = server,
+                                    library = library,
+                                    ratingKey = ratingKey,
+                                    token = token,
+                                    limit = tracksPerArtist,
+                                ).map { it.withPlexPrefix() }
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Throwable) {
+                                PhoebeLog.d("CatalogRepository") {
+                                    "library popular tracks warm failed for '${artist.title}': ${error.message}"
+                                }
+                                emptyList()
+                            }
+                        }
+                    }.awaitAll().flatten()
+                    yield()
+                }
+            collected.distinctBy { it.id }
+        }
         if (tracks.isNotEmpty()) {
             publishIndexedPlexTracks(tracks)
         }
@@ -7241,13 +7338,6 @@ class CatalogRepository(
                 if (playlists.isNotEmpty()) {
                     warmPlaylistTracksParallel(session, playlists, updateSyncProgress = false)
                 }
-                runCatching { popularTracksForLibrary(session) }
-                    .onFailure { error ->
-                        if (error is CancellationException) throw error
-                        PhoebeLog.d("CatalogRepository") {
-                            "background popular tracks warm failed: ${error.message}"
-                        }
-                    }
             }.onFailure { error ->
                 if (error is CancellationException) throw error
                 PhoebeLog.d("CatalogRepository") {
@@ -8155,6 +8245,10 @@ class CatalogRepository(
     private fun plexRatingKey(id: String): String? =
         if (id.startsWith("plex:")) id.removePrefix("plex:") else null
 
+    private fun Artist.plexPopularMixRatingKey(): String? =
+        plexRatingKey(id)
+            ?.takeIf { it.isNotBlank() && !it.startsWith("album-artist-") }
+
     private fun String.normalizedArtistLookupKey(): String =
         trim().lowercase()
 
@@ -8192,7 +8286,7 @@ class CatalogRepository(
     private fun PlexSession?.libraryPopularTrackCacheKey(): String? {
         val serverId = this?.selectedServer?.id?.takeIf { it.isNotBlank() } ?: return null
         val libraryKey = selectedLibrary?.key?.takeIf { it.isNotBlank() } ?: return null
-        return "plex:$serverId:$libraryKey"
+        return "plex:popular-mix-v2:$serverId:$libraryKey"
     }
 
     private fun publishRadioTracksInBackground(tracks: List<Track>) {
@@ -8299,10 +8393,12 @@ class CatalogRepository(
         const val DecadeAlbumFetchTimeoutMs = 4_000L
         const val TrackIndexPageSize = 500
         const val MaxTrackIndexPages = 400
+        const val DefaultPlexTrackIndexPageTimeoutMs = 30_000L
         const val SyncProgressUpdateIntervalMs = 600L
         const val PlaylistWarmParallelism = 4
         const val ArtistPopularTrackLimit = 12
-        const val LibraryPopularTrackLimit = 250
+        const val LibraryPopularSongLimit = 500
+        const val LibraryPopularTracksPerArtist = 5
         const val ArtistSimilarArtistLimit = 20
         const val LikelyWarmAlbumCount = 50
         const val DecadeTrackPageSize = 250

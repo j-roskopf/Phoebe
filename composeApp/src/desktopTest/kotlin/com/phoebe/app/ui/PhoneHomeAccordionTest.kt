@@ -105,6 +105,7 @@ class PhoneHomeAccordionTest {
         waitForIdle()
         assertTextExists("PERSONAL\nMIX")
         assertTextExists("POPULAR")
+        assertTextExists("TOP\nTRACKS")
         assertTextExists("DECADE\nMIX")
         assertTextExists("LIBRARY\nRADIO")
 
@@ -163,6 +164,7 @@ class PhoneHomeAccordionTest {
 
         assertTrue(onAllNodesWithText("PERSONAL\nMIX").fetchSemanticsNodes().isNotEmpty())
         assertFalse(onAllNodesWithText("POPULAR").fetchSemanticsNodes().isNotEmpty())
+        assertFalse(onAllNodesWithText("TOP\nTRACKS").fetchSemanticsNodes().isNotEmpty())
         assertTrue(onAllNodesWithText("DECADE\nMIX").fetchSemanticsNodes().isNotEmpty())
     }
 

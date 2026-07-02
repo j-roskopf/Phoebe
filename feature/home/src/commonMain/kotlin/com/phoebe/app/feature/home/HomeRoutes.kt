@@ -34,6 +34,7 @@ data class DesktopHomeRouteState(
 data class HomePosterLoadingState(
     val personalMix: Boolean = false,
     val popularMix: Boolean = false,
+    val topTracksMix: Boolean = false,
     val collectionEntry: CollectionEntry? = null,
 )
 
@@ -60,6 +61,7 @@ data class DesktopHomeRouteActions(
     val onPlayRadioStation: (PlexRadioStation) -> Unit,
     val onPlayPersonalMix: () -> Unit,
     val onPlayPopularMix: () -> Unit,
+    val onPlayTopTracksMix: () -> Unit,
     val onPlayTracks: (List<Track>, Int) -> Unit,
     val onAddToUpNext: (Track) -> Unit,
     val onDownload: (Track) -> Unit,
@@ -103,6 +105,7 @@ fun DesktopHomeRoute(
         posterLoading = state.posterLoading,
         onPlayPersonalMix = actions.onPlayPersonalMix,
         onPlayPopularMix = actions.onPlayPopularMix,
+        onPlayTopTracksMix = actions.onPlayTopTracksMix,
         showPopularMix = state.showPopularMix,
         onPlayTracks = actions.onPlayTracks,
         onAddToUpNext = actions.onAddToUpNext,

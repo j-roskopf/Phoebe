@@ -178,6 +178,8 @@ actual fun prefersReducedArtworkEffects(): Boolean = true
 
 actual fun remoteArtworkCacheMaxEstimatedBytes(): Long = 10L * 1024L * 1024L
 
+actual fun remoteArtworkLoadParallelism(): Int = 8
+
 actual fun catalogTrackIndexParallelism(): Int = 4
 
 actual fun downloadParallelism(): Int = 3

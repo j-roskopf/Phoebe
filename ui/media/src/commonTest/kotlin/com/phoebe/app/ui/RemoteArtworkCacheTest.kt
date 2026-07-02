@@ -11,7 +11,10 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
+import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.TimeSource
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -130,6 +133,169 @@ class RemoteArtworkCacheTest {
             listOf(ListArtworkMaxDecodeDimension, HeroArtworkMaxDecodeDimension),
             remoteArtworkFetchDecodeDimensions(HeroArtworkMaxDecodeDimension),
         )
+    }
+
+    @Test
+    fun diskHitReturnsImageWithoutNetwork() = runTest {
+        val fetchUrl = sizedPlexArtworkUrl(ListArtworkMaxDecodeDimension)
+        val disk = FakeArtworkDiskCacheBackend(
+            mapOf(fetchUrl to byteArrayOf(DiskHitByte)),
+        )
+        ArtworkDiskCache.useBackendForTest(disk)
+        var networkRequests = 0
+        RemoteArtworkCache.fetchRemoteArtworkBytesForTest = { _, _ ->
+            networkRequests++
+            byteArrayOf(NetworkHitByte)
+        }
+        RemoteArtworkCache.decodeImageBitmapForTest = { bytes, maxDecodeDimension ->
+            if (bytes.singleOrNull() == DiskHitByte) testImageBitmap(maxDecodeDimension, maxDecodeDimension) else null
+        }
+
+        val image = RemoteArtworkCache.awaitLoad(PlexArtworkUrl, ListArtworkMaxDecodeDimension)
+
+        assertNotNull(image)
+        assertEquals(ListArtworkMaxDecodeDimension, image.width)
+        assertEquals(0, networkRequests)
+        assertEquals(listOf(fetchUrl), disk.reads)
+    }
+
+    @Test
+    fun successfulNetworkFetchWritesBytesBySizedFetchUrl() = runTest {
+        val fetchUrl = sizedPlexArtworkUrl(ListArtworkMaxDecodeDimension)
+        val disk = FakeArtworkDiskCacheBackend()
+        val networkBytes = byteArrayOf(NetworkHitByte)
+        ArtworkDiskCache.useBackendForTest(disk)
+        RemoteArtworkCache.fetchRemoteArtworkBytesForTest = { _, requestedFetchUrl ->
+            assertEquals(fetchUrl, requestedFetchUrl)
+            networkBytes
+        }
+        RemoteArtworkCache.decodeImageBitmapForTest = { bytes, maxDecodeDimension ->
+            if (bytes.contentEquals(networkBytes)) testImageBitmap(maxDecodeDimension, maxDecodeDimension) else null
+        }
+
+        val image = RemoteArtworkCache.awaitLoad(PlexArtworkUrl, ListArtworkMaxDecodeDimension)
+
+        assertNotNull(image)
+        assertEquals(ListArtworkMaxDecodeDimension, image.width)
+        assertEquals(networkBytes.toList(), disk.writes[fetchUrl]?.toList())
+        assertFalse(PlexArtworkUrl in disk.writes)
+    }
+
+    @Test
+    fun heroRequestDoesNotReuseLowerResolutionDiskBytesAsFinalArtwork() = runTest {
+        val listFetchUrl = sizedPlexArtworkUrl(ListArtworkMaxDecodeDimension)
+        val heroFetchUrl = sizedPlexArtworkUrl(HeroArtworkMaxDecodeDimension)
+        val disk = FakeArtworkDiskCacheBackend(
+            mapOf(listFetchUrl to byteArrayOf(DiskHitByte)),
+        )
+        ArtworkDiskCache.useBackendForTest(disk)
+        RemoteArtworkCache.fetchRemoteArtworkBytesForTest = { _, requestedFetchUrl ->
+            assertEquals(heroFetchUrl, requestedFetchUrl)
+            byteArrayOf(NetworkHitByte)
+        }
+        RemoteArtworkCache.decodeImageBitmapForTest = { bytes, maxDecodeDimension ->
+            when (bytes.singleOrNull()) {
+                DiskHitByte -> testImageBitmap(ListArtworkMaxDecodeDimension, ListArtworkMaxDecodeDimension)
+                NetworkHitByte -> testImageBitmap(maxDecodeDimension, maxDecodeDimension)
+                else -> null
+            }
+        }
+
+        val image = RemoteArtworkCache.awaitLoad(PlexArtworkUrl, HeroArtworkMaxDecodeDimension)
+
+        assertNotNull(image)
+        assertEquals(HeroArtworkMaxDecodeDimension, image.width)
+        assertFalse(listFetchUrl in disk.reads)
+        assertEquals(byteArrayOf(NetworkHitByte).toList(), disk.writes[heroFetchUrl]?.toList())
+    }
+
+    @Test
+    fun invalidDiskBytesAreIgnoredAndNetworkIsAttempted() = runTest {
+        val fetchUrl = sizedPlexArtworkUrl(ListArtworkMaxDecodeDimension)
+        val disk = FakeArtworkDiskCacheBackend(
+            mapOf(fetchUrl to byteArrayOf(InvalidDiskByte)),
+        )
+        var networkRequests = 0
+        ArtworkDiskCache.useBackendForTest(disk)
+        RemoteArtworkCache.fetchRemoteArtworkBytesForTest = { _, _ ->
+            networkRequests++
+            byteArrayOf(NetworkHitByte)
+        }
+        RemoteArtworkCache.decodeImageBitmapForTest = { bytes, maxDecodeDimension ->
+            if (bytes.singleOrNull() == NetworkHitByte) testImageBitmap(maxDecodeDimension, maxDecodeDimension) else null
+        }
+
+        val image = RemoteArtworkCache.awaitLoad(PlexArtworkUrl, ListArtworkMaxDecodeDimension)
+
+        assertNotNull(image)
+        assertEquals(ListArtworkMaxDecodeDimension, image.width)
+        assertEquals(1, networkRequests)
+        assertEquals(byteArrayOf(NetworkHitByte).toList(), disk.writes[fetchUrl]?.toList())
+    }
+
+    @Test
+    fun slowSizedArtworkRequestFallsBackToOriginalUrl() = runTest {
+        val sizedFetchUrl = sizedPlexArtworkUrl(ListArtworkMaxDecodeDimension)
+        val disk = FakeArtworkDiskCacheBackend()
+        val requests = mutableListOf<String>()
+        ArtworkDiskCache.useBackendForTest(disk)
+        RemoteArtworkCache.fetchRemoteArtworkBytesForTest = { _, requestedFetchUrl ->
+            requests += requestedFetchUrl
+            if (requestedFetchUrl == sizedFetchUrl) {
+                delay(2_000L)
+                byteArrayOf(DiskHitByte)
+            } else {
+                byteArrayOf(NetworkHitByte)
+            }
+        }
+        RemoteArtworkCache.decodeImageBitmapForTest = { bytes, maxDecodeDimension ->
+            if (bytes.singleOrNull() == NetworkHitByte) testImageBitmap(maxDecodeDimension, maxDecodeDimension) else null
+        }
+
+        val image = RemoteArtworkCache.awaitLoad(PlexArtworkUrl, ListArtworkMaxDecodeDimension)
+
+        assertNotNull(image)
+        assertEquals(ListArtworkMaxDecodeDimension, image.width)
+        assertEquals(listOf(sizedFetchUrl, PlexArtworkUrl), requests)
+        assertEquals(byteArrayOf(NetworkHitByte).toList(), disk.writes[PlexArtworkUrl]?.toList())
+    }
+
+    @Test
+    fun sizedArtworkBytesInsideGraceDoNotFallBackWhenDecodeCrossesGraceDeadline() = runTest {
+        val sizedFetchUrl = sizedPlexArtworkUrl(ListArtworkMaxDecodeDimension)
+        val disk = FakeArtworkDiskCacheBackend()
+        val requests = mutableListOf<String>()
+        ArtworkDiskCache.useBackendForTest(disk)
+        RemoteArtworkCache.fetchRemoteArtworkBytesForTest = { _, requestedFetchUrl ->
+            requests += requestedFetchUrl
+            if (requestedFetchUrl == sizedFetchUrl) {
+                delay(650L)
+                byteArrayOf(DiskHitByte)
+            } else {
+                byteArrayOf(NetworkHitByte)
+            }
+        }
+        RemoteArtworkCache.decodeImageBitmapForTest = { bytes, maxDecodeDimension ->
+            when (bytes.singleOrNull()) {
+                DiskHitByte -> {
+                    val started = TimeSource.Monotonic.markNow()
+                    while (started.elapsedNow() < 200.milliseconds) {
+                        // Keep this synchronous to mirror BitmapFactory.decodeByteArray on Android.
+                    }
+                    testImageBitmap(maxDecodeDimension, maxDecodeDimension)
+                }
+                NetworkHitByte -> testImageBitmap(maxDecodeDimension, maxDecodeDimension)
+                else -> null
+            }
+        }
+
+        val image = RemoteArtworkCache.awaitLoad(PlexArtworkUrl, ListArtworkMaxDecodeDimension)
+
+        assertNotNull(image)
+        assertEquals(ListArtworkMaxDecodeDimension, image.width)
+        assertEquals(listOf(sizedFetchUrl), requests)
+        assertEquals(byteArrayOf(DiskHitByte).toList(), disk.writes[sizedFetchUrl]?.toList())
+        assertFalse(PlexArtworkUrl in disk.writes)
     }
 
     @Test
@@ -377,6 +543,32 @@ class RemoteArtworkCacheTest {
 }
 
 private fun testImageBitmap(width: Int, height: Int): ImageBitmap = TestImageBitmap(width, height)
+
+private const val PlexArtworkUrl = "https://plex.example/library/metadata/1/thumb/2?X-Plex-Token=token"
+private const val DiskHitByte: Byte = 7
+private const val NetworkHitByte: Byte = 11
+private const val InvalidDiskByte: Byte = 0
+
+private fun sizedPlexArtworkUrl(maxDecodeDimension: Int): String =
+    remoteArtworkRequestUrls(PlexArtworkUrl, maxDecodeDimension).first()
+
+private class FakeArtworkDiskCacheBackend(
+    initialBytes: Map<String, ByteArray> = emptyMap(),
+) : ArtworkDiskCacheBackend {
+    private val bytesByFetchUrl = initialBytes.toMutableMap()
+    val reads = mutableListOf<String>()
+    val writes = mutableMapOf<String, ByteArray>()
+
+    override suspend fun read(fetchUrl: String): ByteArray? {
+        reads += fetchUrl
+        return bytesByFetchUrl[fetchUrl]
+    }
+
+    override suspend fun write(fetchUrl: String, bytes: ByteArray) {
+        writes[fetchUrl] = bytes
+        bytesByFetchUrl[fetchUrl] = bytes
+    }
+}
 
 private class TestImageBitmap(
     override val width: Int,

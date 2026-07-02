@@ -20,10 +20,13 @@ import io.ktor.client.call.body
 import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -32,6 +35,7 @@ import kotlinx.coroutines.yield
 
 /** Plex metadata list endpoints can be slow on large libraries; fail open after this. */
 private const val PlexMetadataFetchTimeoutMs = 120_000L
+private const val PlexAlbumTrackFetchTimeoutMs = 30_000L
 
 /**
  * Builds a Plex-only catalog snapshot (IDs are raw Plex keys; wrap with [CatalogMerge.withPrefix] before merging).
@@ -215,6 +219,7 @@ class PlexCatalogBuilder(
         val result = withContext(Dispatchers.Default.limitedParallelism(1)) {
             withTimeoutOrNull(PlexMetadataFetchTimeoutMs) {
                 runCatching { deferred.await() }.getOrElse { error ->
+                    if (error is CancellationException) throw error
                     PhoebeLog.d("PlexCatalogBuilder") { "failed fetching $label: ${error.message}" }
                     emptyList()
                 }
@@ -241,7 +246,17 @@ class PlexCatalogBuilder(
             .forEach { albumChunk ->
                 albumChunk.map { album ->
                     async {
-                        val tracks = plexClient.children(server, album.id, token)
+                        val tracks = withContext(Dispatchers.Default) {
+                            withTimeoutOrNull(PlexAlbumTrackFetchTimeoutMs) {
+                                plexClient.children(server, album.id, token)
+                            }
+                        } ?: run {
+                            currentCoroutineContext().ensureActive()
+                            PhoebeLog.d("PlexCatalogBuilder") {
+                                "timed out fetching tracks for album '${album.title}' after ${PlexAlbumTrackFetchTimeoutMs}ms"
+                            }
+                            emptyList()
+                        }
                         mutex.withLock {
                             tracksAccum[album.id] = tracks
                         }

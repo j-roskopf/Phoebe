@@ -147,6 +147,20 @@ class PhoebeDesktopScreenshotTest {
 
     @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
     @Test
+    fun desktopVisualizerTvFrameDark() = runDesktopComposeUiTest(width = 1365, height = 900) {
+        setContent {
+            Box(Modifier.size(1365.dp, 900.dp)) {
+                PhoebeScreenshotApp(scenario = PhoebeScreenshotScenario.PlayerVisualizerTvFrame)
+            }
+        }
+        waitForIdle()
+        onRoot().captureRoboImage(
+            filePath = "src/screenshotTest/roborazzi/desktop-player-visualizer-tv-frame-dark.png",
+        )
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
     fun desktopTintedBackgroundsDark() = runDesktopComposeUiTest(width = 1365, height = 900) {
         listOf(
             PhoebeScreenshotScenario.Home,

@@ -357,7 +357,10 @@ internal fun Sidebar(
             }
 
             AnimatedVisibility(visible = profileExpanded) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -438,15 +441,37 @@ internal fun Sidebar(
                         }
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedButton(onClick = { pickLocalFolder() }, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
-                            Text("Add local folder", fontSize = 11.sp)
-                        }
-                        OutlinedButton(onClick = onRefreshLibrary, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)) {
-                            Text("Rescan", fontSize = 11.sp)
-                        }
+                        SidebarMediaSourceButton(
+                            label = "Add local folder",
+                            onClick = { pickLocalFolder() },
+                        )
+                        SidebarMediaSourceButton(
+                            label = if (catalogRefreshing) "Rescanning…" else "Rescan",
+                            enabled = !catalogRefreshing,
+                            onClick = onRefreshLibrary,
+                        )
                     }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SidebarMediaSourceButton(
+    label: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+) {
+    OutlinedButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = modifier
+            .widthIn(min = 112.dp)
+            .height(ButtonDefaults.MinHeight),
+        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+    ) {
+        Text(label, fontSize = 11.sp, maxLines = 1)
     }
 }

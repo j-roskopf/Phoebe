@@ -270,6 +270,7 @@ internal enum class PhoebeScreenshotScenario {
     PlayerVisualizerClassicEQ,
     PlayerVisualizerHaloSpectrum,
     PlayerVisualizerWireframeSpectrum3D,
+    PlayerVisualizerTvFrame,
     PlayerUpNextExpanded,
     Settings,
     SignIn,
@@ -287,6 +288,7 @@ private fun PhoebeScreenshotScenario.visualizerPreset(): NowPlayingVisualizerPre
     when (this) {
         PhoebeScreenshotScenario.PlayerVisualizer,
         PhoebeScreenshotScenario.PlayerVisualizerBarsAndWaves,
+        PhoebeScreenshotScenario.PlayerVisualizerTvFrame,
         -> NowPlayingVisualizerPreset.BarsAndWaves
         PhoebeScreenshotScenario.PlayerVisualizerAlchemy -> NowPlayingVisualizerPreset.Alchemy
         PhoebeScreenshotScenario.PlayerVisualizerBattery -> NowPlayingVisualizerPreset.Battery
@@ -412,6 +414,7 @@ internal fun PhoebeDesktopScreenshotScenario(
         PhoebeScreenshotScenario.PlayerVisualizerClassicEQ,
         PhoebeScreenshotScenario.PlayerVisualizerHaloSpectrum,
         PhoebeScreenshotScenario.PlayerVisualizerWireframeSpectrum3D,
+        PhoebeScreenshotScenario.PlayerVisualizerTvFrame,
         -> AppScreen.Player
         else -> AppScreen.Home
     }
@@ -481,6 +484,7 @@ internal fun PhoebeDesktopScreenshotScenario(
             upNext = fixture.upNext,
             currentIndex = 0,
             visualizerPreset = visualizerPreset,
+            showVisualizerInTvFrame = scenario == PhoebeScreenshotScenario.PlayerVisualizerTvFrame,
             audioAnalysis = if (visualizerPreset.isVisualizer) ScreenshotAudioAnalysisFrame else AudioAnalysisFrame.Empty,
             useFilamentVisualizers = false,
         ),
@@ -813,6 +817,7 @@ internal fun PhoebeMobileScreenshotScenario(
             PhoebeScreenshotScenario.PlayerVisualizerClassicEQ,
             PhoebeScreenshotScenario.PlayerVisualizerHaloSpectrum,
             PhoebeScreenshotScenario.PlayerVisualizerWireframeSpectrum3D,
+            PhoebeScreenshotScenario.PlayerVisualizerTvFrame,
             PhoebeScreenshotScenario.PlayerUpNextExpanded,
             -> MobilePlaybackRoute(
                 state = MobilePlaybackRouteState(
@@ -825,6 +830,7 @@ internal fun PhoebeMobileScreenshotScenario(
                     bufferedPositionMs = 172_000L,
                     currentIndex = 0,
                     visualizerPreset = scenario.visualizerPreset(),
+                    showVisualizerInTvFrame = scenario == PhoebeScreenshotScenario.PlayerVisualizerTvFrame,
                     audioAnalysis = if (scenario.visualizerPreset().isVisualizer) {
                         ScreenshotAudioAnalysisFrame
                     } else {
@@ -1042,6 +1048,7 @@ private fun screenshotMobileHomeCallbacks(): MobileHomeCallbacks =
         onPlayRadioStation = {},
         onPlayPersonalMix = {},
         onPlayPopularMix = {},
+        onPlayTopTracksMix = {},
         onPlayTracks = { _, _ -> },
         onAddToUpNext = {},
         onDownload = {},

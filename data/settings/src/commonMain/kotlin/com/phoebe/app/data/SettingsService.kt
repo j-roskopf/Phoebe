@@ -45,6 +45,10 @@ class SettingsService(
         appSettingsRepository.setNowPlayingVisualizerPreset(preset)
     }
 
+    suspend fun setNowPlayingVisualizerInTvFrame(enabled: Boolean) {
+        appSettingsRepository.setNowPlayingVisualizerInTvFrame(enabled)
+    }
+
     suspend fun setBlurredArtworkAppearance(enabled: Boolean) {
         appSettingsRepository.setBlurredArtworkAppearance(enabled)
     }

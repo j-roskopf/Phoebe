@@ -104,6 +104,12 @@ class AppSettingsRepository(
         }
     }
 
+    suspend fun setNowPlayingVisualizerInTvFrame(enabled: Boolean) {
+        updateAndSave { current ->
+            current.copy(nowPlayingVisualizerInTvFrame = enabled)
+        }
+    }
+
     suspend fun setBlurredArtworkAppearance(enabled: Boolean) {
         updateAndSave { current ->
             current.copy(blurredArtworkAppearance = enabled)
@@ -175,6 +181,7 @@ class AppSettingsRepository(
                     savedVolume = normalized.savedVolume.toDouble(),
                     equalizerProfile = json.encodeToString(normalized.equalizerProfile),
                     nowPlayingVisualizerPreset = normalized.nowPlayingVisualizerPreset.name,
+                    nowPlayingVisualizerInTvFrame = normalized.nowPlayingVisualizerInTvFrame.toDb(),
                     blurredArtworkAppearance = normalized.blurredArtworkAppearance.toDb(),
                     fullBleedDetailArtwork = normalized.fullBleedDetailArtwork.toDb(),
                     tintedBackgroundGradient = normalized.tintedBackgroundGradient.toDb(),
@@ -198,6 +205,7 @@ class AppSettingsRepository(
             savedVolume = savedVolume.toFloat(),
             equalizerProfile = decodeEqualizerProfile(equalizerProfile),
             nowPlayingVisualizerPreset = NowPlayingVisualizerPreset.fromStoredName(nowPlayingVisualizerPreset),
+            nowPlayingVisualizerInTvFrame = nowPlayingVisualizerInTvFrame.toBool(),
             blurredArtworkAppearance = blurredArtworkAppearance.toBool(),
             fullBleedDetailArtwork = fullBleedDetailArtwork.toBool(),
             tintedBackgroundGradient = tintedBackgroundGradient.toBool(),

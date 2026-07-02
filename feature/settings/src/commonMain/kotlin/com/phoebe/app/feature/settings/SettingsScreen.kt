@@ -141,6 +141,7 @@ fun SettingsDesktopView(
     onPersistVolumeSettings: (Boolean) -> Unit = {},
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
+    onShowVisualizerInTvFrame: (Boolean) -> Unit = {},
     onBlurredArtworkAppearance: (Boolean) -> Unit = {},
     onFullBleedDetailArtwork: (Boolean) -> Unit = {},
     onTintedBackgroundGradient: (Boolean) -> Unit = {},
@@ -222,6 +223,8 @@ fun SettingsDesktopView(
                         onHomeScreenLayoutModeChange,
                         appSettings.nowPlayingVisualizerPreset,
                         onVisualizerPreset,
+                        appSettings.nowPlayingVisualizerInTvFrame,
+                        onShowVisualizerInTvFrame,
                         appSettings.blurredArtworkAppearance,
                         onBlurredArtworkAppearance,
                         appSettings.fullBleedDetailArtwork,
@@ -335,6 +338,7 @@ fun SettingsMobileView(
     onPersistVolumeSettings: (Boolean) -> Unit = {},
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
+    onShowVisualizerInTvFrame: (Boolean) -> Unit = {},
     onBlurredArtworkAppearance: (Boolean) -> Unit = {},
     onTintedBackgroundGradient: (Boolean) -> Unit = {},
     onHomeSections: (List<HomeSection>) -> Unit,
@@ -402,6 +406,8 @@ fun SettingsMobileView(
             onHomeScreenLayoutModeChange,
             appSettings.nowPlayingVisualizerPreset,
             onVisualizerPreset,
+            appSettings.nowPlayingVisualizerInTvFrame,
+            onShowVisualizerInTvFrame,
             blurredArtworkAppearance = appSettings.blurredArtworkAppearance,
             onBlurredArtworkAppearance = onBlurredArtworkAppearance,
             tintedBackgroundGradient = appSettings.tintedBackgroundGradient,
@@ -518,6 +524,8 @@ private fun AppearanceSettingsCard(
     onHomeScreenLayoutModeChange: (HomeScreenLayoutMode) -> Unit,
     nowPlayingVisualizerPreset: NowPlayingVisualizerPreset,
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit,
+    nowPlayingVisualizerInTvFrame: Boolean,
+    onShowVisualizerInTvFrame: (Boolean) -> Unit,
     blurredArtworkAppearance: Boolean,
     onBlurredArtworkAppearance: (Boolean) -> Unit,
     fullBleedDetailArtwork: Boolean = true,
@@ -629,6 +637,8 @@ private fun AppearanceSettingsCard(
         VisualizerPresetSelector(
             selected = nowPlayingVisualizerPreset,
             onSelected = onVisualizerPreset,
+            showInTvFrame = nowPlayingVisualizerInTvFrame,
+            onShowInTvFrameChange = onShowVisualizerInTvFrame,
             compact = compact,
         )
         Spacer(Modifier.height(18.dp))
@@ -2579,6 +2589,11 @@ private val UnsplashImageCredits = listOf(
         photographer = "Sašo Tušar",
         description = "Shallow focus photography of audio mixer",
         url = "https://unsplash.com/photos/shallow-focus-photography-of-audio-mixer-QtgGYlug6Cw$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Aditya Chinchure",
+        description = "Group of people in front of stage",
+        url = "https://unsplash.com/photos/group-of-people-in-front-of-stage-ZhQCZjr9fHo$UnsplashReferral",
     ),
     UnsplashImageCredit(
         photographer = "CARTIST",

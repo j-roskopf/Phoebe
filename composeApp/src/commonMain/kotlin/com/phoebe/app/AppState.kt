@@ -93,10 +93,12 @@ import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -311,7 +313,9 @@ class AppState(
     private var recentAlbumWarmSignature: String? = null
     private var playedAlbumWarmSignature: String? = null
     private var mostPlayedWarmSignature: String? = null
-    private var popularMixWarmSignature: String? = null
+    private var topTracksMixWarmSignature: String? = null
+    private var topTracksMixBuildSignature: String? = null
+    private var topTracksMixBuildDeferred: Deferred<List<Track>>? = null
     private val prefetchedArtistIds = mutableSetOf<String>()
     private val prefetchedAlbumIds = mutableSetOf<String>()
     private var catalogRefreshJob: Job? = null
@@ -338,6 +342,7 @@ class AppState(
             lightweightRemoteSyncJob,
             downloadedArtworkCacheJob,
             artistDetailPreloadJob,
+            topTracksMixBuildDeferred,
         ).forEach { it.cancel() }
         activeDownloadJobs.toList().forEach { it.cancel() }
         catalogRefreshJob = null
@@ -347,6 +352,8 @@ class AppState(
         lightweightRemoteSyncJob = null
         downloadedArtworkCacheJob = null
         artistDetailPreloadJob = null
+        topTracksMixBuildDeferred = null
+        topTracksMixBuildSignature = null
         if (!closeDependenciesOnDispose) return
         if (isDesktopPlatform()) {
             CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
@@ -1092,6 +1099,7 @@ class AppState(
     }
 
     fun refreshCatalog() = scope.launch {
+        cancelLightweightRemoteSync()
         refreshCatalogSuspended()
     }
 
@@ -1571,22 +1579,22 @@ class AppState(
         }
     }
 
-    fun warmPopularMixTracks() {
+    fun warmTopTracksMixTracks() {
         val currentSession = session.value
         if (!currentSession.isPlex()) return
-        val signature = currentSession.popularMixSessionSignature() ?: return
-        if (signature == popularMixWarmSignature) return
-        popularMixWarmSignature = signature
+        val signature = currentSession.topTracksMixSessionSignature() ?: return
+        if (signature == topTracksMixWarmSignature) return
+        topTracksMixWarmSignature = signature
         scope.launch {
             runCatching {
-                val tracks = dependencies.catalogRepository.popularTracksForLibrary(currentSession)
+                val tracks = dependencies.catalogRepository.cachedPopularTracksForLibrary(currentSession)
                 if (tracks.isEmpty()) {
-                    popularMixWarmSignature = null
+                    topTracksMixWarmSignature = null
                 }
             }.onFailure { error ->
                 if (error is CancellationException) throw error
-                popularMixWarmSignature = null
-                PhoebeLog.d("AppState") { "popular mix warm failed: ${error.message}" }
+                topTracksMixWarmSignature = null
+                PhoebeLog.d("AppState") { "top tracks mix warm failed: ${error.message}" }
             }
         }
     }
@@ -1626,37 +1634,21 @@ class AppState(
     }
 
     fun playPopularMix() = scope.launch {
-        val currentSession = session.value
-        val cachedPool = dependencies.catalogRepository.cachedPopularTracksForLibrary(currentSession)
-        val signature = currentSession.popularMixSessionSignature()
-        val popularPool = cachedPool.takeIf { it.isNotEmpty() }
-            ?: if (signature == popularMixWarmSignature) {
-                emptyList()
-            } else {
-                runCatching {
-                    withTimeout(PopularMixInitialLoadTimeoutMs) {
-                        dependencies.catalogRepository.popularTracksForLibrary(currentSession)
-                    }
-                }.getOrElse { error ->
-                    if (error is CancellationException && error !is TimeoutCancellationException) throw error
-                    PhoebeLog.d("AppState") { "popular mix provider load skipped: ${error.message}" }
-                    emptyList()
-                }.also { tracks ->
-                    if (tracks.isNotEmpty()) {
-                        popularMixWarmSignature = signature
-                    }
-                }
-            }
+        val popularPool = runCatching {
+            dependencies.catalogRepository.popularSongsForLibrary(
+                session = session.value,
+                limit = PopularMixTrackLimit,
+            )
+        }.getOrElse { error ->
+            if (error is CancellationException) throw error
+            PhoebeLog.d("AppState") { "popular mix provider load failed: ${error.message}" }
+            emptyList()
+        }
         if (popularPool.isEmpty()) {
-            warmPopularMixTracks()
-            mutableMessage.value = if (currentSession.isPlex()) {
-                "Popular songs are still loading."
-            } else {
-                "No popular songs found yet."
-            }
+            mutableMessage.value = "No popular songs found yet."
             return@launch
         }
-        val mix = popularPool.weightedPopularMix()
+        val mix = popularPool.popularMixQueue()
         if (mix.isEmpty()) {
             mutableMessage.value = "No popular songs found yet."
             return@launch
@@ -1665,7 +1657,62 @@ class AppState(
             requestNavigation(AppNavigationRequest.Player)
             mutableMessage.value = "Playing ${mix.size} popular songs."
         }
-        warmPopularMixTracks()
+    }
+
+    fun playTopTracksMix() = scope.launch {
+        val currentSession = session.value
+        val cachedPool = dependencies.catalogRepository.cachedPopularTracksForLibrary(currentSession)
+        val signature = currentSession.topTracksMixSessionSignature()
+        val topTracksPool = cachedPool.takeIf { it.isNotEmpty() }
+            ?: run {
+                val plexSession = currentSession?.takeIf { it.isPlex() } ?: return@run emptyList()
+                val buildSignature = signature ?: return@run emptyList()
+                val build = startTopTracksMixBuild(plexSession, buildSignature)
+                runCatching {
+                    build.await()
+                }.getOrElse { error ->
+                    if (error is CancellationException) throw error
+                    PhoebeLog.d("AppState") { "top tracks mix provider load failed: ${error.message}" }
+                    emptyList()
+                }.also { tracks ->
+                    if (tracks.isNotEmpty()) topTracksMixWarmSignature = buildSignature
+                }
+            }
+        if (topTracksPool.isEmpty()) {
+            mutableMessage.value = "No top tracks found yet."
+            return@launch
+        }
+        val mix = topTracksPool.topTracksMixQueue()
+        if (mix.isEmpty()) {
+            mutableMessage.value = "No top tracks found yet."
+            return@launch
+        }
+        if (playTracks(mix, 0)) {
+            requestNavigation(AppNavigationRequest.Player)
+            mutableMessage.value = "Playing ${mix.size} top tracks."
+        }
+        warmTopTracksMixTracks()
+    }
+
+    private fun startTopTracksMixBuild(session: PlexSession, signature: String): Deferred<List<Track>> {
+        topTracksMixBuildDeferred
+            ?.takeIf { topTracksMixBuildSignature == signature && it.isActive }
+            ?.let { return it }
+        val deferred = scope.async {
+            dependencies.catalogRepository.popularTracksForLibrary(session)
+        }
+        topTracksMixBuildSignature = signature
+        topTracksMixBuildDeferred = deferred
+        deferred.invokeOnCompletion { error ->
+            if (error != null && error !is CancellationException) {
+                PhoebeLog.d("AppState") { "top tracks mix provider load failed: ${error.message}" }
+            }
+            if (topTracksMixBuildDeferred === deferred) {
+                topTracksMixBuildDeferred = null
+                topTracksMixBuildSignature = null
+            }
+        }
+        return deferred
     }
 
     fun refreshRadioStations() = scope.launch {
@@ -2249,6 +2296,10 @@ class AppState(
 
     fun setNowPlayingVisualizerPreset(preset: NowPlayingVisualizerPreset) = scope.launch {
         dependencies.settingsService.setNowPlayingVisualizerPreset(preset)
+    }
+
+    fun setNowPlayingVisualizerInTvFrame(enabled: Boolean) = scope.launch {
+        dependencies.settingsService.setNowPlayingVisualizerInTvFrame(enabled)
     }
 
     fun setBlurredArtworkAppearance(enabled: Boolean) = scope.launch {
@@ -2852,7 +2903,10 @@ class AppState(
         mostPlayedWarmSignature = null
         recentAlbumWarmSignature = null
         playedAlbumWarmSignature = null
-        popularMixWarmSignature = null
+        topTracksMixWarmSignature = null
+        topTracksMixBuildSignature = null
+        topTracksMixBuildDeferred?.cancel()
+        topTracksMixBuildDeferred = null
         prefetchedArtistIds.clear()
         prefetchedAlbumIds.clear()
         stopPlayback()
@@ -2945,7 +2999,7 @@ private fun PlexSession?.canUsePlexBackgroundFetches(): Boolean {
         server.localConnectionUris.isNotEmpty()
 }
 
-private fun PlexSession?.popularMixSessionSignature(): String? {
+private fun PlexSession?.topTracksMixSessionSignature(): String? {
     val serverId = this?.selectedServer?.id?.takeIf { it.isNotBlank() } ?: return null
     val libraryKey = selectedLibrary?.key?.takeIf { it.isNotBlank() } ?: return null
     return "$serverId:$libraryKey"
@@ -3041,50 +3095,25 @@ private data class PlaybackHistoryRecord(
     val playedAtMs: Long = Long.MIN_VALUE,
 )
 
-private fun List<Track>.weightedPopularMix(
-    limit: Int = PopularMixTrackLimit,
-    random: Random = Random.Default,
-): List<Track> {
-    val remaining = distinctBy { it.id }
-        .mapIndexed { index, track ->
-            PopularMixCandidate(
-                track = track,
-                weight = 1.0 / kotlin.math.sqrt(index.toDouble() + 1.0),
-            )
-        }
-        .toMutableList()
-    val selected = mutableListOf<Track>()
-    while (selected.size < limit && remaining.isNotEmpty()) {
-        val totalWeight = remaining.sumOf { it.weight }
-        var cursor = random.nextDouble(totalWeight)
-        var selectedIndex = remaining.lastIndex
-        for (index in remaining.indices) {
-            cursor -= remaining[index].weight
-            if (cursor <= 0.0) {
-                selectedIndex = index
-                break
-            }
-        }
-        selected += remaining.removeAt(selectedIndex).track
-    }
-    return selected
-}
+internal fun List<Track>.popularMixQueue(random: Random = Random.Default): List<Track> =
+    distinctBy { it.id }
+        .chunked(PopularMixShuffleChunkSize)
+        .flatMap { chunk -> chunk.shuffled(random) }
 
-private data class PopularMixCandidate(
-    val track: Track,
-    val weight: Double,
-)
+internal fun List<Track>.topTracksMixQueue(random: Random = Random.Default): List<Track> =
+    distinctBy { it.id }.shuffled(random)
 
 private const val PlaybackHistoryDedupeWindowMs = 30_000L
 
+private const val PopularMixTrackLimit = 500
+private const val PopularMixShuffleChunkSize = 50
+
 private const val PlayHistoryCatalogResolveTimeoutMs = 1_500L
-private const val PopularMixInitialLoadTimeoutMs = 2_500L
 
 private const val ProviderPlayHistoryDebounceMs = 8_000L
 
 private const val InternetRadioStartupTimeoutMs = 30_000L
 private const val RadioNowPlayingRefreshMs = 30_000L
-private const val PopularMixTrackLimit = 50
 
 private const val PLEX_SIGN_IN_TIMEOUT_MS = 20_000L
 

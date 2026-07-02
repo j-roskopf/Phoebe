@@ -71,6 +71,7 @@ fun DesktopTransport(
     persistEqualizerSettings: Boolean = false,
     equalizerRemoteUnavailable: Boolean = false,
     visualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
+    showVisualizerInTvFrame: Boolean = false,
     compact: Boolean,
     lyricsVisible: Boolean = false,
     upNextVisible: Boolean,
@@ -89,6 +90,7 @@ fun DesktopTransport(
     onEqualizerReset: () -> Unit = {},
     onPersistEqualizerSettings: (Boolean) -> Unit = {},
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
+    onShowVisualizerInTvFrame: (Boolean) -> Unit = {},
     onListenBrainzFeedback: (ListenBrainzFeedbackScore) -> Unit = {},
     onToggleUpNext: () -> Unit,
     onCast: () -> Unit,
@@ -313,6 +315,7 @@ fun DesktopTransport(
                         active = (showCastControls && castState.isConnected) ||
                             equalizerProfile.enabled ||
                             visualizerPreset.isVisualizer ||
+                            showVisualizerInTvFrame ||
                             lyricsVisible ||
                             upNextVisible,
                     )
@@ -324,6 +327,7 @@ fun DesktopTransport(
                         castState = castState,
                         equalizerEnabled = equalizerProfile.enabled,
                         visualizerPreset = visualizerPreset,
+                        showVisualizerInTvFrame = showVisualizerInTvFrame,
                         lyricsVisible = lyricsVisible,
                         upNextVisible = upNextVisible,
                         upNextToggleEnabled = upNextToggleEnabled,
@@ -332,6 +336,7 @@ fun DesktopTransport(
                         onCast = onCast,
                         onEqualizer = { equalizerOpen = true },
                         onVisualizerPreset = onVisualizerPreset,
+                        onShowVisualizerInTvFrame = onShowVisualizerInTvFrame,
                         onLyrics = onLyrics,
                         onToggleUpNext = onToggleUpNext,
                     )
@@ -354,6 +359,8 @@ fun DesktopTransport(
                 VisualizerPresetButton(
                     selected = visualizerPreset,
                     onSelected = onVisualizerPreset,
+                    showInTvFrame = showVisualizerInTvFrame,
+                    onShowInTvFrameChange = onShowVisualizerInTvFrame,
                 )
                 TransportIcon(
                     PhoebeIcon.Lyrics,
@@ -620,6 +627,7 @@ private fun PlaybackOptionsMenu(
     castState: CastState,
     equalizerEnabled: Boolean,
     visualizerPreset: NowPlayingVisualizerPreset,
+    showVisualizerInTvFrame: Boolean,
     lyricsVisible: Boolean,
     upNextVisible: Boolean,
     upNextToggleEnabled: Boolean,
@@ -628,6 +636,7 @@ private fun PlaybackOptionsMenu(
     onCast: () -> Unit,
     onEqualizer: () -> Unit,
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit,
+    onShowVisualizerInTvFrame: (Boolean) -> Unit,
     onLyrics: () -> Unit,
     onToggleUpNext: () -> Unit,
 ) {
@@ -667,6 +676,15 @@ private fun PlaybackOptionsMenu(
             active = equalizerEnabled,
             onClick = {
                 onEqualizer()
+                onDismiss()
+            },
+        )
+        PlaybackOptionsMenuItem(
+            icon = if (showVisualizerInTvFrame) PhoebeIcon.Check else PhoebeIcon.Visualizer,
+            text = "Show In TV",
+            active = showVisualizerInTvFrame,
+            onClick = {
+                onShowVisualizerInTvFrame(!showVisualizerInTvFrame)
                 onDismiss()
             },
         )

@@ -1080,6 +1080,7 @@ data class AppSettings(
     val savedVolume: Float = DefaultSavedVolume,
     val equalizerProfile: EqualizerProfile = EqualizerProfile.Default,
     val nowPlayingVisualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
+    val nowPlayingVisualizerInTvFrame: Boolean = false,
     val blurredArtworkAppearance: Boolean = true,
     val fullBleedDetailArtwork: Boolean = true,
     val tintedBackgroundGradient: Boolean = true,

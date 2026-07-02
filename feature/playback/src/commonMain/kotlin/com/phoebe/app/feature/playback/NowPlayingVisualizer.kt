@@ -84,6 +84,7 @@ fun NowPlayingVisualizerSurface(
     showFullscreenButton: Boolean = true,
     fullscreenButtonAlpha: Float = 1f,
     useFilamentVisualizers: Boolean = true,
+    showInTvFrame: Boolean = false,
 ) {
     var fullscreen by remember(preset) { mutableStateOf(false) }
     val clampedFullscreenButtonAlpha = fullscreenButtonAlpha.coerceIn(0f, 1f)
@@ -92,7 +93,7 @@ fun NowPlayingVisualizerSurface(
         if (fullscreen) {
             Box(Modifier.fillMaxSize().background(Color.Black))
         } else {
-            NowPlayingVisualizerContent(
+            NowPlayingVisualizerDisplay(
                 preset = preset,
                 track = track,
                 audioAnalysis = audioAnalysis,
@@ -101,6 +102,7 @@ fun NowPlayingVisualizerSurface(
                 modifier = Modifier.fillMaxSize(),
                 desktopArtworkConstrained = desktopArtworkConstrained,
                 useFilamentVisualizers = useFilamentVisualizers,
+                showInTvFrame = showInTvFrame,
             )
         }
 
@@ -128,6 +130,7 @@ fun NowPlayingVisualizerSurface(
             positionMs = positionMs,
             onDismiss = { fullscreen = false },
             useFilamentVisualizers = useFilamentVisualizers,
+            showInTvFrame = showInTvFrame,
         )
     }
 }
@@ -141,6 +144,7 @@ private fun FullscreenVisualizerDialog(
     positionMs: Long,
     onDismiss: () -> Unit,
     useFilamentVisualizers: Boolean,
+    showInTvFrame: Boolean,
 ) {
     Dialog(
         onDismissRequest = onDismiss,
@@ -151,7 +155,7 @@ private fun FullscreenVisualizerDialog(
                 .fillMaxSize()
                 .background(Color.Black),
         ) {
-            NowPlayingVisualizerContent(
+            NowPlayingVisualizerDisplay(
                 preset = preset,
                 track = track,
                 audioAnalysis = audioAnalysis,
@@ -160,6 +164,7 @@ private fun FullscreenVisualizerDialog(
                 modifier = Modifier.fillMaxSize(),
                 desktopArtworkConstrained = false,
                 useFilamentVisualizers = useFilamentVisualizers,
+                showInTvFrame = showInTvFrame,
             )
             VisualizerIconButton(
                 description = "Close full screen visualizer",
@@ -172,6 +177,45 @@ private fun FullscreenVisualizerDialog(
                 icon = PhoebeIcon.Close,
             )
         }
+    }
+}
+
+@Composable
+private fun NowPlayingVisualizerDisplay(
+    preset: NowPlayingVisualizerPreset,
+    track: Track?,
+    audioAnalysis: AudioAnalysisFrame,
+    isPlaying: Boolean,
+    positionMs: Long,
+    modifier: Modifier = Modifier,
+    desktopArtworkConstrained: Boolean = false,
+    useFilamentVisualizers: Boolean = true,
+    showInTvFrame: Boolean = false,
+) {
+    if (showInTvFrame && preset.isVisualizer) {
+        RetroTvVisualizerFrame(modifier = modifier) {
+            NowPlayingVisualizerContent(
+                preset = preset,
+                track = track,
+                audioAnalysis = audioAnalysis,
+                isPlaying = isPlaying,
+                positionMs = positionMs,
+                modifier = Modifier.fillMaxSize(),
+                desktopArtworkConstrained = false,
+                useFilamentVisualizers = useFilamentVisualizers,
+            )
+        }
+    } else {
+        NowPlayingVisualizerContent(
+            preset = preset,
+            track = track,
+            audioAnalysis = audioAnalysis,
+            isPlaying = isPlaying,
+            positionMs = positionMs,
+            modifier = modifier,
+            desktopArtworkConstrained = desktopArtworkConstrained,
+            useFilamentVisualizers = useFilamentVisualizers,
+        )
     }
 }
 
@@ -314,6 +358,8 @@ fun VisualizerPresetButton(
     selected: NowPlayingVisualizerPreset,
     onSelected: (NowPlayingVisualizerPreset) -> Unit,
     modifier: Modifier = Modifier,
+    showInTvFrame: Boolean = false,
+    onShowInTvFrameChange: (Boolean) -> Unit = {},
 ) {
     var expanded by remember { mutableStateOf(false) }
     Box(modifier) {
@@ -325,8 +371,13 @@ fun VisualizerPresetButton(
         VisualizerPresetDropdown(
             expanded = expanded,
             selected = selected,
+            showInTvFrame = showInTvFrame,
             onSelected = {
                 onSelected(it)
+                expanded = false
+            },
+            onShowInTvFrameChange = {
+                onShowInTvFrameChange(it)
                 expanded = false
             },
             onDismiss = { expanded = false },
@@ -338,10 +389,32 @@ fun VisualizerPresetButton(
 internal fun VisualizerPresetDropdown(
     expanded: Boolean,
     selected: NowPlayingVisualizerPreset,
+    showInTvFrame: Boolean,
     onSelected: (NowPlayingVisualizerPreset) -> Unit,
+    onShowInTvFrameChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
+        DropdownMenuItem(
+            text = {
+                Text(
+                    "Show In TV",
+                    color = if (showInTvFrame) PhoebeUi.accentLight else PhoebeUi.primaryText,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            },
+            leadingIcon = {
+                PhoebeIconView(
+                    if (showInTvFrame) PhoebeIcon.Check else PhoebeIcon.Visualizer,
+                    tint = if (showInTvFrame) PhoebeUi.accentLight else PhoebeUi.secondaryText,
+                    modifier = Modifier.size(17.dp),
+                )
+            },
+            onClick = { onShowInTvFrameChange(!showInTvFrame) },
+        )
         NowPlayingVisualizerPreset.entries.forEach { preset ->
             DropdownMenuItem(
                 text = {
@@ -402,9 +475,43 @@ internal fun VisualizerPresetSelector(
     selected: NowPlayingVisualizerPreset,
     onSelected: (NowPlayingVisualizerPreset) -> Unit,
     compact: Boolean = false,
+    showInTvFrame: Boolean = false,
+    onShowInTvFrameChange: (Boolean) -> Unit = {},
 ) {
     val rowSize = if (compact) 2 else 4
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(if (compact) 42.dp else 46.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .background(if (showInTvFrame) PhoebeUi.accent.copy(alpha = 0.16f) else PhoebeUi.subtleFill)
+                .border(
+                    androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        if (showInTvFrame) PhoebeUi.accent.copy(alpha = 0.36f) else PhoebeUi.border,
+                    ),
+                    RoundedCornerShape(8.dp),
+                )
+                .clickable { onShowInTvFrameChange(!showInTvFrame) }
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            PhoebeIconView(
+                if (showInTvFrame) PhoebeIcon.Check else PhoebeIcon.Visualizer,
+                tint = if (showInTvFrame) PhoebeUi.accentLight else PhoebeUi.secondaryText,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(
+                "Show In TV",
+                color = if (showInTvFrame) PhoebeUi.accentLight else PhoebeUi.secondaryText,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         NowPlayingVisualizerPreset.entries.chunked(rowSize).forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -463,6 +570,8 @@ fun DesktopNowPlayingVisualizerView(
     onPreset: (NowPlayingVisualizerPreset) -> Unit,
     modifier: Modifier = Modifier,
     useFilamentVisualizers: Boolean = true,
+    showInTvFrame: Boolean = false,
+    onShowInTvFrameChange: (Boolean) -> Unit = {},
 ) {
     Column(
         modifier = modifier.padding(horizontal = 28.dp, vertical = 24.dp),
@@ -483,7 +592,12 @@ fun DesktopNowPlayingVisualizerView(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            VisualizerPresetButton(selected = preset, onSelected = onPreset)
+            VisualizerPresetButton(
+                selected = preset,
+                onSelected = onPreset,
+                showInTvFrame = showInTvFrame,
+                onShowInTvFrameChange = onShowInTvFrameChange,
+            )
         }
         Box(
             Modifier
@@ -501,6 +615,7 @@ fun DesktopNowPlayingVisualizerView(
                 modifier = Modifier.fillMaxSize(),
                 desktopArtworkConstrained = true,
                 useFilamentVisualizers = useFilamentVisualizers,
+                showInTvFrame = showInTvFrame,
             )
         }
     }

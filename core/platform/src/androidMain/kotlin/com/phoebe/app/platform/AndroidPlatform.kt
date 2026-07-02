@@ -509,7 +509,9 @@ actual fun currentTimeMs(): Long = System.currentTimeMillis()
 
 actual fun prefersReducedArtworkEffects(): Boolean = false
 
-actual fun remoteArtworkCacheMaxEstimatedBytes(): Long = 10L * 1024L * 1024L
+actual fun remoteArtworkCacheMaxEstimatedBytes(): Long = 24L * 1024L * 1024L
+
+actual fun remoteArtworkLoadParallelism(): Int = 2
 
 actual fun catalogTrackIndexParallelism(): Int = 6
 

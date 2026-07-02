@@ -138,10 +138,12 @@ private fun MobileExpandedUtilityControls(
     castState: CastState,
     equalizerActive: Boolean,
     visualizerPreset: NowPlayingVisualizerPreset,
+    showVisualizerInTvFrame: Boolean,
     onCast: () -> Unit,
     onEqualizer: () -> Unit,
     onLyrics: () -> Unit,
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit,
+    onShowVisualizerInTvFrame: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -167,6 +169,8 @@ private fun MobileExpandedUtilityControls(
             VisualizerPresetButton(
                 selected = visualizerPreset,
                 onSelected = onVisualizerPreset,
+                showInTvFrame = showVisualizerInTvFrame,
+                onShowInTvFrameChange = onShowVisualizerInTvFrame,
             )
         }
     }
@@ -204,6 +208,7 @@ fun MobilePlayer(
     persistEqualizerSettings: Boolean = false,
     equalizerRemoteUnavailable: Boolean = false,
     visualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
+    showVisualizerInTvFrame: Boolean = false,
     blurredArtworkAppearance: Boolean = true,
     tintedBackgroundGradient: Boolean = false,
     audioAnalysis: AudioAnalysisFrame = AudioAnalysisFrame.Empty,
@@ -227,6 +232,7 @@ fun MobilePlayer(
     onEqualizerReset: () -> Unit = {},
     onPersistEqualizerSettings: (Boolean) -> Unit = {},
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
+    onShowVisualizerInTvFrame: (Boolean) -> Unit = {},
     onListenBrainzFeedback: (ListenBrainzFeedbackScore) -> Unit = {},
     onBack: () -> Unit,
     onSwipeDismiss: () -> Unit,
@@ -656,10 +662,12 @@ fun MobilePlayer(
                     castState = castState,
                     equalizerActive = equalizerProfile.enabled,
                     visualizerPreset = visualizerPreset,
+                    showVisualizerInTvFrame = showVisualizerInTvFrame,
                     onCast = onCast,
                     onEqualizer = { equalizerOpen = true },
                     onLyrics = onLyrics,
                     onVisualizerPreset = onVisualizerPreset,
+                    onShowVisualizerInTvFrame = onShowVisualizerInTvFrame,
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp)
@@ -720,6 +728,7 @@ fun MobilePlayer(
                                 modifier = Modifier.fillMaxSize(),
                                 fullscreenButtonAlpha = fullPlayerElementsAlpha,
                                 useFilamentVisualizers = useFilamentVisualizers,
+                                showInTvFrame = showVisualizerInTvFrame,
                             )
                         }
                     }

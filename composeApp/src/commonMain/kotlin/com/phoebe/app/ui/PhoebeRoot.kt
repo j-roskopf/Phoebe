@@ -943,6 +943,24 @@ private fun PhoebeRootStateHolder(
             Unit
         }
     }
+    val playTopTracksMix = remember(state, homePosterActionScope) {
+        {
+            homePosterActionScope.launch {
+                homePosterLoading = homePosterLoading.copy(topTracksMix = true)
+                val loadingStartedAtMs = currentTimeMs()
+                try {
+                    state.playTopTracksMix().join()
+                } finally {
+                    val remainingLoadingMs = HomePosterLoadingMinDurationMs - (currentTimeMs() - loadingStartedAtMs)
+                    if (remainingLoadingMs > 0L) {
+                        delay(remainingLoadingMs)
+                    }
+                    homePosterLoading = homePosterLoading.copy(topTracksMix = false)
+                }
+            }
+            Unit
+        }
+    }
     LaunchedEffect(screen, browseSection, catalog.albums, catalog.tracksByParent.keys, session?.selectedServer, nowMs, trackHeavySectionsEnabled) {
         if (!trackHeavySectionsEnabled) return@LaunchedEffect
         if (screen == AppScreen.Home && browseSection == BrowseSection.Home) {
@@ -953,7 +971,7 @@ private fun PhoebeRootStateHolder(
     LaunchedEffect(screen, browseSection, session?.selectedServer?.id, session?.selectedLibrary?.key) {
         if (screen == AppScreen.Home && browseSection == BrowseSection.Home) {
             delay(1_200L)
-            state.warmPopularMixTracks()
+            state.warmTopTracksMixTracks()
         }
     }
     LaunchedEffect(screen, browseSection, topMostPlayed, topRecentlyPlayed, session?.selectedServer) {
@@ -1709,6 +1727,7 @@ private fun PhoebeRootStateHolder(
                         onDeleteManualRadioStation = state::deleteManualRadioStation,
                         onPlayPersonalMix = playPersonalMix,
                         onPlayPopularMix = playPopularMix,
+                        onPlayTopTracksMix = playTopTracksMix,
                         onPlayTracks = playTracksFromMobile,
                         onAddToUpNext = state::addToUpNext,
                         onDownload = state::download,
@@ -1998,6 +2017,7 @@ private fun PhoebeRootStateHolder(
                         persistEqualizerSettings = appSettings.persistEqualizerSettings,
                         equalizerRemoteUnavailable = equalizerRemoteUnavailable,
                         visualizerPreset = appSettings.nowPlayingVisualizerPreset,
+                        showVisualizerInTvFrame = appSettings.nowPlayingVisualizerInTvFrame,
                         audioAnalysis = audioAnalysis,
                     ),
                     playbackActions = PlaybackActions(
@@ -2026,6 +2046,7 @@ private fun PhoebeRootStateHolder(
                                 }
                             }
                         },
+                        onShowVisualizerInTvFrame = state::setNowPlayingVisualizerInTvFrame,
                         onListenBrainzFeedback = state::submitListenBrainzFeedback,
                         onLyrics = {
                             selectedPlaylistId = null
@@ -2139,6 +2160,7 @@ private fun PhoebeRootStateHolder(
                         onRadioDeleteManualStation = state::deleteManualRadioStation,
                         onPlayPersonalMix = playPersonalMix,
                         onPlayPopularMix = playPopularMix,
+                        onPlayTopTracksMix = playTopTracksMix,
                         onPopDetail = { navigator.pop() },
                         onPlayTracks = playTracks,
                         onPlayAllTracks = playAllTracks,
@@ -2227,6 +2249,7 @@ private fun PhoebeRootStateHolder(
                         onAudioProcessingSettings = state::setAudioProcessingSettings,
                         audioProcessingCapabilities = state.audioProcessingCapabilities,
                         onVisualizerPreset = state::setNowPlayingVisualizerPreset,
+                        onShowVisualizerInTvFrame = state::setNowPlayingVisualizerInTvFrame,
                         onBlurredArtworkAppearance = state::setBlurredArtworkAppearance,
                         onFullBleedDetailArtwork = state::setFullBleedDetailArtwork,
                         onTintedBackgroundGradient = state::setTintedBackgroundGradient,
@@ -2677,6 +2700,7 @@ private fun MobilePlayerHost(
             persistEqualizerSettings = appSettings.persistEqualizerSettings,
             equalizerRemoteUnavailable = equalizerRemoteUnavailable,
             visualizerPreset = appSettings.nowPlayingVisualizerPreset,
+            showVisualizerInTvFrame = appSettings.nowPlayingVisualizerInTvFrame,
             blurredArtworkAppearance = appSettings.blurredArtworkAppearance,
             tintedBackgroundGradient = appSettings.tintedBackgroundGradient,
             audioAnalysis = audioAnalysis,
@@ -2703,6 +2727,7 @@ private fun MobilePlayerHost(
             onEqualizerReset = appState::resetEqualizer,
             onPersistEqualizerSettings = appState::setPersistEqualizerSettings,
             onVisualizerPreset = appState::setNowPlayingVisualizerPreset,
+            onShowVisualizerInTvFrame = appState::setNowPlayingVisualizerInTvFrame,
             onListenBrainzFeedback = appState::submitListenBrainzFeedback,
             onBack = onBack,
             onSwipeDismiss = onSwipeDismiss,

@@ -159,6 +159,7 @@ internal fun DesktopPlayer(
     val persistEqualizerSettings = playbackState.persistEqualizerSettings
     val equalizerRemoteUnavailable = playbackState.equalizerRemoteUnavailable
     val visualizerPreset = playbackState.visualizerPreset
+    val showVisualizerInTvFrame = playbackState.showVisualizerInTvFrame
     val audioAnalysis = playbackState.audioAnalysis
     val homeUiState = browseState.homeUiState
     val playHistory = browseState.playHistory
@@ -235,6 +236,7 @@ internal fun DesktopPlayer(
     val onRadioDeleteManualStation = browseActions.onRadioDeleteManualStation
     val onPlayPersonalMix = browseActions.onPlayPersonalMix
     val onPlayPopularMix = browseActions.onPlayPopularMix
+    val onPlayTopTracksMix = browseActions.onPlayTopTracksMix
     val onPopDetail = browseActions.onPopDetail
     val onPlayTracks = browseActions.onPlayTracks
     val onPlayAllTracks = browseActions.onPlayAllTracks
@@ -264,6 +266,7 @@ internal fun DesktopPlayer(
     val onEqualizerReset = playbackActions.onEqualizerReset
     val onPersistEqualizerSettings = playbackActions.onPersistEqualizerSettings
     val onVisualizerPreset = playbackActions.onVisualizerPreset
+    val onShowVisualizerInTvFrame = playbackActions.onShowVisualizerInTvFrame
     val onListenBrainzFeedback = playbackActions.onListenBrainzFeedback
     val onPlayQueue = playbackActions.onPlayQueue
     val onClearQueue = playbackActions.onClearQueue
@@ -307,6 +310,7 @@ internal fun DesktopPlayer(
     val onPersistEqualizerSettingsFromSettings = settingsActions.onPersistEqualizerSettings
     val onPersistVolumeSettingsFromSettings = settingsActions.onPersistVolumeSettings
     val onVisualizerPresetFromSettings = settingsActions.onVisualizerPreset
+    val onShowVisualizerInTvFrameFromSettings = settingsActions.onShowVisualizerInTvFrame
     val onBlurredArtworkAppearance = settingsActions.onBlurredArtworkAppearance
     val onFullBleedDetailArtwork = settingsActions.onFullBleedDetailArtwork
     val onDownloadDirectory = settingsActions.onDownloadDirectory
@@ -690,12 +694,14 @@ internal fun DesktopPlayer(
                                         state = DesktopVisualizerRouteState(
                                             track = track,
                                             preset = visualizerPreset,
+                                            showInTvFrame = showVisualizerInTvFrame,
                                             audioAnalysis = audioAnalysis,
                                             isPlaying = isPlaying,
                                             positionMs = positionMs,
                                             useFilamentVisualizers = playbackState.useFilamentVisualizers,
                                         ),
                                         onPreset = onVisualizerPreset,
+                                        onShowInTvFrameChange = onShowVisualizerInTvFrame,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }
@@ -738,6 +744,7 @@ internal fun DesktopPlayer(
                                                 onPlayRadioStation = onPlayRadioStation,
                                                 onPlayPersonalMix = onPlayPersonalMix,
                                                 onPlayPopularMix = onPlayPopularMix,
+                                                onPlayTopTracksMix = onPlayTopTracksMix,
                                                 onPlayTracks = onPlayTracks,
                                                 onAddToUpNext = onAddToUpNext,
                                                 onDownload = onDownload,
@@ -852,6 +859,7 @@ internal fun DesktopPlayer(
                                             onPersistVolumeSettings = onPersistVolumeSettingsFromSettings,
                                             onAudioProcessingSettings = settingsActions.onAudioProcessingSettings,
                                             onVisualizerPreset = onVisualizerPresetFromSettings,
+                                            onShowVisualizerInTvFrame = onShowVisualizerInTvFrameFromSettings,
                                             onBlurredArtworkAppearance = onBlurredArtworkAppearance,
                                             onFullBleedDetailArtwork = onFullBleedDetailArtwork,
                                             onTintedBackgroundGradient = settingsActions.onTintedBackgroundGradient,
@@ -974,6 +982,7 @@ internal fun DesktopPlayer(
                                 persistEqualizerSettings = persistEqualizerSettings,
                                 equalizerRemoteUnavailable = equalizerRemoteUnavailable,
                                 visualizerPreset = visualizerPreset,
+                                showVisualizerInTvFrame = showVisualizerInTvFrame,
                                 compact = compact,
                                 lyricsVisible = section == BrowseSection.Lyrics && selectedPlaylistId == null,
                                 upNextVisible = showQueue && desktopUpNextExpanded,
@@ -992,6 +1001,7 @@ internal fun DesktopPlayer(
                                 onEqualizerReset = onEqualizerReset,
                                 onPersistEqualizerSettings = onPersistEqualizerSettings,
                                 onVisualizerPreset = onVisualizerPreset,
+                                onShowVisualizerInTvFrame = onShowVisualizerInTvFrame,
                                 onListenBrainzFeedback = onListenBrainzFeedback,
                                 onToggleUpNext = { desktopUpNextExpanded = !desktopUpNextExpanded },
                                 onCast = onCast,

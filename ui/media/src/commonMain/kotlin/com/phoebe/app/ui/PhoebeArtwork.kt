@@ -15,7 +15,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -30,16 +33,26 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.ImageBitmapConfig
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil3.compose.AsyncImagePainter
+import coil3.compose.LocalPlatformContext
+import coil3.compose.rememberAsyncImagePainter
+import coil3.compose.rememberConstraintsSizeResolver
+import coil3.network.NetworkHeaders
+import coil3.network.httpHeaders
+import coil3.request.ImageRequest
 import com.phoebe.app.data.applyEmbyFamilyArtworkAuth
 import com.phoebe.app.data.cachedArtworkPathForUrl
+import com.phoebe.app.data.embyFamilyArtworkAuthHeaders
 import com.phoebe.app.data.isEmbyFamilyArtworkUrl
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PlatformStorage
@@ -47,6 +60,7 @@ import com.phoebe.app.platform.createPlatformHttpClient
 import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.platform.prefersReducedArtworkEffects
 import com.phoebe.app.platform.remoteArtworkCacheMaxEstimatedBytes
+import com.phoebe.app.platform.remoteArtworkLoadParallelism
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
@@ -70,6 +84,7 @@ import kotlin.math.max
 import kotlin.math.sin
 
 private const val RemoteArtworkRetryDelayMs = 15_000L
+private const val RemoteArtworkPreviewLoadGraceMs = 700L
 
 @Composable
 fun ArtworkImage(
@@ -84,45 +99,136 @@ fun ArtworkImage(
     alignment: Alignment = Alignment.Center,
     contentScale: ContentScale = ContentScale.Crop,
 ) {
-    val imageState = rememberRemoteImageState(thumbUrl, maxDecodeDimension, fallbackThumbUrl)
-    val imageModifier = when {
-        !elevated || prefersReducedArtworkEffects() -> modifier.clip(shape)
-        else -> modifier
-            .shadow(18.dp, shape, ambientColor = Color.Black.copy(alpha = 0.38f))
-            .clip(shape)
-    }
+    CoilArtworkImage(
+        seed = seed,
+        thumbUrl = thumbUrl,
+        fallbackThumbUrl = fallbackThumbUrl,
+        modifier = modifier,
+        radius = radius,
+        shape = shape,
+        elevated = elevated,
+        maxDecodeDimension = maxDecodeDimension,
+        alignment = alignment,
+        contentScale = contentScale,
+    )
+}
 
-    val visualState = remember(imageState) {
-        when (imageState) {
-            is RemoteImageLoadState.Preview,
-            is RemoteImageLoadState.Ready,
-                -> RemoteArtworkVisualState.Image
-            RemoteImageLoadState.Loading -> RemoteArtworkVisualState.Loading
-            RemoteImageLoadState.Unavailable -> RemoteArtworkVisualState.Missing
+@Composable
+private fun CoilArtworkImage(
+    seed: String,
+    thumbUrl: String?,
+    fallbackThumbUrl: String?,
+    modifier: Modifier,
+    radius: Dp,
+    shape: Shape,
+    elevated: Boolean,
+    maxDecodeDimension: Int,
+    alignment: Alignment,
+    contentScale: ContentScale,
+) {
+    val candidates = remember(thumbUrl, fallbackThumbUrl, maxDecodeDimension) {
+        artworkImageCandidates(thumbUrl, maxDecodeDimension, fallbackThumbUrl)
+    }
+    var candidateIndex by remember(candidates) { mutableIntStateOf(0) }
+    val candidate = candidates.getOrNull(candidateIndex)
+    val platformContext = LocalPlatformContext.current
+    val sizeResolver = rememberConstraintsSizeResolver()
+    val request = remember(platformContext, candidate, sizeResolver) {
+        candidate?.let {
+            ImageRequest.Builder(platformContext)
+                .data(it.fetchUrl)
+                .size(sizeResolver)
+                .applyArtworkHeaders(it.fetchUrl)
+                .build()
+        }
+    }
+    val painter = rememberAsyncImagePainter(model = request)
+    val painterState by painter.state.collectAsState()
+
+    LaunchedEffect(painterState) {
+        if (painterState is AsyncImagePainter.State.Error && candidateIndex < candidates.lastIndex) {
+            candidateIndex += 1
         }
     }
 
-    Crossfade(targetState = visualState, label = "artwork-load-state") { state ->
-        when (state) {
-            RemoteArtworkVisualState.Image -> {
-                val image = imageState.image ?: return@Crossfade
-                Image(
-                    bitmap = image,
-                    contentDescription = null,
-                    contentScale = contentScale,
-                    alignment = alignment,
-                    modifier = imageModifier,
-                )
-            }
-            RemoteArtworkVisualState.Loading -> {
-                ArtworkLoadingSlot(modifier, radius, shape = shape, elevated = elevated)
-            }
-            RemoteArtworkVisualState.Missing -> {
-                AlbumArtwork(seed, modifier, radius, shape = shape, elevated = elevated)
+    val success = painterState is AsyncImagePainter.State.Success
+    val visualState = when {
+        candidate == null -> RemoteArtworkVisualState.Missing
+        success -> RemoteArtworkVisualState.Image
+        painterState is AsyncImagePainter.State.Error && candidateIndex >= candidates.lastIndex -> RemoteArtworkVisualState.Missing
+        else -> RemoteArtworkVisualState.Loading
+    }
+
+    Box(modifier) {
+        Image(
+            painter = painter,
+            contentDescription = null,
+            contentScale = contentScale,
+            alignment = alignment,
+            modifier = Modifier
+                .matchParentSize()
+                .then(artworkSurfaceModifier(shape, elevated))
+                .then(sizeResolver)
+                .graphicsLayer { alpha = if (success) 1f else 0f },
+        )
+        Crossfade(
+            targetState = visualState,
+            modifier = Modifier.matchParentSize(),
+            label = "artwork-load-state",
+        ) { state ->
+            when (state) {
+                RemoteArtworkVisualState.Image -> Unit
+                RemoteArtworkVisualState.Loading -> {
+                    ArtworkLoadingSlot(Modifier.fillMaxSize(), radius, shape = shape, elevated = elevated)
+                }
+                RemoteArtworkVisualState.Missing -> {
+                    AlbumArtwork(seed, Modifier.fillMaxSize(), radius, shape = shape, elevated = elevated)
+                }
             }
         }
     }
 }
+
+private data class ArtworkImageCandidate(
+    val sourceUrl: String,
+    val fetchUrl: String,
+)
+
+private fun artworkImageCandidates(
+    url: String?,
+    maxDecodeDimension: Int,
+    fallbackUrl: String? = null,
+): List<ArtworkImageCandidate> {
+    val primary = url?.takeIf { it.isNotBlank() }
+    val fallback = fallbackUrl?.takeIf { it.isNotBlank() && it != primary }
+    return listOfNotNull(primary, fallback)
+        .flatMap { sourceUrl ->
+            val fetchUrls = if (sourceUrl.isRemoteArtworkUrl()) {
+                remoteArtworkRequestUrls(sourceUrl, maxDecodeDimension)
+            } else {
+                listOf(sourceUrl)
+            }
+            fetchUrls.map { fetchUrl -> ArtworkImageCandidate(sourceUrl, fetchUrl) }
+        }
+        .distinctBy { it.fetchUrl }
+}
+
+private fun ImageRequest.Builder.applyArtworkHeaders(fetchUrl: String): ImageRequest.Builder {
+    val headers = embyFamilyArtworkAuthHeaders(fetchUrl)
+    if (headers.isEmpty()) return this
+    val networkHeaders = NetworkHeaders.Builder().apply {
+        headers.forEach { (name, value) -> set(name, value) }
+    }.build()
+    return httpHeaders(networkHeaders)
+}
+
+private fun artworkSurfaceModifier(shape: Shape, elevated: Boolean): Modifier =
+    when {
+        !elevated || prefersReducedArtworkEffects() -> Modifier.clip(shape)
+        else -> Modifier
+            .shadow(18.dp, shape, ambientColor = Color.Black.copy(alpha = 0.38f))
+            .clip(shape)
+    }
 
 @Composable
 fun TrackArtworkImage(
@@ -201,9 +307,17 @@ private fun rememberRemoteImageState(
             }
 
             var loadedTarget = false
+            val requestedDimension = maxDecodeDimension.normalizedArtworkDecodeDimension()
             for (dim in remoteArtworkFetchDecodeDimensions(maxDecodeDimension)) {
-                RemoteArtworkCache.awaitLoadWithFallback(target, fallback, dim)?.let { image ->
-                    if (dim == maxDecodeDimension.normalizedArtworkDecodeDimension()) {
+                val image = if (dim == requestedDimension) {
+                    RemoteArtworkCache.awaitLoadWithFallback(target, fallback, dim)
+                } else {
+                    withTimeoutOrNull(RemoteArtworkPreviewLoadGraceMs) {
+                        RemoteArtworkCache.awaitLoadWithFallback(target, fallback, dim)
+                    }
+                }
+                image?.let {
+                    if (dim == requestedDimension) {
                         value = RemoteImageLoadState.Ready(image)
                         loadedTarget = true
                     } else {
@@ -269,6 +383,7 @@ object RemoteArtworkCache {
     private const val DefaultMaxEntries = 300
     private const val FailedLoadRetryMs = 60L * 1000L
     private const val RemoteArtworkLoadTimeoutMs = 12_000L
+    private const val RemoteArtworkAlternateFetchGraceMs = 700L
     private const val FallbackArtworkGraceMs = 350L
     private const val DefaultLoadPermits = 8
     private const val DownloadModeMaxEntries = 32
@@ -291,7 +406,8 @@ object RemoteArtworkCache {
     internal val httpClient: HttpClient by lazy { createPlatformHttpClient() }
     private val storage: PlatformStorage by lazy { PlatformStorage() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-    private var gate = Semaphore(permits = DefaultLoadPermits)
+    private val platformLoadPermits = remoteArtworkLoadParallelism().coerceIn(1, DefaultLoadPermits)
+    private var gate = Semaphore(permits = platformLoadPermits)
     private val inFlight = mutableMapOf<CacheKey, InFlightLoad>()
     private val estimatedBytesByKey = mutableMapOf<CacheKey, Long>()
     private val accessOrder = LinkedHashMap<CacheKey, Unit>()
@@ -301,6 +417,8 @@ object RemoteArtworkCache {
     private var maxEstimatedBytes = platformMaxEstimatedBytes
     private var estimatedBytes = 0L
     internal var loadArtworkForTest: (suspend (url: String, maxDecodeDimension: Int) -> ImageBitmap?)? = null
+    internal var fetchRemoteArtworkBytesForTest: (suspend (sourceUrl: String, fetchUrl: String) -> ByteArray?)? = null
+    internal var decodeImageBitmapForTest: ((bytes: ByteArray, maxDecodeDimension: Int) -> ImageBitmap?)? = null
     internal var retryEpoch by mutableLongStateOf(0L)
         private set
 
@@ -442,23 +560,11 @@ object RemoteArtworkCache {
             } else {
                 try {
                     if (remote) {
-                        withTimeoutOrNull(RemoteArtworkLoadTimeoutMs) {
-                            remoteArtworkRequestUrls(url, key.maxDecodeDimension)
-                                .firstNotNullOfOrNull { fetchUrl ->
-                                    fetchRemoteArtworkBytes(url, fetchUrl)?.let { bytes ->
-                                        yield()
-                                        decodeImageBitmap(bytes, key.maxDecodeDimension)
-                                    }
-                                }
-                        }
-                            ?: storage.readBytes(cachedArtworkPathForUrl(url))?.let { bytes ->
-                                yield()
-                                decodeImageBitmap(bytes, key.maxDecodeDimension)
-                            }
+                        loadRemoteArtwork(url, key.maxDecodeDimension)
                     } else {
                         storage.readUriBytes(url)?.let { bytes ->
                             yield()
-                            decodeImageBitmap(bytes, key.maxDecodeDimension)
+                            decodeArtworkBytes(bytes, key.maxDecodeDimension)
                         }
                     }
                 } catch (error: CancellationException) {
@@ -477,7 +583,89 @@ object RemoteArtworkCache {
         }
     }
 
+    private suspend fun loadRemoteArtwork(url: String, maxDecodeDimension: Int): ImageBitmap? {
+        val fetchUrls = remoteArtworkRequestUrls(url, maxDecodeDimension)
+        decodeDiskCachedArtwork(fetchUrls, maxDecodeDimension)?.let { return it }
+        decodeLegacyCachedArtwork(url, maxDecodeDimension)?.let { return it }
+        return withTimeoutOrNull(RemoteArtworkLoadTimeoutMs) {
+            fetchAndDecodeRemoteArtwork(url, fetchUrls, maxDecodeDimension)
+        } ?: decodeLegacyCachedArtwork(url, maxDecodeDimension)
+    }
+
+    private suspend fun fetchAndDecodeRemoteArtwork(
+        url: String,
+        fetchUrls: List<String>,
+        maxDecodeDimension: Int,
+    ): ImageBitmap? {
+        if (fetchUrls.size == 1) {
+            return fetchDecodeAndPersistRemoteArtwork(url, fetchUrls.first(), maxDecodeDimension)
+        }
+        val primary = fetchUrls.first()
+        fetchRemoteArtworkBytesWithGrace(url, primary)?.let { bytes ->
+            return decodeAndPersistRemoteArtwork(primary, bytes, maxDecodeDimension)
+        }
+        fetchUrls.drop(1).firstNotNullOfOrNull { fetchUrl ->
+            fetchDecodeAndPersistRemoteArtwork(url, fetchUrl, maxDecodeDimension)
+        }?.let { return it }
+        return fetchDecodeAndPersistRemoteArtwork(url, primary, maxDecodeDimension)
+    }
+
+    private suspend fun fetchRemoteArtworkBytesWithGrace(sourceUrl: String, fetchUrl: String): ByteArray? =
+        withTimeoutOrNull(RemoteArtworkAlternateFetchGraceMs) {
+            fetchRemoteArtworkBytes(sourceUrl, fetchUrl)
+        }
+
+    private suspend fun fetchDecodeAndPersistRemoteArtwork(
+        sourceUrl: String,
+        fetchUrl: String,
+        maxDecodeDimension: Int,
+    ): ImageBitmap? =
+        fetchRemoteArtworkBytes(sourceUrl, fetchUrl)?.let { bytes ->
+            decodeAndPersistRemoteArtwork(fetchUrl, bytes, maxDecodeDimension)
+        }
+
+    private suspend fun decodeAndPersistRemoteArtwork(
+        fetchUrl: String,
+        bytes: ByteArray,
+        maxDecodeDimension: Int,
+    ): ImageBitmap? {
+        yield()
+        return decodeArtworkBytes(bytes, maxDecodeDimension)?.also {
+            runCatching { ArtworkDiskCache.write(fetchUrl, bytes) }
+        }
+    }
+
+    private suspend fun decodeDiskCachedArtwork(fetchUrls: List<String>, maxDecodeDimension: Int): ImageBitmap? =
+        fetchUrls.firstNotNullOfOrNull { fetchUrl ->
+            try {
+                ArtworkDiskCache.read(fetchUrl)?.let { bytes ->
+                    yield()
+                    decodeArtworkBytes(bytes, maxDecodeDimension)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                null
+            }
+        }
+
+    private suspend fun decodeLegacyCachedArtwork(url: String, maxDecodeDimension: Int): ImageBitmap? =
+        try {
+            storage.readBytes(cachedArtworkPathForUrl(url))?.let { bytes ->
+                yield()
+                decodeArtworkBytes(bytes, maxDecodeDimension)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (_: Throwable) {
+            null
+        }
+
     private suspend fun fetchRemoteArtworkBytes(sourceUrl: String, fetchUrl: String): ByteArray? =
+        fetchRemoteArtworkBytesForTest?.invoke(sourceUrl, fetchUrl)
+            ?: fetchRemoteArtworkBytesFromNetwork(sourceUrl, fetchUrl)
+
+    private suspend fun fetchRemoteArtworkBytesFromNetwork(sourceUrl: String, fetchUrl: String): ByteArray? =
         try {
             val response = httpClient.get(fetchUrl) {
                 applyEmbyFamilyArtworkAuth(sourceUrl)
@@ -490,6 +678,10 @@ object RemoteArtworkCache {
         } catch (_: Throwable) {
             null
         }
+
+    private fun decodeArtworkBytes(bytes: ByteArray, maxDecodeDimension: Int): ImageBitmap? =
+        decodeImageBitmapForTest?.invoke(bytes, maxDecodeDimension)
+            ?: decodeImageBitmap(bytes, maxDecodeDimension)
 
     private fun cachedLocked(key: CacheKey): ImageBitmap? {
         val image = images[key] ?: return null
@@ -598,8 +790,12 @@ object RemoteArtworkCache {
             maxEntries = DefaultMaxEntries
             maxEstimatedBytes = platformMaxEstimatedBytes
             loadArtworkForTest = null
+            fetchRemoteArtworkBytesForTest = null
+            decodeImageBitmapForTest = null
+            gate = Semaphore(permits = platformLoadPermits)
             inFlight.clear()
         }
+        ArtworkDiskCache.resetBackendForTest()
         retryEpoch = 0L
     }
 
@@ -621,11 +817,22 @@ object RemoteArtworkCache {
         normalizedArtworkDecodeDimension()
 
     private fun ImageBitmap.estimatedBytes(): Long =
-        width.toLong() * height.toLong() * 4L
+        width.toLong() * height.toLong() * bytesPerPixel()
+
+    private fun ImageBitmap.bytesPerPixel(): Long =
+        when (config) {
+            ImageBitmapConfig.Alpha8 -> 1L
+            ImageBitmapConfig.Rgb565 -> 2L
+            ImageBitmapConfig.F16 -> 8L
+            else -> 4L
+        }
 }
 
 private fun Int.normalizedArtworkDecodeDimension(): Int =
     takeIf { it > 0 } ?: Int.MAX_VALUE
+
+private fun String.isRemoteArtworkUrl(): Boolean =
+    startsWith("http://") || startsWith("https://")
 
 /** Ask remote servers for a smaller JPEG when the URL supports sizing query params. */
 internal fun remoteArtworkRequestUrls(url: String, maxDecodeDimension: Int): List<String> {

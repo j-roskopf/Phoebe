@@ -10,6 +10,7 @@ CREATE TABLE AppSettingsRow (
     savedVolume REAL NOT NULL DEFAULT 0.7,
     equalizerProfile TEXT NOT NULL DEFAULT '{"enabled":false,"bandCount":10,"gainsDb":[]}',
     nowPlayingVisualizerPreset TEXT NOT NULL DEFAULT 'Artwork',
+    nowPlayingVisualizerInTvFrame INTEGER NOT NULL DEFAULT 0,
     blurredArtworkAppearance INTEGER NOT NULL DEFAULT 1,
     fullBleedDetailArtwork INTEGER NOT NULL DEFAULT 1,
     tintedBackgroundGradient INTEGER NOT NULL DEFAULT 1,
@@ -33,6 +34,7 @@ INSERT OR REPLACE INTO AppSettingsRow(
     savedVolume,
     equalizerProfile,
     nowPlayingVisualizerPreset,
+    nowPlayingVisualizerInTvFrame,
     blurredArtworkAppearance,
     fullBleedDetailArtwork,
     tintedBackgroundGradient,
@@ -40,7 +42,7 @@ INSERT OR REPLACE INTO AppSettingsRow(
     lastFmSettings,
     downloadPolicySettings,
     audioProcessingSettings
-) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 clear:
 DELETE FROM AppSettingsRow;

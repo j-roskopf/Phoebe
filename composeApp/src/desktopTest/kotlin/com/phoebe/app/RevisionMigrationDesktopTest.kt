@@ -48,6 +48,7 @@ class RevisionMigrationDesktopTest {
         val settings = database.appSettingsQueries.selectCurrent().awaitAsOne()
         assertTrue(settings.listenBrainzSettings.contains("\"enabled\":false"))
         assertEquals("Artwork", settings.nowPlayingVisualizerPreset)
+        assertEquals(0L, settings.nowPlayingVisualizerInTvFrame)
         assertEquals(1L, settings.blurredArtworkAppearance)
         assertEquals(1L, settings.fullBleedDetailArtwork)
         assertEquals(PhoebeDatabase.Schema.version, readUserVersion(dbFile))

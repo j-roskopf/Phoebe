@@ -41,6 +41,8 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.util.Collections
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -471,6 +473,203 @@ class CatalogRepositoryRefreshDesktopTest {
         repo.refreshAggregated(testSession())
 
         assertEquals(listOf("plex:a1"), repo.catalog.value.albums.map { it.id })
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun refreshCompletesWhenPlexTrackPageHangs() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val hungTrackPageStarted = CompletableDeferred<Unit>()
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/library/sections/1/all" -> if (request.url.parameters["type"] == "10") {
+                    when (request.url.parameters["X-Plex-Container-Start"]?.toIntOrNull() ?: 0) {
+                        0 -> respondJson(trackPageJson(totalSize = 1_000))
+                        500 -> {
+                            hungTrackPageStarted.complete(Unit)
+                            awaitCancellation()
+                        }
+                        else -> respondJson(trackPageJson(ratingKey = "t-extra", offset = 1_000, totalSize = 1_000))
+                    }
+                } else {
+                    respondJson(artistsJson())
+                }
+                "/library/sections/1/albums" -> respondJson(albumsJson())
+                "/playlists" -> respondJson(playlistsJson(trackCount = 0))
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val http = testHttpClient(engine)
+        val media = MediaSourcesRepository(db, PlatformStorage())
+        val repo = testCatalogRepository(
+            plexClient = PlexClient(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+        val restoreTimeout = repo.setPlexTrackIndexPageTimeoutForTest(50L)
+
+        try {
+            val refresh = async { repo.refreshAggregated(testSession()) }
+            hungTrackPageStarted.await()
+
+            assertEquals(CatalogSyncPhase.LoadingSongs, repo.catalogSyncState.value.phase)
+
+            refresh.await()
+        } finally {
+            restoreTimeout()
+        }
+
+        assertFalse(repo.catalogRefreshing.value)
+        assertEquals(CatalogSyncPhase.Complete, repo.catalogSyncState.value.phase)
+        assertEquals(listOf("plex:t1"), repo.catalog.value.tracksByParent["plex:a1"].orEmpty().map { it.id })
+    }
+
+    @Test
+    fun popularTracksForLibraryAggregatesTopFivePerArtistAndPersistsCache() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val requestedArtists = Collections.synchronizedList(mutableListOf<String>())
+        val globalPopularRequests = AtomicInteger(0)
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/library/sections/1/all" -> if (request.url.parameters["type"] == "10") {
+                    val artistId = request.url.parameters["artist.id"]
+                    if (artistId == null && request.url.parameters["sort"] == "ratingCount:desc") {
+                        globalPopularRequests.incrementAndGet()
+                    } else {
+                        artistId?.let { requestedArtists += it }
+                    }
+                    if (artistId != null) {
+                        assertEquals("5", request.url.parameters["limit"])
+                    }
+                    respondJson(
+                        when (artistId) {
+                            "artist1" -> popularTracksJson(
+                                "t1" to "Artist One Hit 1",
+                                "t2" to "Artist One Hit 2",
+                                "t3" to "Shared Hit",
+                                "t4" to "Artist One Hit 4",
+                                "t5" to "Artist One Hit 5",
+                            )
+                            "artist2" -> popularTracksJson(
+                                "t6" to "Artist Two Hit 1",
+                                "t3" to "Shared Hit",
+                                "t7" to "Artist Two Hit 3",
+                            )
+                            else -> emptyPlexMetadataJson()
+                        },
+                    )
+                } else {
+                    respondJson(popularMixArtistsJson())
+                }
+                "/library/sections/1/albums" -> respondJson(emptyPlexMetadataJson())
+                "/playlists" -> respondJson(playlistsJson(trackCount = 0))
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val http = testHttpClient(engine)
+        val media = MediaSourcesRepository(db, PlatformStorage())
+        val repo = testCatalogRepository(
+            plexClient = PlexClient(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+        val session = testSession()
+
+        repo.refreshAggregated(session)
+        val tracks = repo.popularTracksForLibrary(session)
+
+        assertEquals(setOf("artist1", "artist2"), requestedArtists.toSet())
+        assertEquals(0, globalPopularRequests.get())
+        assertEquals(
+            listOf("plex:t1", "plex:t2", "plex:t3", "plex:t4", "plex:t5", "plex:t6", "plex:t7"),
+            tracks.map { it.id },
+        )
+
+        val restored = testCatalogRepository(
+            plexClient = PlexClient(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+        restored.restoreCachedCatalog()
+
+        assertEquals(tracks.map { it.id }, restored.cachedPopularTracksForLibrary(session).map { it.id })
+    }
+
+    @Test
+    fun popularSongsForLibraryQueriesFiveHundredPlexTracks() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        var capturedLimit: String? = null
+        var capturedContainerSize: String? = null
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/library/sections/1/all" -> {
+                    capturedLimit = request.url.parameters["limit"]
+                    capturedContainerSize = request.headers["X-Plex-Container-Size"]
+                    respondJson(popularTracksJson("t1" to "Library Top Song"))
+                }
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val http = testHttpClient(engine)
+        val media = MediaSourcesRepository(db, PlatformStorage())
+        val repo = testCatalogRepository(
+            plexClient = PlexClient(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+
+        val tracks = repo.popularSongsForLibrary(testSession())
+
+        assertEquals("500", capturedLimit)
+        assertEquals("500", capturedContainerSize)
+        assertEquals(listOf("plex:t1"), tracks.map { it.id })
+    }
+
+    @Test
+    fun refreshAggregatedDoesNotWarmPopularMixArtistTracks() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val popularArtistRequests = AtomicInteger(0)
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/library/sections/1/all" -> if (request.url.parameters["type"] == "10") {
+                    if (request.url.parameters["artist.id"] != null && request.url.parameters["sort"] == "ratingCount:desc") {
+                        popularArtistRequests.incrementAndGet()
+                    }
+                    respondJson(emptyPlexMetadataJson())
+                } else {
+                    respondJson(popularMixArtistsJson())
+                }
+                "/library/sections/1/albums" -> respondJson(emptyPlexMetadataJson())
+                "/playlists" -> respondJson(playlistsJson(trackCount = 0))
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val http = testHttpClient(engine)
+        val media = MediaSourcesRepository(db, PlatformStorage())
+        val repo = testCatalogRepository(
+            plexClient = PlexClient(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+
+        repo.refreshAggregated(testSession())
+        Thread.sleep(100)
+
+        assertEquals(0, popularArtistRequests.get())
     }
 
     @Test
@@ -1918,6 +2117,14 @@ class CatalogRepositoryRefreshDesktopTest {
         )
     }
 
+    private fun CatalogRepository.setPlexTrackIndexPageTimeoutForTest(timeoutMs: Long): () -> Unit {
+        val field = CatalogRepository::class.java.getDeclaredField("plexTrackIndexPageTimeoutMs")
+        field.isAccessible = true
+        val previous = field.getLong(this)
+        field.setLong(this, timeoutMs)
+        return { field.setLong(this, previous) }
+    }
+
     private fun testSession(
         server: PlexServer = PlexServer("server", "Plex", "https://plex.example:32400", owned = true),
     ): PlexSession = PlexSession(
@@ -2014,6 +2221,43 @@ class CatalogRepositoryRefreshDesktopTest {
         }
     """.trimIndent()
 
+    private fun popularMixArtistsJson(): String = """
+        {
+          "MediaContainer": {
+            "Metadata": [
+              { "ratingKey": "artist1", "type": "artist", "title": "Artist One", "leafCount": 5 },
+              { "ratingKey": "artist2", "type": "artist", "title": "Artist Two", "leafCount": 3 },
+              { "ratingKey": "album-artist-a1", "type": "artist", "title": "Fallback Artist", "leafCount": 1 }
+            ]
+          }
+        }
+    """.trimIndent()
+
+    private fun emptyPlexMetadataJson(): String = """{ "MediaContainer": { "Metadata": [] } }"""
+
+    private fun popularTracksJson(vararg tracks: Pair<String, String>): String = """
+        {
+          "MediaContainer": {
+            "Metadata": [
+              ${tracks.joinToString(",\n") { (ratingKey, title) -> popularTrackJson(ratingKey, title) }}
+            ]
+          }
+        }
+    """.trimIndent()
+
+    private fun popularTrackJson(ratingKey: String, title: String): String = """
+              {
+                "ratingKey": "$ratingKey",
+                "title": "$title",
+                "grandparentTitle": "Popular Artist",
+                "parentTitle": "Popular Album",
+                "duration": 1000,
+                "Media": [
+                  { "Part": [ { "key": "/library/parts/$ratingKey/file.mp3", "file": "$ratingKey.mp3" } ] }
+                ]
+              }
+    """.trimIndent()
+
     private fun albumsJson(): String = """
         {
           "MediaContainer": {
@@ -2088,15 +2332,19 @@ class CatalogRepositoryRefreshDesktopTest {
         }
     """.trimIndent()
 
-    private fun trackPageJson(): String = """
+    private fun trackPageJson(
+        ratingKey: String = "t1",
+        offset: Int = 0,
+        totalSize: Int = 1,
+    ): String = """
         {
           "MediaContainer": {
             "size": 1,
-            "offset": 0,
-            "totalSize": 1,
+            "offset": $offset,
+            "totalSize": $totalSize,
             "Metadata": [
               {
-                "ratingKey": "t1",
+                "ratingKey": "$ratingKey",
                 "parentRatingKey": "a1",
                 "title": "Fresh Song",
                 "grandparentTitle": "Artist One",
@@ -2105,7 +2353,7 @@ class CatalogRepositoryRefreshDesktopTest {
                 "duration": 1000,
                 "addedAt": 1700000200,
                 "Media": [
-                  { "Part": [ { "key": "/library/parts/t1/file.mp3", "file": "file.mp3" } ] }
+                  { "Part": [ { "key": "/library/parts/$ratingKey/file.mp3", "file": "file.mp3" } ] }
                 ]
               }
             ]

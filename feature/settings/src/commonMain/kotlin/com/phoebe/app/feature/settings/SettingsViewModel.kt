@@ -58,6 +58,10 @@ class SettingsViewModel : ViewModel() {
         mutableState.update { it?.copy(appSettings = it.appSettings.copy(nowPlayingVisualizerPreset = preset)) }
     }
 
+    fun onShowVisualizerInTvFrame(enabled: Boolean) {
+        mutableState.update { it?.copy(appSettings = it.appSettings.copy(nowPlayingVisualizerInTvFrame = enabled)) }
+    }
+
     fun onBlurredArtworkAppearance(enabled: Boolean) {
         mutableState.update { it?.copy(appSettings = it.appSettings.copy(blurredArtworkAppearance = enabled)) }
     }

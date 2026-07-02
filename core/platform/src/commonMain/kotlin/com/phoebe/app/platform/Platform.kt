@@ -70,6 +70,9 @@ expect fun prefersReducedArtworkEffects(): Boolean
 /** Platform-specific decoded artwork cache budget. Android heaps are much smaller than desktop. */
 expect fun remoteArtworkCacheMaxEstimatedBytes(): Long
 
+/** Platform-specific cap for concurrent artwork loads. Android image decode can starve input. */
+expect fun remoteArtworkLoadParallelism(): Int
+
 /** Concurrent Plex library track-index page fetches during catalog sync. */
 expect fun catalogTrackIndexParallelism(): Int
 
