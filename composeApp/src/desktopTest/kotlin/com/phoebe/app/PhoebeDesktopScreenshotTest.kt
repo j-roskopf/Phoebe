@@ -2,12 +2,14 @@ package com.phoebe.app
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
 import androidx.compose.ui.unit.dp
+import com.phoebe.app.feature.radio.LocalRadioStationRemoteArtworkEnabled
 import com.phoebe.app.ui.PhoebeScreenshotApp
 import com.phoebe.app.ui.PhoebeScreenshotScenario
 import com.phoebe.app.ui.PhoebeTintOption
@@ -72,7 +74,9 @@ class PhoebeDesktopScreenshotTest {
     fun desktopRadioDark() = runDesktopComposeUiTest(width = 1365, height = 900) {
         setContent {
             Box(Modifier.size(1365.dp, 900.dp)) {
-                PhoebeScreenshotApp(scenario = PhoebeScreenshotScenario.Radio)
+                CompositionLocalProvider(LocalRadioStationRemoteArtworkEnabled provides false) {
+                    PhoebeScreenshotApp(scenario = PhoebeScreenshotScenario.Radio)
+                }
             }
         }
         waitForIdle()

@@ -49,6 +49,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -70,6 +71,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -98,6 +100,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val RadioSearchDebounceMillis = 450L
+
+val LocalRadioStationRemoteArtworkEnabled = staticCompositionLocalOf { true }
 
 enum class RadioRouteMode {
     Home,
@@ -1117,14 +1121,7 @@ private fun RadioMapStationSnackbar(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                ArtworkImage(
-                    seed = station.name,
-                    thumbUrl = station.faviconUrlOrFallback,
-                    fallbackThumbUrl = station.fallbackArtworkUrl,
-                    modifier = Modifier.size(42.dp),
-                    radius = 8.dp,
-                    elevated = false,
-                )
+                RadioStationArtwork(station, Modifier.size(42.dp), radius = 8.dp)
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -1450,14 +1447,7 @@ private fun RadioMapClusterPanel(
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        ArtworkImage(
-                            seed = station.name,
-                            thumbUrl = station.faviconUrlOrFallback,
-                            fallbackThumbUrl = station.fallbackArtworkUrl,
-                            modifier = Modifier.size(36.dp),
-                            radius = 6.dp,
-                            elevated = false,
-                        )
+                        RadioStationArtwork(station, Modifier.size(36.dp), radius = 6.dp)
                         Column(Modifier.weight(1f)) {
                             Text(station.name, color = PhoebeUi.primaryText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(station.displaySubtitle, color = PhoebeUi.secondaryText, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -1513,14 +1503,7 @@ private fun RadioMapStationPanel(
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            ArtworkImage(
-                seed = station.name,
-                thumbUrl = station.faviconUrlOrFallback,
-                fallbackThumbUrl = station.fallbackArtworkUrl,
-                modifier = Modifier.size(44.dp),
-                radius = 8.dp,
-                elevated = false,
-            )
+            RadioStationArtwork(station, Modifier.size(44.dp), radius = 8.dp)
             Column(Modifier.weight(1f)) {
                 Text(station.name, color = PhoebeUi.primaryText, fontSize = 15.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -1627,14 +1610,7 @@ private fun RadioStationRow(
                 .background(PhoebeUi.subtleFill),
             contentAlignment = Alignment.Center,
         ) {
-            ArtworkImage(
-                seed = station.name,
-                thumbUrl = station.faviconUrlOrFallback,
-                fallbackThumbUrl = station.fallbackArtworkUrl,
-                modifier = Modifier.size(38.dp),
-                radius = 8.dp,
-                elevated = false,
-            )
+            RadioStationArtwork(station, Modifier.size(38.dp), radius = 8.dp)
         }
         Column(Modifier.weight(1f)) {
             val subtitle = if (station.source == RadioStationSource.Recommended) {
@@ -1655,6 +1631,23 @@ private fun RadioStationRow(
             PhoebeIconView(PhoebeIcon.Play, tint = PhoebeUi.primaryText, modifier = Modifier.size(16.dp))
         }
     }
+}
+
+@Composable
+private fun RadioStationArtwork(
+    station: RadioStation,
+    modifier: Modifier,
+    radius: Dp,
+) {
+    val remoteArtworkEnabled = LocalRadioStationRemoteArtworkEnabled.current
+    ArtworkImage(
+        seed = station.name,
+        thumbUrl = station.faviconUrlOrFallback.takeIf { remoteArtworkEnabled },
+        fallbackThumbUrl = station.fallbackArtworkUrl.takeIf { remoteArtworkEnabled },
+        modifier = modifier,
+        radius = radius,
+        elevated = false,
+    )
 }
 
 private fun RadioStation.matchesSearch(query: String): Boolean {
