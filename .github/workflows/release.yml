@@ -884,10 +884,11 @@ jobs:
             composeApp/build/dist/wasmJs/productionExecutable/404.html
 
       - name: Upload GitHub Pages artifact
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@v5
         with:
           path: composeApp/build/dist/wasmJs/productionExecutable
+          include-hidden-files: true
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
