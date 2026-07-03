@@ -915,10 +915,14 @@ private fun albumMixBuilderQueue(
 ): List<Track> {
     val leading = mutableListOf<Track>()
     val rest = mutableListOf<Track>()
+    val artistsByTitle = mutableMapOf<String, Artist>()
+    catalog.artists.forEach { artist ->
+        artistsByTitle.getOrPut(artist.title.lowercase()) { artist }
+    }
     albums.forEach { album ->
         val albumTracks = albumTrackIndex.tracksForAlbum(album)
         if (albumTracks.isEmpty()) return@forEach
-        val artist = catalog.artists.firstOrNull { it.title.equals(album.artist, ignoreCase = true) }
+        val artist = artistsByTitle[album.artist.lowercase()]
         val popular = artist
             ?.let { catalog.popularTracksByArtist[it.id].orEmpty() }
             .orEmpty()

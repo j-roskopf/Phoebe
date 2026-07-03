@@ -18,10 +18,12 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
+import java.util.concurrent.atomic.AtomicReference
 
 private val audioExt = setOf("mp3", "m4a", "flac", "wav", "aac", "ogg", "opus")
 private val artworkExt = setOf("jpg", "jpeg", "png", "webp")
 private val sidecarArtworkNames = listOf("cover", "folder", "front", "album", "artwork")
+private val lastSidecarParentCache = AtomicReference<Pair<Path, Map<String, Path>>?>()
 private const val MaxEmbeddedArtworkBytes = 12 * 1024 * 1024
 
 actual object LocalLibraryIO {
@@ -161,14 +163,20 @@ private suspend fun embeddedArtworkUri(sourceUri: String, artwork: Artwork?): St
 
 private fun sidecarArtworkUri(path: Path): String? {
     val parent = path.parent ?: return null
-    val filesByName = runCatching {
-        Files.list(parent).use { stream ->
-            stream
-                .filter { Files.isRegularFile(it) }
-                .toList()
-                .associateBy { it.fileName.toString().lowercase() }
-        }
-    }.getOrDefault(emptyMap())
+    val cached = lastSidecarParentCache.get()
+    val filesByName = if (cached != null && cached.first == parent) {
+        cached.second
+    } else {
+        runCatching {
+            Files.list(parent).use { stream ->
+                stream
+                    .filter { Files.isRegularFile(it) }
+                    .toList()
+                    .associateBy { it.fileName.toString().lowercase() }
+            }
+        }.getOrDefault(emptyMap())
+            .also { files -> lastSidecarParentCache.set(parent to files) }
+    }
     for (name in sidecarArtworkNames) {
         for (extension in artworkExt) {
             filesByName["$name.$extension"]?.let { return it.toUri().toString() }

@@ -14,10 +14,12 @@ import com.phoebe.app.platform.PlatformStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicReference
 
 private val audioExt = setOf("mp3", "m4a", "flac", "wav", "aac", "ogg", "opus")
 private val artworkExt = setOf("jpg", "jpeg", "png", "webp")
 private val sidecarArtworkNames = listOf("cover", "folder", "front", "album", "artwork")
+private val lastSidecarParentCache = AtomicReference<Pair<File, Map<String, File>>?>()
 private const val MaxEmbeddedArtworkBytes = 12 * 1024 * 1024
 
 actual object LocalLibraryIO {
@@ -158,10 +160,16 @@ private suspend fun embeddedArtworkUri(sourceUri: String, bytes: ByteArray?): St
 
 private fun sidecarArtworkUri(file: File): String? {
     val parent = file.parentFile ?: return null
-    val filesByName = parent.listFiles()
-        ?.filter { it.isFile }
-        ?.associateBy { it.name.lowercase() }
-        .orEmpty()
+    val cached = lastSidecarParentCache.get()
+    val filesByName = if (cached != null && cached.first == parent) {
+        cached.second
+    } else {
+        parent.listFiles()
+            ?.filter { it.isFile }
+            ?.associateBy { it.name.lowercase() }
+            .orEmpty()
+            .also { lastSidecarParentCache.set(parent to it) }
+    }
     for (name in sidecarArtworkNames) {
         for (extension in artworkExt) {
             filesByName["$name.$extension"]?.let { return it.toURI().toString() }

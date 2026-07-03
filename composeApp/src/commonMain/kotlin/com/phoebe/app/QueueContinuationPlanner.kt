@@ -347,9 +347,14 @@ private class ExcludedTracks private constructor(
         fun from(currentQueue: List<Track>, catalogTracks: List<Track>, recentTrackIds: Set<String>): ExcludedTracks {
             val ids = currentQueue.mapTo(mutableSetOf()) { it.id }
             ids += recentTrackIds
-            val byId = catalogTracks.associateBy { it.id }
             val identities = currentQueue.mapTo(mutableSetOf()) { it.playHistoryIdentityKey() }
-            recentTrackIds.mapNotNullTo(identities) { byId[it]?.playHistoryIdentityKey() }
+            if (recentTrackIds.isNotEmpty()) {
+                catalogTracks.forEach { track ->
+                    if (track.id in recentTrackIds) {
+                        identities += track.playHistoryIdentityKey()
+                    }
+                }
+            }
             return ExcludedTracks(ids, identities)
         }
     }
@@ -367,7 +372,7 @@ private fun PlaybackQueueOrigin?.keepPlayingSourceLabel(): String =
     }
 
 private val RelationWhitespaceRegex = Regex("""\s+""")
-private val NonAlphanumericRelationRegex = Regex("""[^a-z0-9]+""")
+private val NonAlphanumericRelationRegex = Regex("""[^\p{L}\p{N}]+""")
 private val BroadRelationTags = setOf(
     "alternative",
     "dance",
