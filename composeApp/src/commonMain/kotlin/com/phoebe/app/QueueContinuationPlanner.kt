@@ -346,10 +346,11 @@ private class ExcludedTracks private constructor(
     companion object {
         fun from(currentQueue: List<Track>, catalogTracks: List<Track>, recentTrackIds: Set<String>): ExcludedTracks {
             val ids = currentQueue.mapTo(mutableSetOf()) { it.id }
+            val remainingRecentTrackIds = recentTrackIds.toMutableSet()
+            remainingRecentTrackIds.removeAll(ids)
             ids += recentTrackIds
             val identities = currentQueue.mapTo(mutableSetOf()) { it.playHistoryIdentityKey() }
-            if (recentTrackIds.isNotEmpty()) {
-                val remainingRecentTrackIds = recentTrackIds.toMutableSet()
+            if (remainingRecentTrackIds.isNotEmpty()) {
                 for (track in catalogTracks) {
                     if (track.id in remainingRecentTrackIds) {
                         identities += track.playHistoryIdentityKey()
