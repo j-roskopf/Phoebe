@@ -54,6 +54,7 @@ class LocalFileMetadataCache(
                         bitrateKbps = entry.track.bitrateKbps?.toLong(),
                         audioCodec = entry.track.audioCodec,
                         filepath = entry.track.filepath,
+                        localArtworkUri = entry.track.localArtworkUri.orEmpty(),
                         dateAddedMs = entry.track.dateAddedMs ?: 0L,
                     )
                 }
@@ -91,6 +92,7 @@ class LocalFileMetadataCache(
                         bitrateKbps = entry.track.bitrateKbps?.toLong(),
                         audioCodec = entry.track.audioCodec,
                         filepath = entry.track.filepath,
+                        localArtworkUri = entry.track.localArtworkUri.orEmpty(),
                         dateAddedMs = entry.track.dateAddedMs ?: 0L,
                     )
                 }
@@ -120,6 +122,7 @@ class LocalFileMetadataCache(
                 streamUrl = "",
                 downloadUrl = "",
                 thumbUrl = null,
+                localArtworkUri = localArtworkUri?.takeIf { it.isNotBlank() },
                 localUri = uri,
                 year = year?.toInt(),
                 genre = genre,
@@ -130,6 +133,7 @@ class LocalFileMetadataCache(
                 bitrateKbps = bitrateKbps?.toInt(),
                 dateAddedMs = dateAddedMs,
             ),
+            artworkScanned = localArtworkUri != null,
         )
 }
 
@@ -140,6 +144,7 @@ data class LocalFileMetadataCacheEntry(
     val modifiedAtMs: Long,
     val albumId: String,
     val track: Track,
+    val artworkScanned: Boolean = true,
 ) {
     fun fingerprintMatches(sizeBytes: Long, modifiedAtMs: Long): Boolean =
         this.sizeBytes == sizeBytes && this.modifiedAtMs == modifiedAtMs

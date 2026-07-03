@@ -108,6 +108,7 @@ class DatabaseWiperDesktopTest {
                     bitrateKbps = null,
                     audioCodec = null,
                     filepath = null,
+                    localArtworkUri = null,
                     dateAddedMs = 3L,
                 )
             }

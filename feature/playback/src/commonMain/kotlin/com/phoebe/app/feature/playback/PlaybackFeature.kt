@@ -11,12 +11,15 @@ import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.RepeatMode
 import com.phoebe.app.domain.Track
+import com.phoebe.app.domain.UpNextDividerMarker
 import com.phoebe.app.player.CastState
 
 @Immutable
 data class MobilePlaybackRouteState(
     val track: Track?,
     val upNext: List<Track>,
+    val upNextDivider: UpNextDividerMarker? = null,
+    val keepPlayingEnabled: Boolean = false,
     val previousTrack: Track? = null,
     val isPlaying: Boolean,
     val isBuffering: Boolean = false,
@@ -48,6 +51,7 @@ class MobilePlaybackRouteActions(
     val onNext: () -> Unit,
     val onShuffle: () -> Unit,
     val onRepeat: () -> Unit,
+    val onKeepPlayingEnabled: (Boolean) -> Unit = {},
     val onSeek: (Long) -> Unit,
     val onPlayQueue: (Int) -> Unit,
     val onMoveUpNext: (Int, Int) -> Unit,
@@ -76,6 +80,9 @@ class MobilePlaybackRouteActions(
 data class QueueRouteState(
     val upNext: List<Track>,
     val currentTrack: Track?,
+    val upNextDivider: UpNextDividerMarker? = null,
+    val keepPlayingEnabled: Boolean = false,
+    val currentIndex: Int = -1,
     val repeat: RepeatMode,
     val currentTrackClickOpensDetail: Boolean = false,
 )
@@ -83,6 +90,7 @@ data class QueueRouteState(
 class QueueRouteActions(
     val onPlayQueue: (Int) -> Unit,
     val onClearQueue: () -> Unit,
+    val onKeepPlayingEnabled: (Boolean) -> Unit = {},
     val onMoveUpNext: (Int, Int) -> Unit,
     val onRemoveUpNext: (Int) -> Unit,
     val onOpenTrackDetail: (Track) -> Unit = {},
@@ -108,6 +116,8 @@ fun MobilePlaybackRoute(
     MobilePlayer(
         track = state.track,
         upNext = state.upNext,
+        upNextDivider = state.upNextDivider,
+        keepPlayingEnabled = state.keepPlayingEnabled,
         previousTrack = state.previousTrack,
         isPlaying = state.isPlaying,
         isBuffering = state.isBuffering,
@@ -134,6 +144,7 @@ fun MobilePlaybackRoute(
         onSkipQueueBy = actions.onSkipQueueBy,
         onShuffle = actions.onShuffle,
         onRepeat = actions.onRepeat,
+        onKeepPlayingEnabled = actions.onKeepPlayingEnabled,
         onSeek = actions.onSeek,
         onPlayQueue = actions.onPlayQueue,
         onMoveUpNext = actions.onMoveUpNext,
@@ -172,10 +183,14 @@ fun QueueRoute(
     QueuePanel(
         upNext = state.upNext,
         currentTrack = state.currentTrack,
+        upNextDivider = state.upNextDivider,
+        keepPlayingEnabled = state.keepPlayingEnabled,
+        currentIndex = state.currentIndex,
         repeat = state.repeat,
         modifier = modifier,
         onPlayQueue = actions.onPlayQueue,
         onClearQueue = actions.onClearQueue,
+        onKeepPlayingEnabled = actions.onKeepPlayingEnabled,
         onMoveUpNext = actions.onMoveUpNext,
         onRemoveUpNext = actions.onRemoveUpNext,
         onOpenTrackDetail = actions.onOpenTrackDetail,

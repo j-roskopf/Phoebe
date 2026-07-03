@@ -4119,20 +4119,24 @@ class CatalogRepository(
     suspend fun resolveTracksByIds(ids: Collection<String>): Map<String, Track> {
         if (ids.isEmpty()) return emptyMap()
         val snapshot = mutableCatalog.value
+        val activeFolderIds = activeLocalFolderIds()
         val resolved = LinkedHashMap<String, Track>(ids.size)
         val remaining = ids.filterTo(LinkedHashSet()) { it.isNotBlank() }
 
         for (id in remaining.toList()) {
-            snapshot.findTrackByIds(providerTrackLookupIds(id))?.let { track ->
-                resolved[id] = track
-                remaining.remove(id)
-            }
+            snapshot.findTrackByIds(providerTrackLookupIds(id))
+                ?.takeUnless { track -> track.id.isInactiveLocalFolderCatalogId(activeFolderIds) }
+                ?.let { track ->
+                    resolved[id] = track
+                    remaining.remove(id)
+                }
         }
         val fromDb = withContext(Dispatchers.Default) {
             buildMap(remaining.size) {
                 for (id in remaining) {
                     providerTrackLookupIds(id).firstNotNullOfOrNull { lookupId ->
                         database.catalogQueries.selectTrackById(lookupId).awaitAsOneOrNull()
+                            ?.takeUnless { row -> row.id.isInactiveLocalFolderCatalogId(activeFolderIds) }
                     }?.let { row ->
                         put(
                             id,
@@ -4635,6 +4639,35 @@ class CatalogRepository(
         }
         val station = artistRadioStation(session, artist) ?: return emptyList()
         return playRadioStation(session, station)
+    }
+
+    suspend fun instantMixForItem(session: PlexSession?, itemId: String): List<Track> {
+        val providerPrefix = session?.providerType?.catalogPrefix
+        if (!session.isEmbyFamily() || providerPrefix == null || !itemId.startsWith("$providerPrefix:")) {
+            return emptyList()
+        }
+        val server = session.selectedServer ?: return emptyList()
+        val userId = session.userId ?: return emptyList()
+        val remoteClient = if (providerPrefix == "emby") embyClient else jellyfinClient
+        return remoteClient.instantMix(server, session.token, userId, itemId.removePrefix("$providerPrefix:"))
+            .map { it.withProviderPrefix(providerPrefix) }
+            .also { tracks ->
+                if (tracks.isNotEmpty()) publishIndexedJellyfinTracks(tracks)
+            }
+    }
+
+    suspend fun plexSimilarTracksForItem(session: PlexSession?, itemId: String): List<Track> {
+        val plexSession = session?.takeIf { it.isPlex() } ?: return emptyList()
+        val ratingKey = plexRatingKey(itemId) ?: return emptyList()
+        val server = plexSession.selectedServer ?: return emptyList()
+        val token = plexSession.serverAuthToken() ?: return emptyList()
+        val tracks = plexClient.similarTracksForMetadata(
+            server = server,
+            ratingKey = ratingKey,
+            token = token,
+        ).map { it.withPlexPrefix() }
+        publishRadioTracksInBackground(tracks)
+        return tracks
     }
 
     suspend fun artistRadioStation(session: PlexSession?, artist: Artist): PlexRadioStation? {

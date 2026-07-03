@@ -126,6 +126,12 @@ sealed interface PhoebeRoute : NavKey {
     data class PlayHistory(val kind: PlayHistoryKind) : PhoebeRoute
 
     @Serializable
+    data object ArtistMixBuilder : PhoebeRoute
+
+    @Serializable
+    data object AlbumMixBuilder : PhoebeRoute
+
+    @Serializable
     data object FavoritePlaylists : PhoebeRoute
 
     @Serializable
@@ -165,6 +171,8 @@ val phoebeRouteSerializersModule = SerializersModule {
         subclass(PhoebeRoute.Lyrics::class, PhoebeRoute.Lyrics.serializer())
         subclass(PhoebeRoute.RecentlyAdded::class, PhoebeRoute.RecentlyAdded.serializer())
         subclass(PhoebeRoute.PlayHistory::class, PhoebeRoute.PlayHistory.serializer())
+        subclass(PhoebeRoute.ArtistMixBuilder::class, PhoebeRoute.ArtistMixBuilder.serializer())
+        subclass(PhoebeRoute.AlbumMixBuilder::class, PhoebeRoute.AlbumMixBuilder.serializer())
         subclass(PhoebeRoute.FavoritePlaylists::class, PhoebeRoute.FavoritePlaylists.serializer())
         subclass(PhoebeRoute.FavoriteArtists::class, PhoebeRoute.FavoriteArtists.serializer())
         subclass(PhoebeRoute.FavoriteAlbums::class, PhoebeRoute.FavoriteAlbums.serializer())
@@ -212,6 +220,7 @@ fun resolvePhoebeRoute(
     route: PhoebeRoute,
     catalog: CatalogSnapshot,
     currentTrack: Track?,
+    showArtistAlbumMixBuilders: Boolean = true,
 ): PhoebeRouteResolution = when (route) {
     PhoebeRoute.SignIn -> route.resolved(AppScreen.SignIn)
     PhoebeRoute.ServerPicker -> route.resolved(AppScreen.ServerPicker)
@@ -253,6 +262,16 @@ fun resolvePhoebeRoute(
     }
     is PhoebeRoute.RecentlyAdded -> route.resolved(AppScreen.RecentlyAdded(route.kind))
     is PhoebeRoute.PlayHistory -> route.resolved(AppScreen.PlayHistory(route.kind))
+    PhoebeRoute.ArtistMixBuilder -> if (showArtistAlbumMixBuilders) {
+        route.resolved(AppScreen.ArtistMixBuilder)
+    } else {
+        route.missing("Mix unavailable", "Artist mixes require a music library or enabled local folder.")
+    }
+    PhoebeRoute.AlbumMixBuilder -> if (showArtistAlbumMixBuilders) {
+        route.resolved(AppScreen.AlbumMixBuilder)
+    } else {
+        route.missing("Mix unavailable", "Album mixes require a music library or enabled local folder.")
+    }
     PhoebeRoute.FavoritePlaylists -> route.resolved(AppScreen.FavoritePlaylists)
     PhoebeRoute.FavoriteArtists -> route.resolved(AppScreen.FavoriteArtists)
     PhoebeRoute.FavoriteAlbums -> route.resolved(AppScreen.FavoriteAlbums)
@@ -306,6 +325,8 @@ val PhoebeRoute.telemetryName: String
         is PhoebeRoute.Lyrics -> "lyrics"
         is PhoebeRoute.RecentlyAdded -> "recently_added"
         is PhoebeRoute.PlayHistory -> "play_history"
+        PhoebeRoute.ArtistMixBuilder -> "artist_mix_builder"
+        PhoebeRoute.AlbumMixBuilder -> "album_mix_builder"
         PhoebeRoute.FavoritePlaylists -> "favorite_playlists"
         PhoebeRoute.FavoriteArtists -> "favorite_artists"
         PhoebeRoute.FavoriteAlbums -> "favorite_albums"

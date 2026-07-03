@@ -6,6 +6,8 @@ import com.phoebe.app.domain.CatalogSnapshot
 import com.phoebe.app.domain.CollectionEntry
 import com.phoebe.app.domain.CollectionFacet
 import com.phoebe.app.domain.CollectionTarget
+import com.phoebe.app.domain.LocalFolderMediaSourceConfig
+import com.phoebe.app.domain.MediaSourcesState
 import com.phoebe.app.domain.PlayHistoryKind
 import com.phoebe.app.domain.RecentlyAddedKind
 import com.phoebe.app.ui.AppNavigationRequest
@@ -13,6 +15,7 @@ import com.phoebe.app.ui.BrowseSection
 import com.phoebe.app.ui.PhoebeNavigator
 import com.phoebe.app.ui.PhoebeRoute
 import com.phoebe.app.ui.PhoebeRouteResolution
+import com.phoebe.app.ui.canBrowseMainSections
 import com.phoebe.app.ui.decodePhoebeRouteBackStack
 import com.phoebe.app.ui.encodePhoebeRouteBackStack
 import com.phoebe.app.ui.phoebeRouteSerializersModule
@@ -22,6 +25,7 @@ import com.phoebe.app.ui.toPhoebeWebPath
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
+import kotlin.test.assertTrue
 import kotlinx.serialization.PolymorphicSerializer
 import kotlinx.serialization.json.Json
 
@@ -54,6 +58,8 @@ class PhoebeNavigationTest {
             PhoebeRoute.Lyrics(),
             PhoebeRoute.RecentlyAdded(RecentlyAddedKind.Songs),
             PhoebeRoute.PlayHistory(PlayHistoryKind.MostPlayed),
+            PhoebeRoute.ArtistMixBuilder,
+            PhoebeRoute.AlbumMixBuilder,
             PhoebeRoute.FavoritePlaylists,
             PhoebeRoute.FavoriteArtists,
             PhoebeRoute.FavoriteAlbums,
@@ -259,5 +265,58 @@ class PhoebeNavigationTest {
         )
 
         assertIs<PhoebeRouteResolution.Missing>(resolution)
+    }
+
+    @Test
+    fun mixBuildersResolveToFallbackWhenUnavailable() {
+        val artistResolution = resolvePhoebeRoute(
+            route = PhoebeRoute.ArtistMixBuilder,
+            catalog = CatalogSnapshot(),
+            currentTrack = null,
+            showArtistAlbumMixBuilders = false,
+        )
+        val albumResolution = resolvePhoebeRoute(
+            route = PhoebeRoute.AlbumMixBuilder,
+            catalog = CatalogSnapshot(),
+            currentTrack = null,
+            showArtistAlbumMixBuilders = false,
+        )
+
+        assertIs<PhoebeRouteResolution.Missing>(artistResolution)
+        assertIs<PhoebeRouteResolution.Missing>(albumResolution)
+    }
+
+    @Test
+    fun mixBuildersResolveWhenLibraryOrLocalSourceAvailable() {
+        val artistResolution = resolvePhoebeRoute(
+            route = PhoebeRoute.ArtistMixBuilder,
+            catalog = CatalogSnapshot(),
+            currentTrack = null,
+            showArtistAlbumMixBuilders = true,
+        )
+        val albumResolution = resolvePhoebeRoute(
+            route = PhoebeRoute.AlbumMixBuilder,
+            catalog = CatalogSnapshot(),
+            currentTrack = null,
+            showArtistAlbumMixBuilders = true,
+        )
+
+        assertIs<PhoebeRouteResolution.Resolved>(artistResolution)
+        assertIs<PhoebeRouteResolution.Resolved>(albumResolution)
+    }
+
+    @Test
+    fun enabledLocalFoldersAllowSourceBackedBrowseSections() {
+        val mediaSources = MediaSourcesState(
+            localFolders = listOf(
+                LocalFolderMediaSourceConfig(
+                    id = "local-folder-1",
+                    rootUri = "file:///Music",
+                    label = "Music",
+                ),
+            ),
+        )
+
+        assertTrue(canBrowseMainSections(session = null, mediaSources = mediaSources))
     }
 }

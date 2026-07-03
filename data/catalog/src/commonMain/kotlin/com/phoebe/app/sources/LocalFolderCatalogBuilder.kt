@@ -68,13 +68,17 @@ object LocalFolderCatalogBuilder {
             val albumTitle = pairs.first().first
             val tracks = pairs.map { it.second }
             val artistGuess = tracks.firstOrNull()?.artist ?: "Local files"
+            val artworkUri = tracks.firstNotNullOfOrNull { track ->
+                track.localArtworkUri?.takeIf { it.isNotBlank() }
+                    ?: track.thumbUrl?.takeIf { it.isNotBlank() }
+            }
             albums.add(
                 Album(
                     id = albumId,
                     title = albumTitle,
                     artist = artistGuess,
                     year = null,
-                    thumbUrl = null,
+                    thumbUrl = artworkUri,
                     dateAddedMs = tracks.mapNotNull { it.dateAddedMs }.maxOrNull(),
                     genre = dominantTrackTag(tracks) { it.genre },
                     mood = dominantTrackTag(tracks) { it.mood },
@@ -128,7 +132,7 @@ object LocalFolderCatalogBuilder {
         val changedFiles = mutableListOf<Pair<Int, LocalAudioFile>>()
         for ((index, file) in files.withIndex()) {
             val cached = cachedByUri[file.uri]
-            if (cached?.fingerprintMatches(file.sizeBytes, file.modifiedAtMs) == true) {
+            if (cached?.fingerprintMatches(file.sizeBytes, file.modifiedAtMs) == true && cached.artworkScanned) {
                 entries[index] = cached.copy(
                     sizeBytes = file.sizeBytes,
                     modifiedAtMs = file.modifiedAtMs,
@@ -194,6 +198,7 @@ object LocalFolderCatalogBuilder {
             streamUrl = "",
             downloadUrl = "",
             thumbUrl = null,
+            localArtworkUri = meta.artworkUri?.takeIf { it.isNotBlank() },
             localUri = file.uri,
             year = meta.year,
             genre = meta.genre,

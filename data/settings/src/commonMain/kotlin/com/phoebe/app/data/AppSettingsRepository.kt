@@ -17,6 +17,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -42,7 +43,7 @@ class AppSettingsRepository(
         val row = withContext(Dispatchers.Default) {
             database.appSettingsQueries.selectCurrent().awaitAsOneOrNull()
         }
-        mutableState.value = row?.toSettings() ?: AppSettings.Default
+        mutableState.value = (row?.toSettings() ?: AppSettings.Default).withoutSessionSettings()
     }
 
     suspend fun setCrossfadeSeconds(seconds: Int) {
@@ -60,6 +61,14 @@ class AppSettingsRepository(
     suspend fun setNotifyWhenDownloadFinishes(enabled: Boolean) {
         updateAndSave { current ->
             current.copy(notifyWhenDownloadFinishes = enabled)
+        }
+    }
+
+    suspend fun setKeepPlayingEnabled(enabled: Boolean) {
+        saveMutex.withLock {
+            mutableState.update { current ->
+                current.copy(keepPlayingEnabled = enabled)
+            }
         }
     }
 
@@ -172,23 +181,25 @@ class AppSettingsRepository(
         withContext(NonCancellable + Dispatchers.Default) {
             saveMutex.withLock {
                 val normalized = transform(mutableState.value).normalized()
+                val persisted = normalized.withoutSessionSettings()
                 database.appSettingsQueries.upsert(
-                    crossfadeSeconds = normalized.crossfadeSeconds.toLong(),
-                    scanLibraryOnLaunch = normalized.scanLibraryOnLaunch.toDb(),
-                    notifyWhenDownloadFinishes = normalized.notifyWhenDownloadFinishes.toDb(),
-                    persistEqualizerSettings = normalized.persistEqualizerSettings.toDb(),
-                    persistVolumeSettings = normalized.persistVolumeSettings.toDb(),
-                    savedVolume = normalized.savedVolume.toDouble(),
-                    equalizerProfile = json.encodeToString(normalized.equalizerProfile),
-                    nowPlayingVisualizerPreset = normalized.nowPlayingVisualizerPreset.name,
-                    nowPlayingVisualizerInTvFrame = normalized.nowPlayingVisualizerInTvFrame.toDb(),
-                    blurredArtworkAppearance = normalized.blurredArtworkAppearance.toDb(),
-                    fullBleedDetailArtwork = normalized.fullBleedDetailArtwork.toDb(),
-                    tintedBackgroundGradient = normalized.tintedBackgroundGradient.toDb(),
-                    listenBrainzSettings = json.encodeToString(normalized.listenBrainz),
-                    lastFmSettings = json.encodeToString(normalized.lastFm),
-                    downloadPolicySettings = json.encodeToString(normalized.downloadPolicy),
-                    audioProcessingSettings = json.encodeToString(normalized.audioProcessing),
+                    crossfadeSeconds = persisted.crossfadeSeconds.toLong(),
+                    scanLibraryOnLaunch = persisted.scanLibraryOnLaunch.toDb(),
+                    notifyWhenDownloadFinishes = persisted.notifyWhenDownloadFinishes.toDb(),
+                    keepPlayingEnabled = persisted.keepPlayingEnabled.toDb(),
+                    persistEqualizerSettings = persisted.persistEqualizerSettings.toDb(),
+                    persistVolumeSettings = persisted.persistVolumeSettings.toDb(),
+                    savedVolume = persisted.savedVolume.toDouble(),
+                    equalizerProfile = json.encodeToString(persisted.equalizerProfile),
+                    nowPlayingVisualizerPreset = persisted.nowPlayingVisualizerPreset.name,
+                    nowPlayingVisualizerInTvFrame = persisted.nowPlayingVisualizerInTvFrame.toDb(),
+                    blurredArtworkAppearance = persisted.blurredArtworkAppearance.toDb(),
+                    fullBleedDetailArtwork = persisted.fullBleedDetailArtwork.toDb(),
+                    tintedBackgroundGradient = persisted.tintedBackgroundGradient.toDb(),
+                    listenBrainzSettings = json.encodeToString(persisted.listenBrainz),
+                    lastFmSettings = json.encodeToString(persisted.lastFm),
+                    downloadPolicySettings = json.encodeToString(persisted.downloadPolicy),
+                    audioProcessingSettings = json.encodeToString(persisted.audioProcessing),
                 )
                 mutableState.value = normalized
             }
@@ -200,6 +211,7 @@ class AppSettingsRepository(
             crossfadeSeconds = crossfadeSeconds.toInt(),
             scanLibraryOnLaunch = scanLibraryOnLaunch.toBool(),
             notifyWhenDownloadFinishes = notifyWhenDownloadFinishes.toBool(),
+            keepPlayingEnabled = keepPlayingEnabled.toBool(),
             persistEqualizerSettings = persistEqualizerSettings.toBool(),
             persistVolumeSettings = persistVolumeSettings.toBool(),
             savedVolume = savedVolume.toFloat(),
@@ -214,6 +226,9 @@ class AppSettingsRepository(
             downloadPolicy = decodeDownloadPolicySettings(downloadPolicySettings),
             audioProcessing = decodeAudioProcessingSettings(audioProcessingSettings),
         ).normalized()
+
+    private fun AppSettings.withoutSessionSettings(): AppSettings =
+        copy(keepPlayingEnabled = false)
 
     private fun decodeEqualizerProfile(value: String): EqualizerProfile =
         try {

@@ -314,6 +314,7 @@ private fun CatalogSnapshot.findTrackByIds(ids: Set<String>): Track? {
 }
 
 private fun <T> placeholderTrackForPlayHistoryEntry(entry: T, trackId: String): Track? {
+    if (trackId.startsWith("local_")) return null
     val (artist, album) = when (entry) {
         is RecentlyPlayedEntry -> entry.artist to entry.album
         is MostPlayedEntry -> entry.artist to entry.album

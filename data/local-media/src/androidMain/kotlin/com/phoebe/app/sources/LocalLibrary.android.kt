@@ -10,11 +10,15 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.documentfile.provider.DocumentFile
 import com.phoebe.app.AndroidContextHolder
+import com.phoebe.app.platform.PlatformStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 
 private val audioExt = setOf("mp3", "m4a", "flac", "wav", "aac", "ogg", "opus")
+private val artworkExt = setOf("jpg", "jpeg", "png", "webp")
+private val sidecarArtworkNames = listOf("cover", "folder", "front", "album", "artwork")
+private const val MaxEmbeddedArtworkBytes = 12 * 1024 * 1024
 
 actual object LocalLibraryIO {
     actual suspend fun listAudioFiles(rootUri: String): List<LocalAudioFile> = withContext(Dispatchers.IO) {
@@ -75,8 +79,8 @@ actual object LocalLibraryIO {
         val ctx = AndroidContextHolder.application
         val parsed = Uri.parse(uri)
         val retriever = MediaMetadataRetriever()
+        val file = uri.toFileOrNull()
         try {
-            val file = uri.toFileOrNull()
             if (file != null) {
                 retriever.setDataSource(file.absolutePath)
             } else {
@@ -99,6 +103,8 @@ actual object LocalLibraryIO {
                     else -> r / 1000
                 }
             }
+            val artworkUri = embeddedArtworkUri(uri, retriever.embeddedPicture)
+                ?: file?.let(::sidecarArtworkUri)
             AudioMetadata(
                 title = title,
                 artist = artist,
@@ -110,9 +116,16 @@ actual object LocalLibraryIO {
                 style = null,
                 bitrateKbps = bitrateKbps,
                 audioCodec = null,
+                artworkUri = artworkUri,
             )
         } catch (_: Throwable) {
-            AudioMetadata(title = null, artist = null, album = null, durationMs = 0L)
+            AudioMetadata(
+                title = null,
+                artist = null,
+                album = null,
+                durationMs = 0L,
+                artworkUri = file?.let(::sidecarArtworkUri),
+            )
         } finally {
             runCatching { retriever.release() }
         }
@@ -135,6 +148,50 @@ actual object LocalLibraryIO {
         if (parsed.scheme != "file") return null
         return File(parsed.path ?: return null)
     }
+}
+
+private suspend fun embeddedArtworkUri(sourceUri: String, bytes: ByteArray?): String? {
+    val data = bytes?.takeIf { it.isNotEmpty() && it.size <= MaxEmbeddedArtworkBytes } ?: return null
+    val target = "artwork/local-${sourceUri.stableArtworkHash()}.${data.sniffedArtworkExtension()}"
+    return runCatching { PlatformStorage().writeBytes(target, data) }.getOrNull()
+}
+
+private fun sidecarArtworkUri(file: File): String? {
+    val parent = file.parentFile ?: return null
+    val filesByName = parent.listFiles()
+        ?.filter { it.isFile }
+        ?.associateBy { it.name.lowercase() }
+        .orEmpty()
+    for (name in sidecarArtworkNames) {
+        for (extension in artworkExt) {
+            filesByName["$name.$extension"]?.let { return it.toURI().toString() }
+        }
+    }
+    return null
+}
+
+private fun ByteArray.sniffedArtworkExtension(): String =
+    when {
+        size >= 8 &&
+            this[0] == 0x89.toByte() &&
+            this[1] == 0x50.toByte() &&
+            this[2] == 0x4E.toByte() &&
+            this[3] == 0x47.toByte() -> "png"
+        size >= 12 &&
+            this[0] == 0x52.toByte() &&
+            this[1] == 0x49.toByte() &&
+            this[2] == 0x46.toByte() &&
+            this[8] == 0x57.toByte() &&
+            this[9] == 0x45.toByte() &&
+            this[10] == 0x42.toByte() &&
+            this[11] == 0x50.toByte() -> "webp"
+        else -> "jpg"
+    }
+
+private fun String.stableArtworkHash(): String {
+    var hash = 1125899906842597L
+    forEach { c -> hash = (hash * 31) + c.code }
+    return hash.toString()
 }
 
 @Composable

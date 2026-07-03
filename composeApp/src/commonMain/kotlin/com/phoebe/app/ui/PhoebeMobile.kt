@@ -315,6 +315,11 @@ internal fun MobileBrowseShell(
     onPlayPersonalMix: () -> Unit = {},
     onPlayPopularMix: () -> Unit = {},
     onPlayTopTracksMix: () -> Unit = {},
+    onArtistMixBuilder: () -> Unit = {},
+    onAlbumMixBuilder: () -> Unit = {},
+    showArtistAlbumMixBuilders: Boolean = session?.selectedLibrary != null ||
+        catalog.artists.isNotEmpty() ||
+        catalog.albums.isNotEmpty(),
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
@@ -350,6 +355,7 @@ internal fun MobileBrowseShell(
     onCrossfadeSeconds: (Int) -> Unit,
     onScanLibraryOnLaunch: (Boolean) -> Unit,
     onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
+    onKeepPlayingEnabled: (Boolean) -> Unit = {},
     onPersistEqualizerSettings: (Boolean) -> Unit = {},
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
     audioProcessingCapabilities: AudioProcessingCapabilities = AudioProcessingCapabilities(),
@@ -620,6 +626,7 @@ internal fun MobileBrowseShell(
                         onCrossfadeSeconds = onCrossfadeSeconds,
                         onScanLibraryOnLaunch = onScanLibraryOnLaunch,
                         onNotifyWhenDownloadFinishes = onNotifyWhenDownloadFinishes,
+                        onKeepPlayingEnabled = onKeepPlayingEnabled,
                         onPersistEqualizerSettings = onPersistEqualizerSettings,
                         onAudioProcessingSettings = onAudioProcessingSettings,
                         onVisualizerPreset = onVisualizerPreset,
@@ -665,7 +672,9 @@ internal fun MobileBrowseShell(
                         radioStations,
                         radioStartingIds,
                         decadeMixNotice,
+                        session?.selectedLibrary,
                         session?.providerType,
+                        showArtistAlbumMixBuilders,
                     ) {
                         MobileHomeRouteState(
                             homeUiState = homeUiState,
@@ -678,6 +687,7 @@ internal fun MobileBrowseShell(
                             decadeMixNotice = decadeMixNotice,
                             homeScreenLayoutMode = homeScreenLayoutMode,
                             showPopularMix = session.isPlex(),
+                            showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
                         )
                     }
                     val mobileHomeCallbacks = remember(
@@ -701,6 +711,8 @@ internal fun MobileBrowseShell(
                         onPlayPersonalMix,
                         onPlayPopularMix,
                         onPlayTopTracksMix,
+                        onArtistMixBuilder,
+                        onAlbumMixBuilder,
                         onPlayTracks,
                         onAddToUpNext,
                         onDownload,
@@ -726,6 +738,8 @@ internal fun MobileBrowseShell(
                             onPlayPersonalMix = onPlayPersonalMix,
                             onPlayPopularMix = onPlayPopularMix,
                             onPlayTopTracksMix = onPlayTopTracksMix,
+                            onArtistMixBuilder = onArtistMixBuilder,
+                            onAlbumMixBuilder = onAlbumMixBuilder,
                             onPlayTracks = onPlayTracks,
                             onAddToUpNext = onAddToUpNext,
                             onDownload = onDownload,

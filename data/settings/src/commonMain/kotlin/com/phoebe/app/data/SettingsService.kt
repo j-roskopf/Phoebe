@@ -41,6 +41,10 @@ class SettingsService(
         appSettingsRepository.setNotifyWhenDownloadFinishes(enabled)
     }
 
+    suspend fun setKeepPlayingEnabled(enabled: Boolean) {
+        appSettingsRepository.setKeepPlayingEnabled(enabled)
+    }
+
     suspend fun setNowPlayingVisualizerPreset(preset: NowPlayingVisualizerPreset) {
         appSettingsRepository.setNowPlayingVisualizerPreset(preset)
     }

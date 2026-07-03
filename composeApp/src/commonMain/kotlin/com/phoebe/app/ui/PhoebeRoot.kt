@@ -197,8 +197,12 @@ import com.phoebe.app.feature.favorites.FavoritePlaylistsRouteState
 import com.phoebe.app.feature.history.HistoryNowPlayingState
 import com.phoebe.app.feature.history.PlayHistoryRoute
 import com.phoebe.app.feature.history.PlayHistoryRouteState
+import com.phoebe.app.feature.home.AlbumMixBuilderRoute
+import com.phoebe.app.feature.home.ArtistMixBuilderRoute
 import com.phoebe.app.feature.home.HomeUiState
 import com.phoebe.app.feature.home.HomePosterLoadingState
+import com.phoebe.app.feature.home.MixBuilderRouteActions
+import com.phoebe.app.feature.home.MixBuilderRouteState
 import com.phoebe.app.feature.home.RecentlyAddedNowPlayingState
 import com.phoebe.app.feature.home.RecentlyAddedRoute
 import com.phoebe.app.feature.home.RecentlyAddedRouteActions
@@ -246,6 +250,7 @@ import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.PlexSession
 import com.phoebe.app.domain.Playlist
 import com.phoebe.app.domain.PlayHistoryKind
+import com.phoebe.app.domain.PlaybackQueueOrigin
 import com.phoebe.app.domain.RadioNowPlayingMetadata
 import com.phoebe.app.domain.RadioStation
 import com.phoebe.app.domain.RadioStationSearchQuery
@@ -269,6 +274,8 @@ import com.phoebe.app.domain.supportsPlexRatings
 import com.phoebe.app.domain.supportsRemotePlaylists
 import com.phoebe.app.domain.supportsRemoteRatings
 import com.phoebe.app.domain.telemetryName
+import com.phoebe.app.domain.UpNextDividerMarker
+import com.phoebe.app.domain.providerTypeFromCatalogId
 import com.phoebe.app.player.CastState
 import com.phoebe.app.platform.createPlatformHttpClient
 import com.phoebe.app.platform.currentTimeMs
@@ -442,8 +449,14 @@ private fun PhoebeRootStateHolder(
         }
     }
     val currentRoute = navigator.currentRoute
-    val routeResolution = remember(currentRoute, catalog, currentTrack) {
-        resolvePhoebeRoute(currentRoute, catalog, currentTrack)
+    val showArtistAlbumMixBuilders = canBrowseMainSections(session, mediaSources)
+    val routeResolution = remember(currentRoute, catalog, currentTrack, showArtistAlbumMixBuilders) {
+        resolvePhoebeRoute(
+            currentRoute,
+            catalog,
+            currentTrack,
+            showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
+        )
     }
     val missingRoute = routeResolution as? PhoebeRouteResolution.Missing
     val screen = (routeResolution as? PhoebeRouteResolution.Resolved)?.screen ?: AppScreen.Home
@@ -618,6 +631,8 @@ private fun PhoebeRootStateHolder(
         AppScreen.FavoritePlaylists -> "favorite-playlists"
         AppScreen.FavoriteArtists -> "favorite-artists"
         AppScreen.FavoriteAlbums -> "favorite-albums"
+        AppScreen.ArtistMixBuilder -> "artist-mix-builder"
+        AppScreen.AlbumMixBuilder -> "album-mix-builder"
         is AppScreen.PlaylistDetail -> "playlist:${currentScreen.playlist.id}"
         else -> "browse:$browseSection:${selectedPlaylistId.orEmpty()}"
     }
@@ -703,10 +718,11 @@ private fun PhoebeRootStateHolder(
     val catalogHasContent = catalog.artists.isNotEmpty() ||
         catalog.albums.isNotEmpty() ||
         catalog.playlists.isNotEmpty()
-    val activeCatalogSurfaceHasContent = remember(catalog, screen, browseSection, selectedPlaylistId, libraryFilter) {
+    val activeCatalogSurfaceHasContent = remember(catalog, screen, showArtistAlbumMixBuilders, browseSection, selectedPlaylistId, libraryFilter) {
         catalogHasContentForSurface(
             catalog = catalog,
             screen = screen,
+            showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
             browseSection = browseSection,
             selectedPlaylistId = selectedPlaylistId,
             libraryFilter = libraryFilter,
@@ -804,25 +820,50 @@ private fun PhoebeRootStateHolder(
         { kind: PlayHistoryKind, limit: Int -> state.queryPlayHistoryEntries(kind, limit) }
     }
     val playTracks: (List<Track>, Int) -> Unit = { tracks, index ->
+        val collectionMixSeed = navigator.routes.collectionMixSeed()
         state.playTracks(
             tracks = tracks,
             index = index,
-            collectionMixSeed = navigator.routes.collectionMixSeed(),
+            collectionMixSeed = collectionMixSeed,
+            queueOrigin = playbackOriginForCurrentSurface(
+                screen = screen,
+                selectedPlaylistId = selectedPlaylistId,
+                catalog = catalog,
+                tracks = tracks,
+                collectionMixSeed = collectionMixSeed,
+            ),
         )
     }
     val playAllTracks: (List<Track>) -> Unit = { tracks ->
+        val collectionMixSeed = navigator.routes.collectionMixSeed()
         state.playTracks(
             tracks = tracks,
             index = 0,
-            collectionMixSeed = navigator.routes.collectionMixSeed(),
+            collectionMixSeed = collectionMixSeed,
+            queueOrigin = playbackOriginForCurrentSurface(
+                screen = screen,
+                selectedPlaylistId = selectedPlaylistId,
+                catalog = catalog,
+                tracks = tracks,
+                collectionMixSeed = collectionMixSeed,
+            ),
             clearShuffle = true,
         )
     }
     val shuffleAllTracks: (List<Track>) -> Unit = { tracks ->
+        val collectionMixSeed = navigator.routes.collectionMixSeed()
+        val shuffledTracks = tracks.shuffled()
         state.playTracks(
-            tracks = tracks.shuffled(),
+            tracks = shuffledTracks,
             index = 0,
-            collectionMixSeed = navigator.routes.collectionMixSeed(),
+            collectionMixSeed = collectionMixSeed,
+            queueOrigin = playbackOriginForCurrentSurface(
+                screen = screen,
+                selectedPlaylistId = selectedPlaylistId,
+                catalog = catalog,
+                tracks = tracks,
+                collectionMixSeed = collectionMixSeed,
+            ),
             shuffleEnabled = true,
         )
     }
@@ -840,9 +881,17 @@ private fun PhoebeRootStateHolder(
         index: Int,
         shuffleEnabled: Boolean = false,
         clearShuffle: Boolean = false,
+        queueOrigin: PlaybackQueueOrigin? = null,
     ) {
         if (tracks.isEmpty()) return
         val collectionMixSeed = navigator.routes.collectionMixSeed()
+        val resolvedQueueOrigin = queueOrigin ?: playbackOriginForCurrentSurface(
+            screen = screen,
+            selectedPlaylistId = selectedPlaylistId,
+            catalog = catalog,
+            tracks = tracks,
+            collectionMixSeed = collectionMixSeed,
+        )
         val previewIndex = index.coerceIn(0, tracks.lastIndex)
         pendingMobilePlaybackJob?.cancel()
         pendingMobilePlaybackJob = null
@@ -850,6 +899,7 @@ private fun PhoebeRootStateHolder(
             tracks = tracks,
             index = index,
             collectionMixSeed = collectionMixSeed,
+            queueOrigin = resolvedQueueOrigin,
             shuffleEnabled = shuffleEnabled,
             clearShuffle = clearShuffle,
         )
@@ -873,7 +923,19 @@ private fun PhoebeRootStateHolder(
         requestMobilePlayback(tracks, 0, clearShuffle = true)
     }
     val shuffleAllTracksFromMobile: (List<Track>) -> Unit = { tracks ->
-        requestMobilePlayback(tracks.shuffled(), 0, shuffleEnabled = true)
+        val shuffledTracks = tracks.shuffled()
+        requestMobilePlayback(
+            shuffledTracks,
+            0,
+            shuffleEnabled = true,
+            queueOrigin = playbackOriginForCurrentSurface(
+                screen = screen,
+                selectedPlaylistId = selectedPlaylistId,
+                catalog = catalog,
+                tracks = tracks,
+                collectionMixSeed = navigator.routes.collectionMixSeed(),
+            ),
+        )
     }
     fun openMobilePlayer() {
         ensureRadioPlaybackBackStack()
@@ -884,6 +946,7 @@ private fun PhoebeRootStateHolder(
     val mobilePlayerPreviousTrack = pendingMobilePlaybackPreview?.previousTrack
         ?: playerQueue.queue.getOrNull(currentIndex - 1)
     val mobilePlayerCurrentIndex = pendingMobilePlaybackPreview?.index ?: currentIndex
+    val mobilePlayerUpNextDivider = if (pendingMobilePlaybackPreview == null) playerQueue.upNextDivider else null
     val pendingMobilePlaybackTrackId = pendingMobilePlaybackPreview?.currentTrack?.id
     val mobilePlaybackStarting = pendingMobilePlaybackTrackId != null &&
         pendingMobilePlaybackTrackId != currentTrack?.id
@@ -912,7 +975,15 @@ private fun PhoebeRootStateHolder(
                     if (tracks.isNotEmpty()) {
                         recentPersonalMixKeys = (recentPersonalMixKeys + tracks.map { it.personalMixIdentityKey() })
                             .let { keys -> if (keys.size > 100) keys.drop(keys.size - 100).toSet() else keys.toSet() }
-                        playTracksFromMobile(tracks, 0)
+                        requestMobilePlayback(
+                            tracks,
+                            0,
+                            queueOrigin = PlaybackQueueOrigin.Mix(
+                                id = "personal",
+                                title = "Personal Mix",
+                                seedTrackIds = tracks.map { it.id },
+                            ),
+                        )
                     }
                 } finally {
                     val remainingLoadingMs = HomePosterLoadingMinDurationMs - (currentTimeMs() - loadingStartedAtMs)
@@ -1037,6 +1108,20 @@ private fun PhoebeRootStateHolder(
         selectedPlaylistId = null
         navigator.openBrowse(BrowseSection.Home)
         navigator.open(PhoebeRoute.FavoriteAlbums)
+    }
+    val openArtistMixBuilder: () -> Unit = {
+        if (showArtistAlbumMixBuilders) {
+            selectedPlaylistId = null
+            navigator.openBrowse(BrowseSection.Home)
+            navigator.open(PhoebeRoute.ArtistMixBuilder)
+        }
+    }
+    val openAlbumMixBuilder: () -> Unit = {
+        if (showArtistAlbumMixBuilders) {
+            selectedPlaylistId = null
+            navigator.openBrowse(BrowseSection.Home)
+            navigator.open(PhoebeRoute.AlbumMixBuilder)
+        }
     }
     val openCollections: (CollectionEntry) -> Unit = { entry ->
         if (session.supportsCollectionEntry(entry)) {
@@ -1321,7 +1406,12 @@ private fun PhoebeRootStateHolder(
                         }
                     },
                 ) { targetRoute ->
-                val targetResolution = resolvePhoebeRoute(targetRoute, catalog, currentTrack)
+                val targetResolution = resolvePhoebeRoute(
+                    targetRoute,
+                    catalog,
+                    currentTrack,
+                    showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
+                )
                 val targetMissingRoute = targetResolution as? PhoebeRouteResolution.Missing
                 val scr = (targetResolution as? PhoebeRouteResolution.Resolved)?.screen ?: AppScreen.Home
                 if (targetMissingRoute != null) {
@@ -1540,6 +1630,49 @@ private fun PhoebeRootStateHolder(
                             onDownload = state::download,
                         )
                     }
+                    AppScreen.ArtistMixBuilder -> ArtistMixBuilderRoute(
+                        state = MixBuilderRouteState(
+                            catalog = catalog,
+                            bottomContentPadding = LocalMobileChromePadding.current.bottom,
+                        ),
+                        actions = MixBuilderRouteActions(
+                            onBack = { navigator.pop() },
+                            onBuildQueue = { tracks ->
+                                requestMobilePlayback(
+                                    tracks,
+                                    0,
+                                    queueOrigin = PlaybackQueueOrigin.Mix(
+                                        id = "artist-mix-builder",
+                                        title = "Artist Mix",
+                                        seedTrackIds = tracks.map { it.id },
+                                    ),
+                                )
+                            },
+                            onEnsureArtistSuggestions = state::preloadArtistMixBuilderData,
+                        ),
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                    AppScreen.AlbumMixBuilder -> AlbumMixBuilderRoute(
+                        state = MixBuilderRouteState(
+                            catalog = catalog,
+                            bottomContentPadding = LocalMobileChromePadding.current.bottom,
+                        ),
+                        actions = MixBuilderRouteActions(
+                            onBack = { navigator.pop() },
+                            onBuildQueue = { tracks ->
+                                requestMobilePlayback(
+                                    tracks,
+                                    0,
+                                    queueOrigin = PlaybackQueueOrigin.Mix(
+                                        id = "album-mix-builder",
+                                        title = "Album Mix",
+                                        seedTrackIds = tracks.map { it.id },
+                                    ),
+                                )
+                            },
+                        ),
+                        modifier = Modifier.fillMaxSize(),
+                    )
                     AppScreen.FavoritePlaylists -> FavoritePlaylistsMobileRoute(
                         state = FavoritePlaylistsRouteState(searchQuery = searchQuery),
                         actions = FavoritePlaylistsRouteActions(
@@ -1605,6 +1738,7 @@ private fun PhoebeRootStateHolder(
                         appState = state,
                         track = mobilePlayerTrack,
                         upNext = mobilePlayerUpNext,
+                        upNextDivider = mobilePlayerUpNextDivider,
                         previousTrack = mobilePlayerPreviousTrack,
                         currentIndex = mobilePlayerCurrentIndex,
                         playbackStarting = mobilePlaybackStarting,
@@ -1667,6 +1801,8 @@ private fun PhoebeRootStateHolder(
                                 scopedScreen is AppScreen.FavoritePlaylists ||
                                 scopedScreen is AppScreen.FavoriteArtists ||
                                 scopedScreen is AppScreen.FavoriteAlbums ||
+                                scopedScreen is AppScreen.ArtistMixBuilder ||
+                                scopedScreen is AppScreen.AlbumMixBuilder ||
                                 scopedScreen is AppScreen.PlaylistDetail ||
                                 selectedPlaylistId != null ||
                                 browseSection == BrowseSection.Library ||
@@ -1728,6 +1864,9 @@ private fun PhoebeRootStateHolder(
                         onPlayPersonalMix = playPersonalMix,
                         onPlayPopularMix = playPopularMix,
                         onPlayTopTracksMix = playTopTracksMix,
+                        onArtistMixBuilder = openArtistMixBuilder,
+                        onAlbumMixBuilder = openAlbumMixBuilder,
+                        showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
                         onPlayTracks = playTracksFromMobile,
                         onAddToUpNext = state::addToUpNext,
                         onDownload = state::download,
@@ -1761,6 +1900,7 @@ private fun PhoebeRootStateHolder(
                         onCrossfadeSeconds = state::setCrossfadeSeconds,
                         onScanLibraryOnLaunch = state::setScanLibraryOnLaunch,
                         onNotifyWhenDownloadFinishes = state::setNotifyWhenDownloadFinishes,
+                        onKeepPlayingEnabled = state::setKeepPlayingEnabled,
                         onPersistEqualizerSettings = state::setPersistEqualizerSettings,
                         onAudioProcessingSettings = state::setAudioProcessingSettings,
                         onVisualizerPreset = state::setNowPlayingVisualizerPreset,
@@ -1943,6 +2083,7 @@ private fun PhoebeRootStateHolder(
                             appState = state,
                             track = mobilePlayerTrack,
                             upNext = mobilePlayerUpNext,
+                            upNextDivider = mobilePlayerUpNextDivider,
                             previousTrack = mobilePlayerPreviousTrack,
                             currentIndex = mobilePlayerCurrentIndex,
                             playbackStarting = mobilePlaybackStarting,
@@ -2007,6 +2148,7 @@ private fun PhoebeRootStateHolder(
                         track = currentTrack,
                         radioNowPlaying = radioNowPlaying,
                         upNext = upNext,
+                        upNextDivider = playerQueue.upNextDivider,
                         currentIndex = currentIndex,
                         lyricsTrack = lyricsTrack,
                         lyricsState = lyricsState,
@@ -2099,6 +2241,8 @@ private fun PhoebeRootStateHolder(
                                 screen is AppScreen.FavoritePlaylists ||
                                 screen is AppScreen.FavoriteArtists ||
                                 screen is AppScreen.FavoriteAlbums ||
+                                screen is AppScreen.ArtistMixBuilder ||
+                                screen is AppScreen.AlbumMixBuilder ||
                                 screen is AppScreen.PlaylistDetail ||
                                 selectedPlaylistId != null ||
                                 browseSection == BrowseSection.Library ||
@@ -2139,6 +2283,7 @@ private fun PhoebeRootStateHolder(
                         onRefreshRandomAlbums = homeFeatureState.onRefreshRandomAlbums,
                         onPrefetchHomeArtist = state::prefetchHomeArtistStats,
                         onPrefetchHomeAlbum = state::prefetchHomeAlbumStats,
+                        onEnsureArtistSuggestions = state::preloadArtistMixBuilderData,
                         onPlayDecadeMix = state::playDecadeMix,
                         onClearDecadeMixNotice = state::clearDecadeMixNotice,
                         onPlayRadioStation = state::playRadioStation,
@@ -2161,6 +2306,8 @@ private fun PhoebeRootStateHolder(
                         onPlayPersonalMix = playPersonalMix,
                         onPlayPopularMix = playPopularMix,
                         onPlayTopTracksMix = playTopTracksMix,
+                        onArtistMixBuilder = openArtistMixBuilder,
+                        onAlbumMixBuilder = openAlbumMixBuilder,
                         onPopDetail = { navigator.pop() },
                         onPlayTracks = playTracks,
                         onPlayAllTracks = playAllTracks,
@@ -2244,6 +2391,7 @@ private fun PhoebeRootStateHolder(
                         onCrossfadeSeconds = state::setCrossfadeSeconds,
                         onScanLibraryOnLaunch = state::setScanLibraryOnLaunch,
                         onNotifyWhenDownloadFinishes = state::setNotifyWhenDownloadFinishes,
+                        onKeepPlayingEnabled = state::setKeepPlayingEnabled,
                         onPersistEqualizerSettings = state::setPersistEqualizerSettings,
                         onPersistVolumeSettings = state::setPersistVolumeSettings,
                         onAudioProcessingSettings = state::setAudioProcessingSettings,
@@ -2554,6 +2702,7 @@ private fun UpdateInstallConfirmationDialog(
 private fun catalogHasContentForSurface(
     catalog: CatalogSnapshot,
     screen: AppScreen,
+    showArtistAlbumMixBuilders: Boolean,
     browseSection: BrowseSection,
     selectedPlaylistId: String?,
     libraryFilter: LibraryFilterTab,
@@ -2573,6 +2722,8 @@ private fun catalogHasContentForSurface(
         AppScreen.FavoritePlaylists -> catalog.playlists.any { it.favorite }
         AppScreen.FavoriteArtists -> catalog.artists.any { it.favorite }
         AppScreen.FavoriteAlbums -> catalog.albums.any { it.favorite }
+        AppScreen.ArtistMixBuilder -> showArtistAlbumMixBuilders && catalog.artists.isNotEmpty()
+        AppScreen.AlbumMixBuilder -> showArtistAlbumMixBuilders && catalog.albums.isNotEmpty()
         is AppScreen.Collections -> when (screen.entry.target) {
             CollectionTarget.Artists -> catalog.artists.isNotEmpty()
             CollectionTarget.Albums -> catalog.albums.isNotEmpty()
@@ -2638,6 +2789,7 @@ private fun MobilePlayerHost(
     appState: AppState,
     track: Track?,
     upNext: List<Track>,
+    upNextDivider: UpNextDividerMarker?,
     previousTrack: Track?,
     currentIndex: Int,
     playbackStarting: Boolean = false,
@@ -2685,6 +2837,8 @@ private fun MobilePlayerHost(
         state = MobilePlaybackRouteState(
             track = track,
             upNext = upNext,
+            upNextDivider = upNextDivider,
+            keepPlayingEnabled = appSettings.keepPlayingEnabled,
             previousTrack = previousTrack,
             isPlaying = if (showStartingState) false else player.isPlaying,
             isBuffering = player.isBuffering || showStartingState,
@@ -2714,6 +2868,7 @@ private fun MobilePlayerHost(
             onSkipQueueBy = onSkipQueueBy,
             onShuffle = onShuffle,
             onRepeat = onRepeat,
+            onKeepPlayingEnabled = appState::setKeepPlayingEnabled,
             onSeek = onSeek,
             onPlayQueue = onPlayQueue,
             onMoveUpNext = onMoveUpNext,
@@ -2778,6 +2933,59 @@ private fun resolveAlbumForTrack(catalog: CatalogSnapshot, track: Track): Album?
             album.artist.equals(track.artist, ignoreCase = true)
     } ?: catalog.albums.firstOrNull { album ->
         album.title.equals(albumTitle, ignoreCase = true)
+    }
+}
+
+private fun playbackOriginForCurrentSurface(
+    screen: AppScreen,
+    selectedPlaylistId: String?,
+    catalog: CatalogSnapshot,
+    tracks: List<Track>,
+    collectionMixSeed: CollectionMixSeed?,
+): PlaybackQueueOrigin? {
+    val seedTrackIds = tracks.map { it.id }
+    return when (screen) {
+        is AppScreen.ArtistDetail -> PlaybackQueueOrigin.Artist(
+            id = screen.artist.id,
+            title = screen.artist.title,
+            providerType = screen.artist.id.providerTypeFromCatalogId(),
+            seedTrackIds = seedTrackIds,
+        )
+        is AppScreen.AlbumDetail -> PlaybackQueueOrigin.Album(
+            id = screen.album.id,
+            title = screen.album.title,
+            artist = screen.album.artist,
+            providerType = screen.album.id.providerTypeFromCatalogId(),
+            seedTrackIds = seedTrackIds,
+        )
+        is AppScreen.PlaylistDetail -> PlaybackQueueOrigin.Playlist(
+            id = screen.playlist.id,
+            title = screen.playlist.title,
+            providerType = screen.playlist.id.providerTypeFromCatalogId(),
+            seedTrackIds = seedTrackIds,
+        )
+        is AppScreen.CollectionItems -> PlaybackQueueOrigin.Mix(
+            id = "collection:${screen.entry.target}:${screen.entry.facet}:${screen.value}",
+            title = screen.value,
+            seedTrackIds = seedTrackIds,
+        )
+        else -> selectedPlaylistId
+            ?.let { playlistId -> catalog.playlists.firstOrNull { it.id == playlistId } }
+            ?.let { playlist ->
+                PlaybackQueueOrigin.Playlist(
+                    id = playlist.id,
+                    title = playlist.title,
+                    providerType = playlist.id.providerTypeFromCatalogId(),
+                    seedTrackIds = seedTrackIds,
+                )
+            }
+            ?: collectionMixSeed?.let { seed ->
+                PlaybackQueueOrigin.Mix(
+                    id = "collection:${seed.facet}:${seed.value}",
+                    title = seed.value,
+                    seedTrackIds = seedTrackIds,
+                )
+            }
     }
 }
 

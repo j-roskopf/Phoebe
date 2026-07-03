@@ -199,6 +199,8 @@ private fun PredictiveBackNavDisplay(
                 entry<PhoebeRoute.Lyrics> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
                 entry<PhoebeRoute.RecentlyAdded> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
                 entry<PhoebeRoute.PlayHistory> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
+                entry<PhoebeRoute.ArtistMixBuilder> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
+                entry<PhoebeRoute.AlbumMixBuilder> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
                 entry<PhoebeRoute.FavoritePlaylists> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
                 entry<PhoebeRoute.FavoriteArtists> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
                 entry<PhoebeRoute.FavoriteAlbums> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
@@ -442,6 +444,8 @@ private fun SwipeBackNavDisplay(
                         entry<PhoebeRoute.Lyrics> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
                         entry<PhoebeRoute.RecentlyAdded> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
                         entry<PhoebeRoute.PlayHistory> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
+                        entry<PhoebeRoute.ArtistMixBuilder> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
+                        entry<PhoebeRoute.AlbumMixBuilder> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
                         entry<PhoebeRoute.FavoritePlaylists> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
                         entry<PhoebeRoute.FavoriteArtists> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }
                         entry<PhoebeRoute.FavoriteAlbums> { route -> PhoebeNavEntryContent(route, opaqueSceneBackgrounds, content) }

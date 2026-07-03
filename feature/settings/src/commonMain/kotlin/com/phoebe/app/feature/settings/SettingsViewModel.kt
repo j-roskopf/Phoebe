@@ -46,6 +46,10 @@ class SettingsViewModel : ViewModel() {
         mutableState.update { it?.copy(appSettings = it.appSettings.copy(notifyWhenDownloadFinishes = enabled)) }
     }
 
+    fun onKeepPlayingEnabled(enabled: Boolean) {
+        mutableState.update { it?.copy(appSettings = it.appSettings.copy(keepPlayingEnabled = enabled)) }
+    }
+
     fun onPersistEqualizerSettings(enabled: Boolean) {
         mutableState.update { it?.copy(appSettings = it.appSettings.copy(persistEqualizerSettings = enabled)) }
     }

@@ -45,6 +45,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
@@ -59,6 +60,7 @@ import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.RepeatMode
 import com.phoebe.app.domain.Track
+import com.phoebe.app.domain.UpNextDividerMarker
 import com.phoebe.app.domain.canTogglePlexLike
 import com.phoebe.app.feature.playback.EqualizerDialog
 import com.phoebe.app.platform.isDesktopPlatform
@@ -88,6 +90,8 @@ private val MobilePlayerCompactQueueGap = 18.dp
 private val MobilePlayerExpandedPlayButtonSize = 64.dp
 private val MobilePlayerCompactPlayButtonSize = 56.dp
 private val MobilePlayerExpandedCompactRange = 56.dp
+private val MobilePlayerExtraCompactMaxArtworkHeightTrim = 96.dp
+private val MobilePlayerExtraCompactMinArtworkHeight = 280.dp
 private val CollapsedMobilePlayerMetadataHeight = 34.dp
 
 @Composable
@@ -193,6 +197,8 @@ private fun MobileUtilityControl(
 fun MobilePlayer(
     track: Track?,
     upNext: List<Track>,
+    upNextDivider: UpNextDividerMarker? = null,
+    keepPlayingEnabled: Boolean = false,
     previousTrack: Track? = null,
     isPlaying: Boolean,
     isBuffering: Boolean = false,
@@ -200,7 +206,7 @@ fun MobilePlayer(
     repeat: RepeatMode,
     positionMs: Long,
     bufferedPositionMs: Long,
-    @Suppress("UNUSED_PARAMETER") currentIndex: Int,
+    currentIndex: Int,
     castState: CastState = CastState(),
     remotePlaybackTarget: String? = null,
     listenBrainzFeedbackTarget: ListenBrainzFeedbackTarget = ListenBrainzFeedbackTarget(),
@@ -219,6 +225,7 @@ fun MobilePlayer(
     onSkipQueueBy: (Int) -> Unit = {},
     onShuffle: () -> Unit,
     onRepeat: () -> Unit,
+    onKeepPlayingEnabled: (Boolean) -> Unit = {},
     onSeek: (Long) -> Unit,
     onPlayQueue: (Int) -> Unit,
     onMoveUpNext: (Int, Int) -> Unit,
@@ -393,8 +400,8 @@ fun MobilePlayer(
         val navBarBottom = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
         val collapsedSheetHeight = 76.dp + navBarBottom
 
-        val fullArtworkSize = screenWidth
-        val expandedDefaultHeight = fullArtworkSize +
+        val fullArtworkWidth = screenWidth
+        val expandedDefaultHeight = fullArtworkWidth +
             expandedBaseMetadataReserve +
             expandedRemoteTargetReserve +
             MobilePlayerExpandedArtworkBodyGap +
@@ -430,8 +437,30 @@ fun MobilePlayer(
             MobilePlayerCompactPlayButtonSize,
             compactness,
         )
+        val compactPlayerHeight = fullArtworkWidth +
+            metadataReserve +
+            MobilePlayerExpandedArtworkBodyGap +
+            expandedProgressLineHeight +
+            expandedControlsGap +
+            expandedPlayButtonSize +
+            expandedControlsGap +
+            expandedUtilityControlsHeight +
+            expandedQueueGap +
+            collapsedSheetHeight
+        val minArtworkHeight = (fullArtworkWidth - MobilePlayerExtraCompactMaxArtworkHeightTrim)
+            .coerceAtLeast(MobilePlayerExtraCompactMinArtworkHeight)
+            .coerceAtMost(fullArtworkWidth)
+        val maxArtworkHeightTrim = fullArtworkWidth - minArtworkHeight
+        val artworkHeightTrim = (compactPlayerHeight - screenHeight).coerceIn(0.dp, maxArtworkHeightTrim)
+        val fullArtworkHeight = fullArtworkWidth - artworkHeightTrim
 
-        val currentArtworkSize = lerp(44.dp, fullArtworkSize, clampedExpansionFraction)
+        val collapsedArtworkSize = 44.dp
+        val currentArtworkWidth = lerp(collapsedArtworkSize, fullArtworkWidth, clampedExpansionFraction)
+        val currentArtworkHeight = lerp(collapsedArtworkSize, fullArtworkHeight, clampedExpansionFraction)
+        val artworkLayerScaleX = (currentArtworkWidth.value / fullArtworkWidth.value.coerceAtLeast(1f))
+            .coerceIn(0.01f, 1f)
+        val artworkLayerScaleY = (currentArtworkHeight.value / fullArtworkHeight.value.coerceAtLeast(1f))
+            .coerceIn(0.01f, 1f)
         val targetArtworkX = 0.dp
         val currentArtworkX = lerp(12.dp, targetArtworkX, clampedExpansionFraction)
         val currentArtworkY = lerp(14.dp, 0.dp, clampedExpansionFraction)
@@ -484,7 +513,7 @@ fun MobilePlayer(
             horizontalSettleJob?.cancel()
             horizontalSettleJob = scope.launch {
                 horizontalSettleOffset.snapTo(releaseOffset)
-                val artworkSizePx = with(density) { currentArtworkSize.toPx() }
+                val artworkSizePx = with(density) { currentArtworkWidth.toPx() }
                 val swipeThresholdPx = with(density) { 56.dp.toPx() }
                 when {
                     releaseOffset < -swipeThresholdPx && nextTrack != null -> {
@@ -534,7 +563,7 @@ fun MobilePlayer(
         }
 
         val horizontalDragModifier = if (track != null) {
-            val artworkSizePx = with(density) { currentArtworkSize.toPx() }
+            val artworkSizePx = with(density) { currentArtworkWidth.toPx() }
             Modifier.pointerInput(track.id, artworkSizePx, swipeThresholdPx) {
                 detectHorizontalDragGestures(
                     onDragStart = {
@@ -603,7 +632,7 @@ fun MobilePlayer(
                     .graphicsLayer { alpha = fullPlayerAlpha }
             ) {
                 if (track != null) {
-                    Spacer(Modifier.height(fullArtworkSize + metadataReserve + MobilePlayerExpandedArtworkBodyGap))
+                    Spacer(Modifier.height(fullArtworkHeight + metadataReserve + MobilePlayerExpandedArtworkBodyGap))
                 } else {
                     Spacer(Modifier.height(28.dp))
                     Box(
@@ -633,7 +662,6 @@ fun MobilePlayer(
                     bufferedPositionMs = timelineBufferedPositionMs,
                     durationMs = track?.durationMs ?: 0L,
                     waveformSeed = track?.let(::trackWaveformSeed) ?: "",
-                    barHeight = 44.dp,
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(expandedProgressLineHeight)
@@ -674,7 +702,11 @@ fun MobilePlayer(
                         .height(expandedUtilityControlsHeight)
                         .graphicsLayer { alpha = fullPlayerElementsAlpha },
                 )
-                Spacer(Modifier.weight(1f).heightIn(min = expandedQueueGap))
+                if (artworkHeightTrim > 0.dp) {
+                    Spacer(Modifier.height(expandedQueueGap))
+                } else {
+                    Spacer(Modifier.weight(1f).heightIn(min = expandedQueueGap))
+                }
                 Spacer(modifier = Modifier.height(collapsedSheetHeight))
             }
         }
@@ -682,16 +714,24 @@ fun MobilePlayer(
         if (track != null) {
             Box(
                 modifier = Modifier
-                    .offset(x = currentArtworkX, y = currentArtworkY)
-                    .size(currentArtworkSize)
-                    .clip(artworkContentShape)
+                    .width(fullArtworkWidth)
+                    .height(fullArtworkHeight)
+                    .graphicsLayer {
+                        translationX = currentArtworkX.toPx()
+                        translationY = currentArtworkY.toPx()
+                        scaleX = artworkLayerScaleX
+                        scaleY = artworkLayerScaleY
+                        transformOrigin = TransformOrigin(0f, 0f)
+                        shape = artworkContentShape
+                        clip = true
+                    }
                     .then(if (clampedExpansionFraction > 0.8f) horizontalDragModifier else Modifier)
             ) {
                 SwipeableMobileArtwork(
                     track = track,
                     nextTrack = nextTrack,
                     previousTrack = previousTrack,
-                    swipeOffset = currentSwipeOffset,
+                    swipeOffset = currentSwipeOffset / artworkLayerScaleX,
                     swipePreviewDirection = horizontalSwipePreviewDirection,
                     modifier = Modifier.fillMaxSize(),
                 ) { t ->
@@ -701,6 +741,7 @@ fun MobilePlayer(
                             modifier = Modifier.fillMaxSize(),
                             maxDecodeDimension = HeroArtworkMaxDecodeDimension,
                             shape = artworkContentShape,
+                            forceSquare = false,
                         ) {
                             val isRadio = t.id.startsWith("radio:")
                             val showFeedbackActions = isRadio || (likeActions.likesEnabled && t.canTogglePlexLike()) || (listenBrainzFeedbackTarget.available && listenBrainzFeedbackTarget.trackId == t.id)
@@ -753,7 +794,7 @@ fun MobilePlayer(
             val targetTextX = 20.dp
             val currentTextX = lerp(68.dp, targetTextX, clampedExpansionFraction)
             val collapsedTextY = (MobileMiniPlayerChromeHeight - CollapsedMobilePlayerMetadataHeight) / 2f
-            val currentTextY = lerp(collapsedTextY, fullArtworkSize + 22.dp, clampedExpansionFraction)
+            val currentTextY = lerp(collapsedTextY, fullArtworkHeight + 22.dp, clampedExpansionFraction)
             val collapsedTextWidth = if (castState.isConnected) {
                 (screenWidth - 176.dp).coerceAtLeast(96.dp)
             } else {
@@ -770,11 +811,12 @@ fun MobilePlayer(
 
             Column(
                 modifier = Modifier
-                    .offset(x = currentTextX, y = currentTextY)
                     .width(currentTextWidth)
                     .graphicsLayer {
+                        translationX = currentTextX.toPx()
+                        translationY = currentTextY.toPx()
                         if (clampedExpansionFraction < 0.1f) {
-                            translationX = currentSwipeOffset
+                            translationX += currentSwipeOffset
                             val swipeProgress = (abs(currentSwipeOffset) / swipeThresholdPx).coerceIn(0f, 1f)
                             alpha = miniPlayerAlpha * (1f - swipeProgress * 0.14f)
                             val scale = 1f - swipeProgress * 0.025f
@@ -835,7 +877,7 @@ fun MobilePlayer(
             if (fullPlayerElementsAlpha > 0f) {
                 Box(
                     modifier = Modifier
-                        .offset(x = screenWidth - 64.dp, y = fullArtworkSize + 20.dp)
+                        .offset(x = screenWidth - 64.dp, y = fullArtworkHeight + 20.dp)
                         .graphicsLayer { alpha = fullPlayerElementsAlpha },
                 ) {
                     TransportIcon(PhoebeIcon.More, "More options", { onOpenSongDetail(track) })
@@ -858,7 +900,7 @@ fun MobilePlayer(
             val collapsedPlayButtonX = screenWidth - 12.dp - collapsedPlayButtonSize
             val collapsedPlayButtonY = (MobileMiniPlayerChromeHeight - collapsedPlayButtonSize) / 2f
             val expandedPlayButtonX = (screenWidth - expandedPlayButtonSize) / 2f
-            val expandedPlayButtonY = fullArtworkSize +
+            val expandedPlayButtonY = fullArtworkHeight +
                 metadataReserve +
                 MobilePlayerExpandedArtworkBodyGap +
                 expandedProgressLineHeight +
@@ -993,6 +1035,9 @@ fun MobilePlayer(
                 MobileQueueSheet(
                     currentTrack = track,
                     upNext = upNext,
+                    upNextDivider = upNextDivider,
+                    keepPlayingEnabled = keepPlayingEnabled,
+                    currentIndex = currentIndex,
                     repeat = repeat,
                     sheetProgress = sheetProgress,
                     expanded = sheetExpanded,
@@ -1017,6 +1062,7 @@ fun MobilePlayer(
                         .height(with(density) { displayedSheetHeightPx.toDp() })
                         .graphicsLayer { alpha = fullPlayerElementsAlpha },
                     onPlayQueue = onPlayQueue,
+                    onKeepPlayingEnabled = onKeepPlayingEnabled,
                     onMoveUpNext = onMoveUpNext,
                     onRemoveUpNext = onRemoveUpNext,
                     onOpenTrackDetail = onOpenSongDetail,

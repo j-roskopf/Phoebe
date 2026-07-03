@@ -112,6 +112,8 @@ import phoebe.feature.home.generated.resources.collection_album_style
 import phoebe.feature.home.generated.resources.collection_artist_genre
 import phoebe.feature.home.generated.resources.collection_artist_mood
 import phoebe.feature.home.generated.resources.collection_artist_style
+import phoebe.feature.home.generated.resources.mix_album_builder
+import phoebe.feature.home.generated.resources.mix_artist_builder
 import phoebe.feature.home.generated.resources.mix_decade
 import phoebe.feature.home.generated.resources.mix_deep_cuts
 import phoebe.feature.home.generated.resources.mix_library
@@ -150,6 +152,7 @@ data class MobileHomeRouteState(
     val decadeMixNotice: String?,
     val homeScreenLayoutMode: HomeScreenLayoutMode = HomeScreenLayoutMode.Default,
     val showPopularMix: Boolean = true,
+    val showArtistAlbumMixBuilders: Boolean = true,
 )
 
 @Immutable
@@ -174,6 +177,8 @@ class MobileHomeCallbacks(
     val onPlayPersonalMix: () -> Unit,
     val onPlayPopularMix: () -> Unit,
     val onPlayTopTracksMix: () -> Unit,
+    val onArtistMixBuilder: () -> Unit,
+    val onAlbumMixBuilder: () -> Unit,
     val onPlayTracks: (List<Track>, Int) -> Unit,
     val onAddToUpNext: (Track) -> Unit,
     val onDownload: (Track) -> Unit,
@@ -217,7 +222,10 @@ fun MobileHomeRoute(
         onPlayPersonalMix = callbacks.onPlayPersonalMix,
         onPlayPopularMix = callbacks.onPlayPopularMix,
         onPlayTopTracksMix = callbacks.onPlayTopTracksMix,
+        onArtistMixBuilder = callbacks.onArtistMixBuilder,
+        onAlbumMixBuilder = callbacks.onAlbumMixBuilder,
         showPopularMix = routeState.showPopularMix,
+        showArtistAlbumMixBuilders = routeState.showArtistAlbumMixBuilders,
         onPlayTracks = callbacks.onPlayTracks,
         onAddToUpNext = callbacks.onAddToUpNext,
         onDownload = callbacks.onDownload,
@@ -275,7 +283,10 @@ fun DesktopHomeScreen(
     onPlayPersonalMix: () -> Unit = {},
     onPlayPopularMix: () -> Unit = {},
     onPlayTopTracksMix: () -> Unit = {},
+    onArtistMixBuilder: () -> Unit = {},
+    onAlbumMixBuilder: () -> Unit = {},
     showPopularMix: Boolean = true,
+    showArtistAlbumMixBuilders: Boolean = true,
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
@@ -329,7 +340,21 @@ fun DesktopHomeScreen(
         normalizedHomeSections(homeSections).forEach { section ->
             when (section) {
                 HomeSection.Mixes -> item("mixes") {
-                    DesktopMixesPanel(onPlayPersonalMix, onPlayPopularMix, onPlayTopTracksMix, showPopularMix, posterLoading, radioStations, radioStartingIds, onPlayRadioStation, onClearDecadeMixNotice, panelStyle = panelStyle) {
+                    DesktopMixesPanel(
+                        onPlayPersonalMix = onPlayPersonalMix,
+                        onPlayPopularMix = onPlayPopularMix,
+                        onPlayTopTracksMix = onPlayTopTracksMix,
+                        onArtistMixBuilder = onArtistMixBuilder,
+                        onAlbumMixBuilder = onAlbumMixBuilder,
+                        showPopularMix = showPopularMix,
+                        showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
+                        posterLoading = posterLoading,
+                        radioStations = radioStations,
+                        radioStartingIds = radioStartingIds,
+                        onPlayRadioStation = onPlayRadioStation,
+                        onClearDecadeMixNotice = onClearDecadeMixNotice,
+                        panelStyle = panelStyle,
+                    ) {
                         showDecadeMix = true
                     }
                 }
@@ -414,7 +439,10 @@ fun MobileHomeScreen(
     onPlayPersonalMix: () -> Unit = {},
     onPlayPopularMix: () -> Unit = {},
     onPlayTopTracksMix: () -> Unit = {},
+    onArtistMixBuilder: () -> Unit = {},
+    onAlbumMixBuilder: () -> Unit = {},
     showPopularMix: Boolean = true,
+    showArtistAlbumMixBuilders: Boolean = true,
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
@@ -480,7 +508,10 @@ fun MobileHomeScreen(
                 onPlayPersonalMix = onPlayPersonalMix,
                 onPlayPopularMix = onPlayPopularMix,
                 onPlayTopTracksMix = onPlayTopTracksMix,
+                onArtistMixBuilder = onArtistMixBuilder,
+                onAlbumMixBuilder = onAlbumMixBuilder,
                 showPopularMix = showPopularMix,
+                showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
                 radioStations = radioStations,
                 radioStartingIds = radioStartingIds,
                 onPlayRadioStation = onPlayRadioStation,
@@ -525,7 +556,10 @@ fun MobileHomeScreen(
                 onPlayPersonalMix = onPlayPersonalMix,
                 onPlayPopularMix = onPlayPopularMix,
                 onPlayTopTracksMix = onPlayTopTracksMix,
+                onArtistMixBuilder = onArtistMixBuilder,
+                onAlbumMixBuilder = onAlbumMixBuilder,
                 showPopularMix = showPopularMix,
+                showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
                 radioStations = radioStations,
                 radioStartingIds = radioStartingIds,
                 onPlayRadioStation = onPlayRadioStation,
@@ -736,7 +770,10 @@ private fun MobileHomeContent(
     onPlayPersonalMix: () -> Unit,
     onPlayPopularMix: () -> Unit,
     onPlayTopTracksMix: () -> Unit,
+    onArtistMixBuilder: () -> Unit,
+    onAlbumMixBuilder: () -> Unit,
     showPopularMix: Boolean,
+    showArtistAlbumMixBuilders: Boolean,
     radioStations: List<PlexRadioStation>,
     radioStartingIds: Set<String>,
     onPlayRadioStation: (PlexRadioStation) -> Unit,
@@ -821,16 +858,33 @@ private fun MobileHomeContent(
                                 onPlayPersonalMix = onPlayPersonalMix,
                                 onPlayPopularMix = onPlayPopularMix,
                                 onPlayTopTracksMix = onPlayTopTracksMix,
+                                onArtistMixBuilder = onArtistMixBuilder,
+                                onAlbumMixBuilder = onAlbumMixBuilder,
                                 posterLoading = posterLoading,
                                 radioStations = radioStations,
                                 radioStartingIds = radioStartingIds,
                                 showPopularMix = showPopularMix,
+                                showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
                                 onPlayRadioStation = onPlayRadioStation,
                                 onClearDecadeMixNotice = onClearDecadeMixNotice,
                                 onShowDecadeMix = onShowDecadeMix,
                             )
                         } else {
-                            MobileMixesSection(onPlayPersonalMix, onPlayPopularMix, onPlayTopTracksMix, showPopularMix, posterLoading, radioStations, radioStartingIds, onPlayRadioStation, onClearDecadeMixNotice, onShowDecadeMix)
+                            MobileMixesSection(
+                                onPlayPersonalMix = onPlayPersonalMix,
+                                onPlayPopularMix = onPlayPopularMix,
+                                onPlayTopTracksMix = onPlayTopTracksMix,
+                                onArtistMixBuilder = onArtistMixBuilder,
+                                onAlbumMixBuilder = onAlbumMixBuilder,
+                                showPopularMix = showPopularMix,
+                                showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
+                                posterLoading = posterLoading,
+                                radioStations = radioStations,
+                                radioStartingIds = radioStartingIds,
+                                onPlayRadioStation = onPlayRadioStation,
+                                onClearDecadeMixNotice = onClearDecadeMixNotice,
+                                onShowDecadeMix = onShowDecadeMix,
+                            )
                         }
                     }
                     HomeSection.Collections -> item(key = "collections", contentType = "collections-section") {
@@ -959,7 +1013,10 @@ private fun MobileExpandedHomeContent(
     onPlayPersonalMix: () -> Unit,
     onPlayPopularMix: () -> Unit,
     onPlayTopTracksMix: () -> Unit,
+    onArtistMixBuilder: () -> Unit,
+    onAlbumMixBuilder: () -> Unit,
     showPopularMix: Boolean,
+    showArtistAlbumMixBuilders: Boolean,
     radioStations: List<PlexRadioStation>,
     radioStartingIds: Set<String>,
     onPlayRadioStation: (PlexRadioStation) -> Unit,
@@ -1058,7 +1115,10 @@ private fun MobileExpandedHomeContent(
                             onPlayPersonalMix = onPlayPersonalMix,
                             onPlayPopularMix = onPlayPopularMix,
                             onPlayTopTracksMix = onPlayTopTracksMix,
+                            onArtistMixBuilder = onArtistMixBuilder,
+                            onAlbumMixBuilder = onAlbumMixBuilder,
                             showPopularMix = showPopularMix,
+                            showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
                             posterLoading = posterLoading,
                             radioStations = radioStations,
                             radioStartingIds = radioStartingIds,
@@ -1125,7 +1185,10 @@ private fun ExpandedMixesShelf(
     onPlayPersonalMix: () -> Unit,
     onPlayPopularMix: () -> Unit,
     onPlayTopTracksMix: () -> Unit,
+    onArtistMixBuilder: () -> Unit,
+    onAlbumMixBuilder: () -> Unit,
     showPopularMix: Boolean,
+    showArtistAlbumMixBuilders: Boolean,
     posterLoading: HomePosterLoadingState,
     radioStations: List<PlexRadioStation>,
     radioStartingIds: Set<String>,
@@ -1196,6 +1259,26 @@ private fun ExpandedMixesShelf(
                 ) {
                     onPlayRadioStation(station)
                 }
+            }
+        }
+        if (showArtistAlbumMixBuilders) {
+            item(key = "artist-mix-builder", contentType = "expanded-mix-action") {
+                HomeMixPosterCard(
+                    "Artist Mix",
+                    PhoebeIcon.Person,
+                    Res.drawable.mix_artist_builder,
+                    Modifier.width(MobileHomePosterCardSize),
+                    onClick = onArtistMixBuilder,
+                )
+            }
+            item(key = "album-mix-builder", contentType = "expanded-mix-action") {
+                HomeMixPosterCard(
+                    "Album Mix",
+                    PhoebeIcon.Grid,
+                    Res.drawable.mix_album_builder,
+                    Modifier.width(MobileHomePosterCardSize),
+                    onClick = onAlbumMixBuilder,
+                )
             }
         }
     }
@@ -1669,7 +1752,10 @@ private fun PhoneMixesAccordionSection(
     onPlayPersonalMix: () -> Unit,
     onPlayPopularMix: () -> Unit,
     onPlayTopTracksMix: () -> Unit,
+    onArtistMixBuilder: () -> Unit,
+    onAlbumMixBuilder: () -> Unit,
     showPopularMix: Boolean,
+    showArtistAlbumMixBuilders: Boolean,
     posterLoading: HomePosterLoadingState,
     radioStations: List<PlexRadioStation>,
     radioStartingIds: Set<String>,
@@ -1677,6 +1763,24 @@ private fun PhoneMixesAccordionSection(
     onClearDecadeMixNotice: () -> Unit,
     onShowDecadeMix: () -> Unit,
 ) {
+    val builderActions = if (showArtistAlbumMixBuilders) {
+        listOf(
+            PhoneHomePosterAction(
+                "Artist Mix",
+                PhoebeIcon.Person,
+                Res.drawable.mix_artist_builder,
+                onClick = onArtistMixBuilder,
+            ),
+            PhoneHomePosterAction(
+                "Album Mix",
+                PhoebeIcon.Grid,
+                Res.drawable.mix_album_builder,
+                onClick = onAlbumMixBuilder,
+            ),
+        )
+    } else {
+        emptyList()
+    }
     val actions = buildList {
         add(PhoneHomePosterAction(
             "Personal Mix",
@@ -1722,7 +1826,7 @@ private fun PhoneMixesAccordionSection(
             enabled = !starting,
             onClick = { onPlayRadioStation(station) },
         )
-    }
+    } + builderActions
     PhoneHomeAccordionGroup(
         title = "Mixes",
         subtitle = optionCountLabel(actions.size),
@@ -2253,7 +2357,10 @@ private fun DesktopMixesPanel(
     onPlayPersonalMix: () -> Unit,
     onPlayPopularMix: () -> Unit,
     onPlayTopTracksMix: () -> Unit,
+    onArtistMixBuilder: () -> Unit,
+    onAlbumMixBuilder: () -> Unit,
     showPopularMix: Boolean,
+    showArtistAlbumMixBuilders: Boolean,
     posterLoading: HomePosterLoadingState,
     radioStations: List<PlexRadioStation>,
     radioStartingIds: Set<String>,
@@ -2337,6 +2444,26 @@ private fun DesktopMixesPanel(
                     }
                 }
             }
+            if (showArtistAlbumMixBuilders) {
+                item("artist-mix-builder", contentType = "mix-action") {
+                    HomeMixPosterCard(
+                        "Artist Mix",
+                        PhoebeIcon.Person,
+                        Res.drawable.mix_artist_builder,
+                        Modifier.width(148.dp),
+                        onClick = onArtistMixBuilder,
+                    )
+                }
+                item("album-mix-builder", contentType = "mix-action") {
+                    HomeMixPosterCard(
+                        "Album Mix",
+                        PhoebeIcon.Grid,
+                        Res.drawable.mix_album_builder,
+                        Modifier.width(148.dp),
+                        onClick = onAlbumMixBuilder,
+                    )
+                }
+            }
         }
     }
 }
@@ -2346,7 +2473,10 @@ private fun MobileMixesSection(
     onPlayPersonalMix: () -> Unit,
     onPlayPopularMix: () -> Unit,
     onPlayTopTracksMix: () -> Unit,
+    onArtistMixBuilder: () -> Unit,
+    onAlbumMixBuilder: () -> Unit,
     showPopularMix: Boolean,
+    showArtistAlbumMixBuilders: Boolean,
     posterLoading: HomePosterLoadingState,
     radioStations: List<PlexRadioStation>,
     radioStartingIds: Set<String>,
@@ -2418,6 +2548,26 @@ private fun MobileMixesSection(
                 ) {
                     onPlayRadioStation(station)
                 }
+            }
+        }
+        if (showArtistAlbumMixBuilders) {
+            item(key = "artist-mix-builder", contentType = "mobile-mix-action") {
+                HomeMixPosterCard(
+                    "Artist Mix",
+                    PhoebeIcon.Person,
+                    Res.drawable.mix_artist_builder,
+                    Modifier.width(MobileHomePosterCardSize),
+                    onClick = onArtistMixBuilder,
+                )
+            }
+            item(key = "album-mix-builder", contentType = "mobile-mix-action") {
+                HomeMixPosterCard(
+                    "Album Mix",
+                    PhoebeIcon.Grid,
+                    Res.drawable.mix_album_builder,
+                    Modifier.width(MobileHomePosterCardSize),
+                    onClick = onAlbumMixBuilder,
+                )
             }
         }
     }
@@ -3056,6 +3206,8 @@ private fun PlexRadioStation.mixArtworkResource(): DrawableResource? {
 private fun mixPosterTitle(title: String): String =
     when (title.lowercase()) {
         "personal mix" -> "PERSONAL\nMIX"
+        "artist mix" -> "ARTIST\nMIX"
+        "album mix" -> "ALBUM\nMIX"
         "popular" -> "POPULAR"
         "top tracks" -> "TOP\nTRACKS"
         "decade mix" -> "DECADE\nMIX"

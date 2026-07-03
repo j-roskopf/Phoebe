@@ -1075,6 +1075,7 @@ data class AppSettings(
     val crossfadeSeconds: Int = 0,
     val scanLibraryOnLaunch: Boolean = false,
     val notifyWhenDownloadFinishes: Boolean = false,
+    val keepPlayingEnabled: Boolean = false,
     val persistEqualizerSettings: Boolean = false,
     val persistVolumeSettings: Boolean = false,
     val savedVolume: Float = DefaultSavedVolume,
@@ -1674,6 +1675,8 @@ sealed interface AppScreen {
     data class Lyrics(val track: Track? = null) : AppScreen
     data class RecentlyAdded(val kind: RecentlyAddedKind) : AppScreen
     data class PlayHistory(val kind: PlayHistoryKind) : AppScreen
+    data object ArtistMixBuilder : AppScreen
+    data object AlbumMixBuilder : AppScreen
     data object FavoritePlaylists : AppScreen
     data object FavoriteArtists : AppScreen
     data object FavoriteAlbums : AppScreen
@@ -1695,6 +1698,8 @@ val AppScreen.telemetryName: String
         is AppScreen.Lyrics -> "lyrics"
         is AppScreen.RecentlyAdded -> "recently_added"
         is AppScreen.PlayHistory -> "play_history"
+        AppScreen.ArtistMixBuilder -> "artist_mix_builder"
+        AppScreen.AlbumMixBuilder -> "album_mix_builder"
         AppScreen.FavoritePlaylists -> "favorite_playlists"
         AppScreen.FavoriteArtists -> "favorite_artists"
         AppScreen.FavoriteAlbums -> "favorite_albums"
@@ -1843,6 +1848,7 @@ data class PlayerTransportState(
 data class PlayerQueueSnapshot(
     val queue: List<Track> = emptyList(),
     val currentIndex: Int = -1,
+    val upNextDivider: UpNextDividerMarker? = null,
 ) {
     val currentTrack: Track? get() = queue.getOrNull(currentIndex)
     val upNext: List<Track>

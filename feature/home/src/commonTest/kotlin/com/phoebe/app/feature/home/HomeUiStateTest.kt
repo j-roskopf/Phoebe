@@ -190,6 +190,39 @@ class HomeUiStateTest {
     }
 
     @Test
+    fun playedSectionsDoNotRenderRemovedLocalFolderHistoryPlaceholders() {
+        val state = deriveHomeUiState(
+            catalog = CatalogSnapshot(),
+            playHistory = PlayHistorySnapshot(
+                topRecentlyPlayed = listOf(
+                    RecentlyPlayedEntry(
+                        trackId = "local_lf-old:track:1",
+                        lastPlayedMs = 500L,
+                        artist = "Animal Collective",
+                        album = "Feels",
+                    ),
+                ),
+                topMostPlayed = listOf(
+                    MostPlayedEntry(
+                        trackId = "local_lf-old:track:1",
+                        playCount = 12L,
+                        lastPlayedMs = 500L,
+                        artist = "Animal Collective",
+                        album = "Feels",
+                    ),
+                ),
+            ),
+            randomArtistSeed = 1,
+            randomAlbumSeed = 2,
+            nowMs = 1_000L,
+            includeTrackDerivedSections = false,
+        )
+
+        assertTrue(state.recentlyPlayedTracks.isEmpty())
+        assertTrue(state.mostPlayedTracks.isEmpty())
+    }
+
+    @Test
     fun homeDerivationSkipsInitialDelayWhenRankedHistoryIsWaiting() {
         assertEquals(
             0L,

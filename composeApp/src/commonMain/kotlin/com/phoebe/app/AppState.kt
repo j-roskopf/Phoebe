@@ -24,12 +24,14 @@ import com.phoebe.app.domain.MobileBottomTab
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.Playlist
 import com.phoebe.app.domain.PlayHistoryKind
+import com.phoebe.app.domain.PlaybackQueueOrigin
 import com.phoebe.app.domain.PlayerQueueSnapshot
 import com.phoebe.app.domain.PlayerState
 import com.phoebe.app.domain.PlayerTransportState
 import com.phoebe.app.domain.ShellPlaybackState
 import com.phoebe.app.domain.PlexPin
 import com.phoebe.app.domain.PlexRadioStation
+import com.phoebe.app.domain.PlexRadioStationCategory
 import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.PlexSession
 import com.phoebe.app.domain.PersonalMixPreferences
@@ -43,6 +45,7 @@ import com.phoebe.app.domain.SmartPlaylist
 import com.phoebe.app.domain.SmartPlaylistTemplate
 import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.TrackMetadataUpdate
+import com.phoebe.app.domain.UpNextDividerMarker
 import com.phoebe.app.domain.canTogglePlexLike
 import com.phoebe.app.domain.catalogPrefix
 import com.phoebe.app.domain.hasPlayableSource
@@ -58,6 +61,7 @@ import com.phoebe.app.domain.displayName
 import com.phoebe.app.domain.supportsRemotePlaylists
 import com.phoebe.app.domain.isJellyfin
 import com.phoebe.app.domain.providerLabel
+import com.phoebe.app.domain.providerTypeFromCatalogId
 import com.phoebe.app.domain.parseAdvancedSearchQuery
 import com.phoebe.app.data.DownloadServiceResult
 import com.phoebe.app.data.BackupRestoreMode
@@ -149,6 +153,7 @@ class AppState(
     val cast = dependencies.castController.state
     private val mutableMusicAssistantRemotePlayback = MutableStateFlow<MusicAssistantRemotePlayback?>(null)
     val musicAssistantRemotePlayback = mutableMusicAssistantRemotePlayback.asStateFlow()
+    private val mutableUpNextDivider = MutableStateFlow<UpNextDividerMarker?>(null)
     val player: StateFlow<PlayerState> = combine(
         dependencies.audioPlayer.state,
         dependencies.castController.state,
@@ -197,11 +202,14 @@ class AppState(
                 volume = player.value.volume,
             ),
         )
-    val playerQueue: StateFlow<PlayerQueueSnapshot> = player
-        .map { playback ->
+    val playerQueue: StateFlow<PlayerQueueSnapshot> = combine(
+        player,
+        mutableUpNextDivider,
+    ) { playback, divider ->
             PlayerQueueSnapshot(
                 queue = playback.queue,
                 currentIndex = playback.currentIndex,
+                upNextDivider = divider.visibleFor(playback),
             )
         }
         .distinctUntilChanged()
@@ -211,6 +219,7 @@ class AppState(
             PlayerQueueSnapshot(
                 queue = player.value.queue,
                 currentIndex = player.value.currentIndex,
+                upNextDivider = mutableUpNextDivider.value.visibleFor(player.value),
             ),
         )
     val libraryUi = dependencies.libraryUiRepository.preferences
@@ -311,6 +320,13 @@ class AppState(
         get() = dependencies.audioPlayer.audioProcessingCapabilities
 
     private var collectionMixGeneration = 0
+    private var keepPlayingQueueGeneration = 0
+    private var keepPlayingDisabledGeneration: Int? = null
+    private var keepPlayingOrigin: PlaybackQueueOrigin? = null
+    private var keepPlayingRequestedSignature: String? = null
+    private var keepPlayingAdvanceOnAppendSignature: String? = null
+    private var keepPlayingPreviewPendingGeneration: Int? = null
+    private var keepPlayingJob: Job? = null
     private var recentAlbumWarmSignature: String? = null
     private var playedAlbumWarmSignature: String? = null
     private var mostPlayedWarmSignature: String? = null
@@ -323,6 +339,7 @@ class AppState(
     private var topTracksMixBuildDeferred: Deferred<List<Track>>? = null
     private val prefetchedArtistIds = mutableSetOf<String>()
     private val prefetchedAlbumIds = mutableSetOf<String>()
+    private val prefetchedMixBuilderArtistIds = mutableSetOf<String>()
     private var catalogRefreshJob: Job? = null
     private var playHistorySyncJob: Job? = null
     private var providerPlayHistoryRefreshJob: Job? = null
@@ -347,6 +364,7 @@ class AppState(
             lightweightRemoteSyncJob,
             downloadedArtworkCacheJob,
             artistDetailPreloadJob,
+            keepPlayingJob,
             popularMixSeedBuildDeferred,
             topTracksMixBuildDeferred,
         ).forEach { it.cancel() }
@@ -358,6 +376,7 @@ class AppState(
         lightweightRemoteSyncJob = null
         downloadedArtworkCacheJob = null
         artistDetailPreloadJob = null
+        keepPlayingJob = null
         popularMixSeedBuildDeferred = null
         popularMixSeedBuildSignature = null
         popularMixSeedSignature = null
@@ -449,7 +468,15 @@ class AppState(
             syncLightweightRemoteStateInBackground()
             val hasRemoteLibrary = session.value?.selectedLibrary != null
             val hasLocalFolders = mediaSources.value.localFolders.any { it.enabled }
-            if (appSettings.value.scanLibraryOnLaunch && (hasRemoteLibrary || hasLocalFolders)) {
+            val refreshedMissingLocalOnlyCatalog = !hasRemoteLibrary &&
+                hasLocalFolders &&
+                !dependencies.catalogRepository.catalog.value.hasBrowseableContent()
+            if (refreshedMissingLocalOnlyCatalog) {
+                refreshCatalogSuspended(catalogMessage = null)
+            }
+            if (appSettings.value.scanLibraryOnLaunch &&
+                (hasRemoteLibrary || (hasLocalFolders && !refreshedMissingLocalOnlyCatalog))
+            ) {
                 delay(500)
                 cancelLightweightRemoteSync()
                 if (session.value.isPlex()) {
@@ -488,6 +515,7 @@ class AppState(
         recordPlaybackHistory()
         surfacePlaybackFailures()
         surfaceCastMessages()
+        monitorKeepPlaying()
         dependencies.plexPlaybackReporter.start(scope)
         syncPlayHistoryAfterProviderReports()
         dependencies.listenBrainzPlaybackReporter.start(scope)
@@ -577,6 +605,398 @@ class AppState(
     private fun surfaceTransientNotice(notice: String) {
         mutableMessage.value = notice
         surfacePlaybackSnackbar(notice)
+    }
+
+    private fun monitorKeepPlaying() {
+        scope.launch {
+            combine(
+                dependencies.audioPlayer.state,
+                appSettings,
+                dependencies.castController.state,
+                mutableMusicAssistantRemotePlayback,
+            ) { playback, settings, castState, musicAssistantRemote ->
+                KeepPlayingSignal(
+                    playback = playback,
+                    enabled = settings.keepPlayingEnabled,
+                    castConnected = castState.isConnected,
+                    musicAssistantRemoteActive = musicAssistantRemote != null,
+                )
+            }.collect { signal ->
+                clearKeepPlayingDividerIfReached(signal.playback)
+                val previewStarted = if (signal.enabled &&
+                    keepPlayingPreviewPendingGeneration == keepPlayingQueueGeneration
+                ) {
+                    requestKeepPlayingPreview()
+                } else {
+                    false
+                }
+                if (previewStarted) {
+                    keepPlayingPreviewPendingGeneration = null
+                } else {
+                    maybeStartKeepPlaying(signal)
+                }
+            }
+        }
+    }
+
+    private fun clearKeepPlayingDividerIfReached(playback: PlayerState) {
+        val divider = mutableUpNextDivider.value ?: return
+        if (playback.currentIndex >= divider.beforeQueueIndex || divider.beforeQueueIndex > playback.queue.size) {
+            mutableUpNextDivider.value = null
+        }
+    }
+
+    private fun maybeStartKeepPlaying(signal: KeepPlayingSignal) {
+        startKeepPlayingForSignal(
+            signal = signal,
+            requireActivePlayback = true,
+            advanceWhenAppended = false,
+            requireNearEnd = true,
+        )
+    }
+
+    private fun startKeepPlayingForSignal(
+        signal: KeepPlayingSignal,
+        requireActivePlayback: Boolean,
+        advanceWhenAppended: Boolean,
+        requireNearEnd: Boolean,
+        forceRequest: Boolean = false,
+    ): Boolean {
+        val playback = signal.playback
+        if (!signal.enabled || signal.castConnected || signal.musicAssistantRemoteActive) return false
+        if (requireActivePlayback && !playback.isPlaying) return false
+        if (playback.isBuffering || playback.repeat != RepeatMode.Off) return false
+        if (playback.currentIndex !in playback.queue.indices) return false
+        if (keepPlayingDisabledGeneration == keepPlayingQueueGeneration) return false
+        if (requireNearEnd && !playback.shouldTriggerKeepPlaying()) return false
+        if (!advanceWhenAppended && mutableUpNextDivider.value.visibleFor(playback) != null) return false
+        val signature = keepPlayingSignature(playback.queue, keepPlayingQueueGeneration)
+        if (keepPlayingJob?.isActive == true) {
+            if (signature == keepPlayingRequestedSignature && advanceWhenAppended) {
+                keepPlayingAdvanceOnAppendSignature = signature
+                return true
+            }
+            return false
+        }
+        if (signature == keepPlayingRequestedSignature && !forceRequest) return false
+        if (advanceWhenAppended) {
+            keepPlayingAdvanceOnAppendSignature = signature
+        } else {
+            mutableUpNextDivider.value = UpNextDividerMarker("Extending...", playback.queue.size)
+        }
+        keepPlayingRequestedSignature = signature
+        val origin = keepPlayingOrigin ?: playback.queue.toTrackListOrigin()
+        val queue = playback.queue
+        val generation = keepPlayingQueueGeneration
+        val shuffle = playback.shuffle
+        val job = scope.launch {
+            try {
+                appendKeepPlayingContinuation(
+                    origin = origin,
+                    capturedQueue = queue,
+                    generation = generation,
+                    signature = signature,
+                    shuffle = shuffle,
+                )
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                PhoebeLog.d("AppState") { "Keep Playing continuation failed: ${error.message}" }
+                clearKeepPlayingPendingDivider(signature)
+                clearKeepPlayingRequest(signature)
+            }
+        }
+        keepPlayingJob = job
+        job.invokeOnCompletion {
+            if (keepPlayingJob === job) {
+                keepPlayingJob = null
+            }
+        }
+        return true
+    }
+
+    private suspend fun nativeKeepPlayingCandidatesWithinBudget(
+        origin: PlaybackQueueOrigin,
+        capturedQueue: List<Track>,
+    ): List<Track> {
+        var timedOut = false
+        val candidates = withTimeoutOrNull(KeepPlayingNativeCandidateTimeoutMs) {
+            try {
+                nativeKeepPlayingCandidates(origin, capturedQueue)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                PhoebeLog.d("AppState") { "Keep Playing native suggestions failed: ${error.message}" }
+                emptyList()
+            }
+        } ?: run {
+            timedOut = true
+            emptyList()
+        }
+        if (timedOut) {
+            PhoebeLog.d("AppState") { "Keep Playing native suggestions timed out." }
+        }
+        return candidates
+    }
+
+    private fun requestKeepPlayingPreview(forceRequest: Boolean = false): Boolean {
+        val playback = dependencies.audioPlayer.state.value
+        return startKeepPlayingForSignal(
+            signal = KeepPlayingSignal(
+                playback = playback,
+                enabled = true,
+                castConnected = dependencies.castController.state.value.isConnected,
+                musicAssistantRemoteActive = mutableMusicAssistantRemotePlayback.value != null,
+            ),
+            requireActivePlayback = false,
+            advanceWhenAppended = false,
+            requireNearEnd = false,
+            forceRequest = forceRequest,
+        )
+    }
+
+    private suspend fun appendKeepPlayingContinuation(
+        origin: PlaybackQueueOrigin,
+        capturedQueue: List<Track>,
+        generation: Int,
+        signature: String,
+        shuffle: Boolean,
+    ) {
+        val additions = withContext(Dispatchers.Default) {
+            val nativeCandidates = nativeKeepPlayingCandidatesWithinBudget(origin, capturedQueue)
+            val plan = planQueueContinuation(
+                catalog = catalog.value,
+                origin = origin,
+                currentQueue = capturedQueue,
+                nativeCandidates = nativeCandidates,
+                recentTrackIds = recentKeepPlayingTrackIds(),
+                allowWeakFallback = nativeCandidates.isEmpty(),
+            ) ?: return@withContext emptyList()
+            plan.tracks
+                .withFreshPlaybackUrls(session.value)
+                .let { tracks -> if (shuffle) tracks.shuffled() else tracks }
+        }
+        if (additions.isEmpty()) {
+            clearKeepPlayingPendingDivider(signature)
+            clearKeepPlayingAdvanceRequest(signature)
+            return
+        }
+
+        val current = dependencies.audioPlayer.state.value
+        if (generation != keepPlayingQueueGeneration) {
+            clearKeepPlayingPendingDivider(signature)
+            clearKeepPlayingAdvanceRequest(signature)
+            return
+        }
+        if (keepPlayingDisabledGeneration == generation) {
+            clearKeepPlayingPendingDivider(signature)
+            clearKeepPlayingAdvanceRequest(signature)
+            return
+        }
+        if (signature != keepPlayingSignature(current.queue, generation)) {
+            clearKeepPlayingPendingDivider(signature)
+            clearKeepPlayingAdvanceRequest(signature)
+            return
+        }
+        val shouldAdvanceAfterAppend = keepPlayingAdvanceOnAppendSignature == signature ||
+            current.hasEndedAtQueueTail()
+        if (!shouldAdvanceAfterAppend && !current.isPlaying) {
+            clearKeepPlayingPendingDivider(signature)
+            clearKeepPlayingRequest(signature)
+            return
+        }
+        if (current.repeat != RepeatMode.Off) {
+            clearKeepPlayingPendingDivider(signature)
+            clearKeepPlayingAdvanceRequest(signature)
+            return
+        }
+        if (dependencies.castController.state.value.isConnected || mutableMusicAssistantRemotePlayback.value != null) {
+            clearKeepPlayingPendingDivider(signature)
+            clearKeepPlayingAdvanceRequest(signature)
+            return
+        }
+
+        val firstAppendedIndex = current.queue.size
+        dependencies.playbackTransportService.appendToQueue(additions)
+        mutableUpNextDivider.value = UpNextDividerMarker("Extended", firstAppendedIndex)
+        if (shouldAdvanceAfterAppend) {
+            keepPlayingAdvanceOnAppendSignature = null
+            val afterAppend = dependencies.audioPlayer.state.value
+            if (afterAppend.currentIndex == firstAppendedIndex - 1 &&
+                afterAppend.queue.lastIndex >= firstAppendedIndex
+            ) {
+                dependencies.playbackTransportService.next()
+            }
+        }
+    }
+
+    private fun clearKeepPlayingPendingDivider(signature: String) {
+        val divider = mutableUpNextDivider.value ?: return
+        if (divider.label == "Extending..." &&
+            divider.beforeQueueIndex == signature.keepPlayingSignatureQueueSize()
+        ) {
+            mutableUpNextDivider.value = null
+        }
+    }
+
+    private fun clearKeepPlayingRequest(signature: String) {
+        if (keepPlayingRequestedSignature == signature) {
+            keepPlayingRequestedSignature = null
+        }
+        clearKeepPlayingAdvanceRequest(signature)
+    }
+
+    private fun clearKeepPlayingAdvanceRequest(signature: String) {
+        if (keepPlayingAdvanceOnAppendSignature == signature) {
+            keepPlayingAdvanceOnAppendSignature = null
+        }
+    }
+
+    private suspend fun nativeKeepPlayingCandidates(
+        origin: PlaybackQueueOrigin,
+        currentQueue: List<Track>,
+    ): List<Track> =
+        when (origin) {
+            is PlaybackQueueOrigin.Artist -> {
+                if (!origin.id.startsWith("plex:") &&
+                    !origin.id.startsWith("jellyfin:") &&
+                    !origin.id.startsWith("emby:")
+                ) {
+                    emptyList()
+                } else {
+                    dependencies.catalogRepository.playArtistRadio(
+                        session.value,
+                        Artist(id = origin.id, title = origin.title),
+                    )
+                }
+            }
+            is PlaybackQueueOrigin.Album -> {
+                nativeKeepPlayingCandidatesForItems(
+                    providerType = origin.providerType,
+                    primaryItemId = origin.id,
+                    seedTrackIds = origin.seedTrackIds,
+                    currentQueue = currentQueue,
+                )
+            }
+            is PlaybackQueueOrigin.Playlist -> {
+                nativeKeepPlayingCandidatesForItems(
+                    providerType = origin.providerType,
+                    primaryItemId = origin.id,
+                    seedTrackIds = origin.seedTrackIds,
+                    currentQueue = currentQueue,
+                )
+            }
+            is PlaybackQueueOrigin.Radio -> {
+                if (origin.providerType != MediaProviderType.Plex || origin.key.isBlank()) {
+                    emptyList()
+                } else {
+                    dependencies.catalogRepository.playRadioStation(
+                        session.value,
+                        PlexRadioStation(
+                            id = origin.id,
+                            title = origin.title,
+                            subtitle = "Plex radio",
+                            key = origin.key,
+                            category = PlexRadioStationCategory.Library,
+                        ),
+                    )
+                }
+            }
+            is PlaybackQueueOrigin.Mix,
+            is PlaybackQueueOrigin.TrackList -> emptyList()
+        }
+
+    private suspend fun nativeKeepPlayingCandidatesForItems(
+        providerType: MediaProviderType?,
+        primaryItemId: String,
+        seedTrackIds: List<String>,
+        currentQueue: List<Track>,
+    ): List<Track> {
+        val itemIds = buildList {
+            add(primaryItemId)
+            currentQueue.take(KeepPlayingNativeSeedItemLimit).mapTo(this) { it.id }
+            currentQueue.takeLast(KeepPlayingNativeSeedItemLimit).mapTo(this) { it.id }
+            seedTrackIds.take(KeepPlayingNativeSeedItemLimit).forEach(::add)
+            seedTrackIds.takeLast(KeepPlayingNativeSeedItemLimit).forEach(::add)
+        }.distinct()
+
+        val startedAtMs = currentTimeMs()
+        val candidates = mutableListOf<Track>()
+        for (itemId in itemIds) {
+            val remainingMs = KeepPlayingNativeItemsBudgetMs - (currentTimeMs() - startedAtMs)
+            if (remainingMs <= 0L) {
+                PhoebeLog.d("AppState") { "Keep Playing native item suggestions reached time budget." }
+                break
+            }
+            val itemProviderType = providerType ?: itemId.providerTypeFromCatalogId()
+            if (!itemId.belongsToProviderType(itemProviderType)) continue
+            val itemTimeoutMs = minOf(KeepPlayingNativeItemTimeoutMs, remainingMs)
+            val related = try {
+                withTimeoutOrNull(itemTimeoutMs) {
+                    nativeKeepPlayingCandidatesForItem(itemProviderType, itemId)
+                } ?: run {
+                    PhoebeLog.d("AppState") { "Keep Playing native suggestions timed out for $itemId." }
+                    emptyList()
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                PhoebeLog.d("AppState") { "Keep Playing native suggestions failed for $itemId: ${error.message}" }
+                emptyList()
+            }
+            candidates += related
+        }
+        return candidates.distinctBy { it.id }
+    }
+
+    private suspend fun nativeKeepPlayingCandidatesForItem(
+        providerType: MediaProviderType?,
+        itemId: String,
+    ): List<Track> =
+        when (providerType) {
+            MediaProviderType.Plex -> dependencies.catalogRepository.plexSimilarTracksForItem(session.value, itemId)
+            MediaProviderType.Jellyfin,
+            MediaProviderType.Emby -> dependencies.catalogRepository.instantMixForItem(session.value, itemId)
+            MediaProviderType.Navidrome,
+            MediaProviderType.MusicAssistant,
+            null -> emptyList()
+        }
+
+    private fun String.belongsToProviderType(providerType: MediaProviderType?): Boolean {
+        val prefix = providerType?.catalogPrefix ?: return false
+        return startsWith("$prefix:")
+    }
+
+    private fun recentKeepPlayingTrackIds(): Set<String> =
+        lastPlayedByTrack.value.entries
+            .sortedByDescending { it.value }
+            .take(KeepPlayingRecentTrackLimit)
+            .mapTo(mutableSetOf()) { it.key }
+
+    private fun startKeepPlayingQueue(origin: PlaybackQueueOrigin?, queue: List<Track>) {
+        keepPlayingQueueGeneration++
+        keepPlayingDisabledGeneration = null
+        keepPlayingOrigin = origin ?: queue.toTrackListOrigin()
+        keepPlayingRequestedSignature = null
+        keepPlayingAdvanceOnAppendSignature = null
+        keepPlayingPreviewPendingGeneration = null
+        keepPlayingJob?.cancel()
+        keepPlayingJob = null
+        mutableUpNextDivider.value = null
+    }
+
+    private fun markKeepPlayingQueueEditedByUser() {
+        keepPlayingDisabledGeneration = keepPlayingQueueGeneration
+        clearKeepPlayingContinuationState()
+    }
+
+    private fun clearKeepPlayingContinuationState() {
+        keepPlayingRequestedSignature = null
+        keepPlayingAdvanceOnAppendSignature = null
+        keepPlayingPreviewPendingGeneration = null
+        keepPlayingJob?.cancel()
+        keepPlayingJob = null
+        mutableUpNextDivider.value = null
     }
 
     /**
@@ -1331,26 +1751,44 @@ class AppState(
         artistDetailPreloadJob = scope.launch {
             delay(75)
             withContext(Dispatchers.Default) {
-                val currentSession = session.value
-                runCatching {
-                    dependencies.catalogRepository.ensurePopularTracksForArtist(currentSession, artist)
-                }.onFailure {
-                    if (it is CancellationException) throw it
-                    PhoebeLog.d("AppState") { "artist popular tracks preload failed for '${artist.title}': ${it.message}" }
-                }
-                runCatching {
-                    dependencies.catalogRepository.ensureSimilarArtistsForArtist(currentSession, artist)
-                }.onFailure {
-                    if (it is CancellationException) throw it
-                    PhoebeLog.d("AppState") { "artist similar preload failed for '${artist.title}': ${it.message}" }
-                }
-                runCatching {
-                    dependencies.catalogRepository.ensureTracksForArtistAlbums(currentSession, artist.title)
-                }.onFailure {
-                    if (it is CancellationException) throw it
-                    PhoebeLog.d("AppState") { "artist album tracks preload failed for '${artist.title}': ${it.message}" }
+                preloadArtistCatalogDetails(session.value, artist)
+            }
+        }
+    }
+
+    fun preloadArtistMixBuilderData(artists: List<Artist>) {
+        val artistsToPreload = artists
+            .distinctBy { artist -> artist.mixBuilderPreloadKey() }
+            .filter { artist -> prefetchedMixBuilderArtistIds.add(artist.mixBuilderPreloadKey()) }
+        if (artistsToPreload.isEmpty()) return
+        scope.launch {
+            val currentSession = session.value
+            withContext(Dispatchers.Default) {
+                artistsToPreload.forEach { artist ->
+                    preloadArtistCatalogDetails(currentSession, artist)
                 }
             }
+        }
+    }
+
+    private suspend fun preloadArtistCatalogDetails(currentSession: PlexSession?, artist: Artist) {
+        runCatching {
+            dependencies.catalogRepository.ensurePopularTracksForArtist(currentSession, artist)
+        }.onFailure {
+            if (it is CancellationException) throw it
+            PhoebeLog.d("AppState") { "artist popular tracks preload failed for '${artist.title}': ${it.message}" }
+        }
+        runCatching {
+            dependencies.catalogRepository.ensureSimilarArtistsForArtist(currentSession, artist)
+        }.onFailure {
+            if (it is CancellationException) throw it
+            PhoebeLog.d("AppState") { "artist similar preload failed for '${artist.title}': ${it.message}" }
+        }
+        runCatching {
+            dependencies.catalogRepository.ensureTracksForArtistAlbums(currentSession, artist.title)
+        }.onFailure {
+            if (it is CancellationException) throw it
+            PhoebeLog.d("AppState") { "artist album tracks preload failed for '${artist.title}': ${it.message}" }
         }
     }
 
@@ -1649,7 +2087,16 @@ class AppState(
             return@launch
         }
         mutableDecadeMixNotice.value = null
-        if (!playTracks(firstTracks, 0)) return@launch
+        if (!playTracks(
+                firstTracks,
+                0,
+                queueOrigin = PlaybackQueueOrigin.Mix(
+                    id = "decade:$decade",
+                    title = "${decade}s",
+                    seedTrackIds = firstTracks.map { it.id },
+                ),
+            )
+        ) return@launch
         requestNavigation(AppNavigationRequest.Player)
         mutableMessage.value = "Playing ${firstTracks.size} songs from the ${decade}s."
         scope.launch {
@@ -1678,7 +2125,16 @@ class AppState(
             mutableMessage.value = "No popular songs found yet."
             return@launch
         }
-        if (playTracks(mix, 0)) {
+        if (playTracks(
+                mix,
+                0,
+                queueOrigin = PlaybackQueueOrigin.Mix(
+                    id = "popular",
+                    title = "Popular Mix",
+                    seedTrackIds = mix.map { it.id },
+                ),
+            )
+        ) {
             requestNavigation(AppNavigationRequest.Player)
             mutableMessage.value = "Playing ${mix.size} popular songs."
             appendPopularMixRemainder(seed, mix)
@@ -1699,7 +2155,16 @@ class AppState(
             mutableMessage.value = "No top tracks found yet."
             return@launch
         }
-        if (playTracks(mix, 0)) {
+        if (playTracks(
+                mix,
+                0,
+                queueOrigin = PlaybackQueueOrigin.Mix(
+                    id = "top-tracks",
+                    title = "Top Tracks",
+                    seedTrackIds = mix.map { it.id },
+                ),
+            )
+        ) {
             requestNavigation(AppNavigationRequest.Player)
             mutableMessage.value = "Playing ${mix.size} top tracks."
             if (seed != null) {
@@ -1881,7 +2346,18 @@ class AppState(
                 surfaceTransientNotice("No songs found for ${station.title}.")
                 return@launch
             }
-            if (playTracks(tracks, 0)) {
+            if (playTracks(
+                    tracks,
+                    0,
+                    queueOrigin = PlaybackQueueOrigin.Radio(
+                        id = station.id,
+                        title = station.title,
+                        key = station.key,
+                        providerType = MediaProviderType.Plex,
+                        seedTrackIds = tracks.map { it.id },
+                    ),
+                )
+            ) {
                 requestNavigation(AppNavigationRequest.Player)
             }
         } finally {
@@ -1890,7 +2366,7 @@ class AppState(
     }
 
     fun playArtistRadio(artist: Artist) = scope.launch {
-        if (!artist.id.startsWith("plex:") && !artist.id.startsWith("jellyfin:")) {
+        if (!artist.id.startsWith("plex:") && !artist.id.startsWith("jellyfin:") && !artist.id.startsWith("emby:")) {
             mutableMessage.value = "Artist Radio is available for streaming-library artists."
             return@launch
         }
@@ -1915,7 +2391,17 @@ class AppState(
                 return@launch
             }
             mutableArtistRadioAvailability.update { it + (artist.id to ArtistRadioAvailability.Available) }
-            if (playTracks(tracks, 0)) {
+            if (playTracks(
+                    tracks,
+                    0,
+                    queueOrigin = PlaybackQueueOrigin.Artist(
+                        id = artist.id,
+                        title = artist.title,
+                        providerType = artist.id.providerTypeFromCatalogId(),
+                        seedTrackIds = tracks.map { it.id },
+                    ),
+                )
+            ) {
                 requestNavigation(AppNavigationRequest.Player)
                 mutableMessage.value = "Playing ${artist.title} Radio."
             }
@@ -1925,7 +2411,7 @@ class AppState(
     }
 
     fun probeArtistRadio(artist: Artist) = scope.launch {
-        if (!artist.id.startsWith("plex:") && !artist.id.startsWith("jellyfin:")) {
+        if (!artist.id.startsWith("plex:") && !artist.id.startsWith("jellyfin:") && !artist.id.startsWith("emby:")) {
             mutableArtistRadioAvailability.update { it + (artist.id to ArtistRadioAvailability.Unavailable) }
             return@launch
         }
@@ -1951,7 +2437,19 @@ class AppState(
             mutableMessage.value = "${playlist.title} has no songs to shuffle."
             return@launch
         }
-        if (playTracks(tracks.shuffled(), 0, shuffleEnabled = true)) {
+        val shuffledTracks = tracks.shuffled()
+        if (playTracks(
+                shuffledTracks,
+                0,
+                queueOrigin = PlaybackQueueOrigin.Playlist(
+                    id = playlist.id,
+                    title = playlist.title,
+                    providerType = playlist.id.providerTypeFromCatalogId(),
+                    seedTrackIds = tracks.map { it.id },
+                ),
+                shuffleEnabled = true,
+            )
+        ) {
             requestNavigation(AppNavigationRequest.Player)
             mutableMessage.value = "Shuffling ${playlist.title}."
         }
@@ -2051,8 +2549,10 @@ class AppState(
         tracks: List<Track>,
         index: Int = 0,
         collectionMixSeed: CollectionMixSeed? = null,
+        queueOrigin: PlaybackQueueOrigin? = null,
         shuffleEnabled: Boolean = false,
         clearShuffle: Boolean = false,
+        preserveQueueContext: Boolean = false,
     ): Boolean {
         collectionMixGeneration++
         val playbackTracks = tracks.withFreshPlaybackUrls(session.value)
@@ -2075,10 +2575,16 @@ class AppState(
             if (shuffleEnabled || clearShuffle) {
                 dependencies.audioPlayer.setShuffle(shuffleEnabled)
             }
+            if (!preserveQueueContext) {
+                startKeepPlayingQueue(queueOrigin, playbackTracks)
+            }
             return true
         }
         if (session.value.isMusicAssistant() && track.localUri.isNullOrBlank() && track.streamUrl.isBlank()) {
             val musicAssistantTrack = track
+            if (!preserveQueueContext) {
+                startKeepPlayingQueue(queueOrigin, playbackTracks)
+            }
             scope.launch {
                 mutableMessage.value = "Starting ${musicAssistantTrack.title} in Music Assistant..."
                 runCatching {
@@ -2106,6 +2612,9 @@ class AppState(
             surfaceTransientNotice("Couldn't find a playable stream for ${track.title}. Try refreshing the library.")
             return false
         }
+        if (!preserveQueueContext) {
+            startKeepPlayingQueue(queueOrigin, playbackTracks)
+        }
         mutableMusicAssistantRemotePlayback.value = null
         if (shuffleEnabled) {
             dependencies.audioPlayer.playShuffled(playbackTracks, startIndex)
@@ -2116,6 +2625,12 @@ class AppState(
             }
         }
         recordPlaybackStarted(track)
+        if (appSettings.value.keepPlayingEnabled) {
+            keepPlayingPreviewPendingGeneration = keepPlayingQueueGeneration
+            if (requestKeepPlayingPreview()) {
+                keepPlayingPreviewPendingGeneration = null
+            }
+        }
         collectionMixSeed?.toCollectionMix()?.let { mix ->
             scheduleCollectionMix(mix, playbackTracks.map { it.id }.toSet())
         }
@@ -2197,6 +2712,7 @@ class AppState(
     }
 
     fun clearQueue() {
+        markKeepPlayingQueueEditedByUser()
         if (mutableMusicAssistantRemotePlayback.value != null) {
             mutableMusicAssistantRemotePlayback.value = null
         } else {
@@ -2208,29 +2724,58 @@ class AppState(
         mutableMusicAssistantRemotePlayback.value = null
         dependencies.playbackTransportService.stopPlayback()
     }
-    fun addToUpNext(track: Track) = dependencies.playbackTransportService.addToUpNext(track)
+    fun addToUpNext(track: Track) {
+        markKeepPlayingQueueEditedByUser()
+        dependencies.playbackTransportService.addToUpNext(track)
+    }
     fun appendToQueue(tracks: List<Track>) = dependencies.playbackTransportService.appendToQueue(tracks)
-    fun moveUpNext(fromIndex: Int, toIndex: Int) = dependencies.playbackTransportService.moveUpNext(fromIndex, toIndex)
-    fun removeUpNext(index: Int) = dependencies.playbackTransportService.removeUpNext(index)
+    fun moveUpNext(fromIndex: Int, toIndex: Int) {
+        markKeepPlayingQueueEditedByUser()
+        dependencies.playbackTransportService.moveUpNext(fromIndex, toIndex)
+    }
+    fun removeUpNext(index: Int) {
+        markKeepPlayingQueueEditedByUser()
+        dependencies.playbackTransportService.removeUpNext(index)
+    }
     fun playUpNext(index: Int) {
         val current = player.value
         val target = current.currentIndex + 1 + index
         if (target in current.queue.indices) {
-            playTracks(current.queue, target)
+            playTracks(current.queue, target, preserveQueueContext = true)
         }
     }
     fun next() {
         val remote = mutableMusicAssistantRemotePlayback.value
         if (remote != null) {
-            playTracks(remote.tracks, (remote.index + 1).coerceIn(0, remote.tracks.lastIndex))
+            playTracks(remote.tracks, (remote.index + 1).coerceIn(0, remote.tracks.lastIndex), preserveQueueContext = true)
+        } else if (requestKeepPlayingForQueueTailNext()) {
+            // Keep Playing will advance to the first appended track if related songs are found.
         } else {
             dependencies.playbackTransportService.next()
         }
     }
+
+    private fun requestKeepPlayingForQueueTailNext(): Boolean {
+        val playback = player.value
+        if (playback.currentIndex !in playback.queue.indices) return false
+        if (playback.currentIndex < playback.queue.lastIndex) return false
+        return startKeepPlayingForSignal(
+            signal = KeepPlayingSignal(
+                playback = playback,
+                enabled = appSettings.value.keepPlayingEnabled,
+                castConnected = dependencies.castController.state.value.isConnected,
+                musicAssistantRemoteActive = mutableMusicAssistantRemotePlayback.value != null,
+            ),
+            requireActivePlayback = false,
+            advanceWhenAppended = true,
+            requireNearEnd = true,
+            forceRequest = true,
+        )
+    }
     fun previous() {
         val remote = mutableMusicAssistantRemotePlayback.value
         if (remote != null) {
-            playTracks(remote.tracks, (remote.index - 1).coerceIn(0, remote.tracks.lastIndex))
+            playTracks(remote.tracks, (remote.index - 1).coerceIn(0, remote.tracks.lastIndex), preserveQueueContext = true)
         } else {
             dependencies.playbackTransportService.previous()
         }
@@ -2241,14 +2786,28 @@ class AppState(
         if (current.currentIndex < 0 || current.queue.isEmpty()) return
         val target = (current.currentIndex + delta).coerceIn(0, current.queue.lastIndex)
         if (target == current.currentIndex) return
-        playTracks(current.queue, target)
+        playTracks(current.queue, target, preserveQueueContext = true)
     }
     fun seekTo(positionMs: Long) = dependencies.playbackTransportService.seekTo(positionMs)
     suspend fun loadLyrics(track: Track, forceRefresh: Boolean = false): LyricsLoadState =
         dependencies.lyricsRepository.lyricsFor(track, forceRefresh)
 
     fun toggleShuffle() = dependencies.playbackTransportService.toggleShuffle(player.value.shuffle)
-    fun cycleRepeat() = dependencies.playbackTransportService.cycleRepeat(player.value.repeat)
+    fun cycleRepeat() {
+        val currentRepeat = player.value.repeat
+        val nextRepeat = when (currentRepeat) {
+            RepeatMode.Off -> RepeatMode.One
+            RepeatMode.One -> RepeatMode.All
+            RepeatMode.All -> RepeatMode.Off
+        }
+        dependencies.playbackTransportService.cycleRepeat(currentRepeat)
+        if (nextRepeat != RepeatMode.Off && appSettings.value.keepPlayingEnabled) {
+            clearKeepPlayingContinuationState()
+            scope.launch {
+                dependencies.settingsService.setKeepPlayingEnabled(false)
+            }
+        }
+    }
     fun setVolume(volume: Float) {
         dependencies.playbackTransportService.setVolume(volume)
         if (isDesktopPlatform() && appSettings.value.persistVolumeSettings) {
@@ -2426,6 +2985,20 @@ class AppState(
         dependencies.settingsService.setNotifyWhenDownloadFinishes(enabled)
         if (enabled) {
             requestNotificationPermission()
+        }
+    }
+
+    fun setKeepPlayingEnabled(enabled: Boolean) = scope.launch {
+        dependencies.settingsService.setKeepPlayingEnabled(enabled)
+        if (enabled) {
+            keepPlayingDisabledGeneration = null
+            dependencies.audioPlayer.setRepeat(RepeatMode.Off)
+            keepPlayingPreviewPendingGeneration = keepPlayingQueueGeneration
+            if (requestKeepPlayingPreview(forceRequest = true)) {
+                keepPlayingPreviewPendingGeneration = null
+            }
+        } else {
+            clearKeepPlayingContinuationState()
         }
     }
 
@@ -3130,6 +3703,9 @@ private data class PendingLastFmAuth(
     val token: String,
 )
 
+private fun Artist.mixBuilderPreloadKey(): String =
+    id.ifBlank { title }
+
 private fun PlexSession?.canUsePlexBackgroundFetches(): Boolean {
     val server = this?.selectedServer ?: return false
     if (isNavidrome() || isEmbyFamily()) return server.uri.isNotBlank()
@@ -3235,6 +3811,13 @@ private data class PlaybackHistoryRecord(
     val playedAtMs: Long = Long.MIN_VALUE,
 )
 
+private data class KeepPlayingSignal(
+    val playback: PlayerState,
+    val enabled: Boolean,
+    val castConnected: Boolean,
+    val musicAssistantRemoteActive: Boolean,
+)
+
 private data class PopularMixSeed(
     val session: PlexSession,
     val signature: String,
@@ -3268,7 +3851,72 @@ internal fun mixAppendCandidates(fullMix: List<Track>, existingQueue: List<Track
     return fullMix.filter { existingIds.add(it.id) }
 }
 
+private fun PlayerState.shouldTriggerKeepPlaying(): Boolean {
+    if (currentIndex !in queue.indices) return false
+    val upcomingCount = queue.lastIndex - currentIndex
+    if (upcomingCount <= 1) return true
+    val currentDuration = durationMs.takeIf { it > 0L } ?: currentTrack?.durationMs.orZero()
+    if (currentDuration <= 0L) return false
+    val currentRemaining = (currentDuration - positionMs).coerceAtLeast(0L)
+    val upcomingDuration = queue
+        .drop(currentIndex + 1)
+        .sumOf { it.durationMs.coerceAtLeast(0L) }
+    return currentRemaining + upcomingDuration <= KeepPlayingRemainingThresholdMs
+}
+
+private fun PlayerState.hasEndedAtQueueTail(): Boolean {
+    if (isPlaying || isBuffering) return false
+    if (currentIndex !in queue.indices || currentIndex != queue.lastIndex) return false
+    val currentDuration = durationMs.takeIf { it > 0L } ?: currentTrack?.durationMs.orZero()
+    if (currentDuration <= 0L) return false
+    return positionMs >= currentDuration - KeepPlayingEndedTailSlackMs
+}
+
+private fun UpNextDividerMarker?.visibleFor(playback: PlayerState): UpNextDividerMarker? {
+    val divider = this ?: return null
+    return divider.takeIf {
+        playback.currentIndex in playback.queue.indices &&
+            it.beforeQueueIndex > playback.currentIndex &&
+            it.beforeQueueIndex <= playback.queue.size
+    }
+}
+
+private fun keepPlayingSignature(queue: List<Track>, generation: Int): String =
+    buildString {
+        append(generation)
+        queue.forEach { track ->
+            append('|')
+            append(track.id)
+        }
+    }
+
+private fun String.keepPlayingSignatureQueueSize(): Int =
+    count { it == '|' }
+
+private fun List<Track>.toTrackListOrigin(): PlaybackQueueOrigin.TrackList =
+    PlaybackQueueOrigin.TrackList(
+        seedTrackIds = map { it.id },
+        providerType = singleProviderTypeOrNull(),
+    )
+
+private fun List<Track>.singleProviderTypeOrNull(): MediaProviderType? {
+    val providers = mapNotNull { track ->
+        MediaProviderType.entries.firstOrNull { provider -> track.id.startsWith("${provider.catalogPrefix}:") }
+    }.distinct()
+    return providers.singleOrNull()
+}
+
+private fun Long?.orZero(): Long = this ?: 0L
+
 private const val PlaybackHistoryDedupeWindowMs = 30_000L
+
+private const val KeepPlayingRemainingThresholdMs = 8L * 60L * 1000L
+private const val KeepPlayingEndedTailSlackMs = 1_500L
+private const val KeepPlayingNativeSeedItemLimit = 4
+private const val KeepPlayingNativeCandidateTimeoutMs = 5_000L
+private const val KeepPlayingNativeItemsBudgetMs = 4_000L
+private const val KeepPlayingNativeItemTimeoutMs = 1_200L
+private const val KeepPlayingRecentTrackLimit = 25
 
 private const val PopularMixSeedTrackLimit = 50
 private const val PopularMixTrackLimit = 500

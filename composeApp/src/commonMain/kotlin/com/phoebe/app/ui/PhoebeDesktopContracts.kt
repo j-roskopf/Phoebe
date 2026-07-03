@@ -51,6 +51,7 @@ import com.phoebe.app.domain.RadioStation
 import com.phoebe.app.domain.RadioStationSearchQuery
 import com.phoebe.app.domain.ShellPlaybackState
 import com.phoebe.app.domain.Track
+import com.phoebe.app.domain.UpNextDividerMarker
 import com.phoebe.app.domain.defaultCollectionEntries
 import com.phoebe.app.player.CastState
 import com.phoebe.app.platform.SecureCredentialAvailability
@@ -79,6 +80,7 @@ internal data class PlaybackUiState(
     val track: Track?,
     val radioNowPlaying: RadioNowPlayingMetadata? = null,
     val upNext: List<Track>,
+    val upNextDivider: UpNextDividerMarker? = null,
     val currentIndex: Int,
     val lyricsTrack: Track? = null,
     val lyricsState: LyricsLoadState = LyricsLoadState.Idle,
@@ -166,6 +168,7 @@ internal data class BrowseActions(
     val onRefreshRandomAlbums: () -> Unit,
     val onPrefetchHomeArtist: (Artist) -> Unit = {},
     val onPrefetchHomeAlbum: (Album) -> Unit = {},
+    val onEnsureArtistSuggestions: (List<Artist>) -> Unit = {},
     val onPlayDecadeMix: (Int) -> Unit = {},
     val onClearDecadeMixNotice: () -> Unit = {},
     val onPlayRadioStation: (PlexRadioStation) -> Unit = {},
@@ -186,6 +189,8 @@ internal data class BrowseActions(
     val onPlayPersonalMix: () -> Unit = {},
     val onPlayPopularMix: () -> Unit = {},
     val onPlayTopTracksMix: () -> Unit = {},
+    val onArtistMixBuilder: () -> Unit = {},
+    val onAlbumMixBuilder: () -> Unit = {},
     val onPopDetail: () -> Unit,
     val onPlayTracks: (List<Track>, Int) -> Unit,
     val onPlayAllTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks, 0) },
@@ -269,6 +274,7 @@ internal data class SettingsActions(
     val onCrossfadeSeconds: (Int) -> Unit,
     val onScanLibraryOnLaunch: (Boolean) -> Unit,
     val onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
+    val onKeepPlayingEnabled: (Boolean) -> Unit = {},
     val onPersistEqualizerSettings: (Boolean) -> Unit = {},
     val onPersistVolumeSettings: (Boolean) -> Unit = {},
     val onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},

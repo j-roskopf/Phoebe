@@ -5,6 +5,7 @@ CREATE TABLE AppSettingsRow (
     crossfadeSeconds INTEGER NOT NULL DEFAULT 0,
     scanLibraryOnLaunch INTEGER NOT NULL DEFAULT 0,
     notifyWhenDownloadFinishes INTEGER NOT NULL DEFAULT 0,
+    keepPlayingEnabled INTEGER NOT NULL DEFAULT 0,
     persistEqualizerSettings INTEGER NOT NULL DEFAULT 0,
     persistVolumeSettings INTEGER NOT NULL DEFAULT 0,
     savedVolume REAL NOT NULL DEFAULT 0.7,
@@ -29,6 +30,7 @@ INSERT OR REPLACE INTO AppSettingsRow(
     crossfadeSeconds,
     scanLibraryOnLaunch,
     notifyWhenDownloadFinishes,
+    keepPlayingEnabled,
     persistEqualizerSettings,
     persistVolumeSettings,
     savedVolume,
@@ -42,7 +44,7 @@ INSERT OR REPLACE INTO AppSettingsRow(
     lastFmSettings,
     downloadPolicySettings,
     audioProcessingSettings
-) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 clear:
 DELETE FROM AppSettingsRow;

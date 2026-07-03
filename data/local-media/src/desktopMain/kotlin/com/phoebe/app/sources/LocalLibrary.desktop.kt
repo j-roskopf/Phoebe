@@ -1,47 +1,58 @@
 package com.phoebe.app.sources
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import com.phoebe.app.platform.PlatformStorage
+import com.phoebe.app.platform.rememberPickDesktopDirectory
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.images.Artwork
+import java.io.File
+import java.io.IOException
 import java.net.URI
-import java.nio.file.LinkOption
+import java.nio.file.FileVisitResult
+import java.nio.file.FileVisitOption
 import java.nio.file.Files
+import java.nio.file.Path
 import java.nio.file.Paths
+import java.nio.file.SimpleFileVisitor
 import java.nio.file.attribute.BasicFileAttributes
-import javax.swing.JFileChooser
-import javax.swing.SwingUtilities
-import javax.swing.filechooser.FileSystemView
 
 private val audioExt = setOf("mp3", "m4a", "flac", "wav", "aac", "ogg", "opus")
+private val artworkExt = setOf("jpg", "jpeg", "png", "webp")
+private val sidecarArtworkNames = listOf("cover", "folder", "front", "album", "artwork")
+private const val MaxEmbeddedArtworkBytes = 12 * 1024 * 1024
 
 actual object LocalLibraryIO {
     actual suspend fun listAudioFiles(rootUri: String): List<LocalAudioFile> = withContext(Dispatchers.IO) {
         val uri = runCatching { URI(rootUri) }.getOrNull() ?: return@withContext emptyList()
-        val path = Paths.get(uri)
+        val path = runCatching { Paths.get(uri) }.getOrNull() ?: return@withContext emptyList()
         if (!Files.exists(path) || !Files.isDirectory(path)) return@withContext emptyList()
-        Files.walk(path).use { stream ->
-            val files = mutableListOf<LocalAudioFile>()
-            val iterator = stream.iterator()
-            while (iterator.hasNext()) {
-                val candidate = iterator.next()
-                val name = candidate.fileName?.toString() ?: continue
-                if (!audioExt.contains(name.substringAfterLast('.', "").lowercase())) continue
-                val attrs = runCatching {
-                    Files.readAttributes(candidate, BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
-                }.getOrNull() ?: continue
-                if (!attrs.isRegularFile) continue
-                files += LocalAudioFile(
-                    uri = candidate.toUri().toString(),
-                    sizeBytes = attrs.size(),
-                    modifiedAtMs = attrs.lastModifiedTime().toMillis(),
-                    filepath = name,
-                )
-            }
-            files.sortedBy { it.uri }
-        }
+        val files = mutableListOf<LocalAudioFile>()
+        Files.walkFileTree(
+            path,
+            setOf(FileVisitOption.FOLLOW_LINKS),
+            Int.MAX_VALUE,
+            object : SimpleFileVisitor<Path>() {
+                override fun visitFile(candidate: Path, attrs: BasicFileAttributes): FileVisitResult {
+                    val name = candidate.fileName?.toString() ?: return FileVisitResult.CONTINUE
+                    if (!audioExt.contains(name.substringAfterLast('.', "").lowercase())) return FileVisitResult.CONTINUE
+                    if (!attrs.isRegularFile) return FileVisitResult.CONTINUE
+                    files += LocalAudioFile(
+                        uri = candidate.toUri().toString(),
+                        sizeBytes = attrs.size(),
+                        modifiedAtMs = attrs.lastModifiedTime().toMillis(),
+                        filepath = name,
+                    )
+                    return FileVisitResult.CONTINUE
+                }
+
+                override fun visitFileFailed(file: Path, exc: IOException): FileVisitResult =
+                    FileVisitResult.CONTINUE
+            },
+        )
+        files.sortedBy { it.uri }
     }
 
     actual suspend fun listAudioUris(rootUri: String): List<String> = withContext(Dispatchers.IO) {
@@ -80,6 +91,8 @@ actual object LocalLibraryIO {
             val bitrateStr = header.bitRate
             val bitrateKbps = bitrateStr?.filter { it.isDigit() }?.toIntOrNull()?.takeIf { it > 0 }
             val audioCodec = header.format?.substringBefore(' ')?.takeIf { it.isNotBlank() }
+            val artworkUri = embeddedArtworkUri(path.toUri().toString(), tag?.getFirstArtwork())
+                ?: sidecarArtworkUri(path)
             AudioMetadata(
                 title = title,
                 artist = artist,
@@ -91,9 +104,22 @@ actual object LocalLibraryIO {
                 style = null,
                 bitrateKbps = bitrateKbps,
                 audioCodec = audioCodec,
+                artworkUri = artworkUri,
             )
         }.getOrElse {
-            AudioMetadata(title = null, artist = null, album = null, durationMs = 0L, year = null, genre = null, mood = null, style = null, bitrateKbps = null, audioCodec = null)
+            AudioMetadata(
+                title = null,
+                artist = null,
+                album = null,
+                durationMs = 0L,
+                year = null,
+                genre = null,
+                mood = null,
+                style = null,
+                bitrateKbps = null,
+                audioCodec = null,
+                artworkUri = sidecarArtworkUri(path),
+            )
         }
     }
 
@@ -120,17 +146,65 @@ actual object LocalLibraryIO {
 
 @Composable
 actual fun rememberPickLocalFolder(onPicked: (String?) -> Unit): () -> Unit =
-    remember(onPicked) {
-        {
-            SwingUtilities.invokeLater {
-                val chooser = JFileChooser(FileSystemView.getFileSystemView().homeDirectory).apply {
-                    fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-                    dialogTitle = "Choose music folder"
-                    isAcceptAllFileFilterUsed = false
-                }
-                val ok = chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION
-                val file = chooser.selectedFile
-                onPicked(if (ok && file != null) file.toURI().toString() else null)
-            }
+    rememberPickDesktopDirectory(
+        title = "Choose music folder",
+        initialDirectory = File(System.getProperty("user.home")),
+        onPicked = onPicked,
+    )
+
+private suspend fun embeddedArtworkUri(sourceUri: String, artwork: Artwork?): String? {
+    val bytes = artwork?.binaryData?.takeIf { it.isNotEmpty() && it.size <= MaxEmbeddedArtworkBytes } ?: return null
+    val extension = artwork.mimeType.artworkExtension() ?: bytes.sniffedArtworkExtension()
+    val target = "artwork/local-${sourceUri.stableArtworkHash()}.$extension"
+    return runCatching { PlatformStorage().writeBytes(target, bytes) }.getOrNull()
+}
+
+private fun sidecarArtworkUri(path: Path): String? {
+    val parent = path.parent ?: return null
+    val filesByName = runCatching {
+        Files.list(parent).use { stream ->
+            stream
+                .filter { Files.isRegularFile(it) }
+                .toList()
+                .associateBy { it.fileName.toString().lowercase() }
+        }
+    }.getOrDefault(emptyMap())
+    for (name in sidecarArtworkNames) {
+        for (extension in artworkExt) {
+            filesByName["$name.$extension"]?.let { return it.toUri().toString() }
         }
     }
+    return null
+}
+
+private fun String?.artworkExtension(): String? =
+    when (this?.substringAfterLast('/', "")?.lowercase()) {
+        "jpeg", "jpg" -> "jpg"
+        "png" -> "png"
+        "webp" -> "webp"
+        else -> null
+    }
+
+private fun ByteArray.sniffedArtworkExtension(): String =
+    when {
+        size >= 8 &&
+            this[0] == 0x89.toByte() &&
+            this[1] == 0x50.toByte() &&
+            this[2] == 0x4E.toByte() &&
+            this[3] == 0x47.toByte() -> "png"
+        size >= 12 &&
+            this[0] == 0x52.toByte() &&
+            this[1] == 0x49.toByte() &&
+            this[2] == 0x46.toByte() &&
+            this[8] == 0x57.toByte() &&
+            this[9] == 0x45.toByte() &&
+            this[10] == 0x42.toByte() &&
+            this[11] == 0x50.toByte() -> "webp"
+        else -> "jpg"
+    }
+
+private fun String.stableArtworkHash(): String {
+    var hash = 1125899906842597L
+    forEach { c -> hash = (hash * 31) + c.code }
+    return hash.toString()
+}

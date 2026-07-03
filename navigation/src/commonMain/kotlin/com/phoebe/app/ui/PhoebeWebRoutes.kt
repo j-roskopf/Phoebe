@@ -37,6 +37,7 @@ fun phoebeWebRoutesForPath(path: String?): List<PhoebeRoute> {
         "favorites" -> parseFavoritesPath(segments)
         "recently-added" -> parseRecentlyAddedPath(segments)
         "history" -> parseHistoryPath(segments)
+        "mix" -> parseMixPath(segments)
         "collections" -> parseCollectionsPath(segments)
         else -> listOf(PhoebeRoute.Browse(BrowseSection.Home))
     }
@@ -64,6 +65,8 @@ private fun PhoebeRoute?.requiresBrowseSource(): Boolean = when (this) {
     is PhoebeRoute.CollectionItems,
     is PhoebeRoute.Collections,
     is PhoebeRoute.PlayHistory,
+    PhoebeRoute.AlbumMixBuilder,
+    PhoebeRoute.ArtistMixBuilder,
     is PhoebeRoute.PlaylistDetail,
     is PhoebeRoute.PlaylistSlugDetail,
     is PhoebeRoute.RecentlyAdded,
@@ -142,6 +145,8 @@ fun PhoebeRoute.toPhoebeWebPath(
         ?: "/lyrics/current"
     is PhoebeRoute.RecentlyAdded -> "/recently-added/${kind.pathSegment()}"
     is PhoebeRoute.PlayHistory -> "/history/${kind.pathSegment()}"
+    PhoebeRoute.ArtistMixBuilder -> "/mix/artists"
+    PhoebeRoute.AlbumMixBuilder -> "/mix/albums"
     PhoebeRoute.FavoritePlaylists -> "/favorites/playlists"
     PhoebeRoute.FavoriteArtists -> "/favorites/artists"
     PhoebeRoute.FavoriteAlbums -> "/favorites/albums"
@@ -252,6 +257,12 @@ private fun parseHistoryPath(segments: List<String>): List<PhoebeRoute> =
     parsePlayHistoryKind(segments.getOrNull(1))
         ?.let { listOf(PhoebeRoute.Browse(BrowseSection.Home), PhoebeRoute.PlayHistory(it)) }
         ?: listOf(PhoebeRoute.Browse(BrowseSection.Home))
+
+private fun parseMixPath(segments: List<String>): List<PhoebeRoute> = when (segments.getOrNull(1)) {
+    "artists" -> listOf(PhoebeRoute.Browse(BrowseSection.Home), PhoebeRoute.ArtistMixBuilder)
+    "albums" -> listOf(PhoebeRoute.Browse(BrowseSection.Home), PhoebeRoute.AlbumMixBuilder)
+    else -> listOf(PhoebeRoute.Browse(BrowseSection.Home))
+}
 
 private fun parseCollectionsPath(segments: List<String>): List<PhoebeRoute> {
     val target = parseCollectionTarget(segments.getOrNull(1))

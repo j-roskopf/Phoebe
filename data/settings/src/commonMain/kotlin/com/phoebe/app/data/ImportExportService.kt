@@ -45,7 +45,7 @@ class ImportExportService(
     fun exportBackupPackage(): String =
         PhoebeDataJson.encodeToString(
             PhoebeBackupPackage(
-                settings = appSettingsRepository.settings.value,
+                settings = appSettingsRepository.settings.value.copy(keepPlayingEnabled = false),
                 smartPlaylists = userArtifactsRepository.smartPlaylists.value,
                 savedSearches = userArtifactsRepository.savedSearches.value,
                 localMetadataOverrides = userArtifactsRepository.metadataOverrides.value,

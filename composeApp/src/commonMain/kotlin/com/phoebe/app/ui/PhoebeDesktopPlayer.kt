@@ -71,9 +71,13 @@ import com.phoebe.app.feature.favorites.FavoritePlaylistsRouteState
 import com.phoebe.app.feature.history.HistoryNowPlayingState
 import com.phoebe.app.feature.history.PlayHistoryRoute
 import com.phoebe.app.feature.history.PlayHistoryRouteState
+import com.phoebe.app.feature.home.AlbumMixBuilderRoute
+import com.phoebe.app.feature.home.ArtistMixBuilderRoute
 import com.phoebe.app.feature.home.DesktopHomeRoute
 import com.phoebe.app.feature.home.DesktopHomeRouteActions
 import com.phoebe.app.feature.home.DesktopHomeRouteState
+import com.phoebe.app.feature.home.MixBuilderRouteActions
+import com.phoebe.app.feature.home.MixBuilderRouteState
 import com.phoebe.app.feature.home.RecentlyAddedNowPlayingState
 import com.phoebe.app.feature.home.RecentlyAddedRoute
 import com.phoebe.app.feature.home.RecentlyAddedRouteActions
@@ -130,6 +134,7 @@ internal fun DesktopPlayer(
     val compact = shellState.compact
     val busy = shellState.busy
     val routeViewModelFactory = shellState.routeViewModelFactory
+    val showArtistAlbumMixBuilders = canBrowseMainSections(session, mediaSources)
     val shellPlayback = playbackState.shellPlayback
     val playerTransport = playbackState.playerTransport
     val playerChromeFlow = remember(playerFlow) {
@@ -150,6 +155,8 @@ internal fun DesktopPlayer(
     val baseTrack = if (hasLivePlayerChrome) playerChrome.currentTrack else playbackState.track
     val track = baseTrack.withRadioNowPlaying(playbackState.radioNowPlaying)
     val upNext = if (hasLivePlayerChrome) playerChrome.upNext else playbackState.upNext
+    val upNextDivider = playbackState.upNextDivider
+    val currentIndex = if (hasLivePlayerChrome) playerChrome.currentIndex else playbackState.currentIndex
     val lyricsTrack = playbackState.lyricsTrack
     val lyricsState = playbackState.lyricsState
     val castState = playbackState.castState
@@ -217,6 +224,7 @@ internal fun DesktopPlayer(
     val onRefreshRandomAlbums = browseActions.onRefreshRandomAlbums
     val onPrefetchHomeArtist = browseActions.onPrefetchHomeArtist
     val onPrefetchHomeAlbum = browseActions.onPrefetchHomeAlbum
+    val onEnsureArtistSuggestions = browseActions.onEnsureArtistSuggestions
     val onPlayDecadeMix = browseActions.onPlayDecadeMix
     val onClearDecadeMixNotice = browseActions.onClearDecadeMixNotice
     val onPlayRadioStation = browseActions.onPlayRadioStation
@@ -237,6 +245,8 @@ internal fun DesktopPlayer(
     val onPlayPersonalMix = browseActions.onPlayPersonalMix
     val onPlayPopularMix = browseActions.onPlayPopularMix
     val onPlayTopTracksMix = browseActions.onPlayTopTracksMix
+    val onArtistMixBuilder = browseActions.onArtistMixBuilder
+    val onAlbumMixBuilder = browseActions.onAlbumMixBuilder
     val onPopDetail = browseActions.onPopDetail
     val onPlayTracks = browseActions.onPlayTracks
     val onPlayAllTracks = browseActions.onPlayAllTracks
@@ -307,6 +317,7 @@ internal fun DesktopPlayer(
     val onCrossfadeSeconds = settingsActions.onCrossfadeSeconds
     val onScanLibraryOnLaunch = settingsActions.onScanLibraryOnLaunch
     val onNotifyWhenDownloadFinishes = settingsActions.onNotifyWhenDownloadFinishes
+    val onKeepPlayingEnabled = settingsActions.onKeepPlayingEnabled
     val onPersistEqualizerSettingsFromSettings = settingsActions.onPersistEqualizerSettings
     val onPersistVolumeSettingsFromSettings = settingsActions.onPersistVolumeSettings
     val onVisualizerPresetFromSettings = settingsActions.onVisualizerPreset
@@ -409,7 +420,12 @@ internal fun DesktopPlayer(
                                         animateTransitions = sharedElementsEnabled,
                                         onBack = onPopDetail,
                                     ) { targetRoute ->
-                                        val targetResolution = resolvePhoebeRoute(targetRoute, catalog, track)
+                                        val targetResolution = resolvePhoebeRoute(
+                                            targetRoute,
+                                            catalog,
+                                            track,
+                                            showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
+                                        )
                                         val missingRoute = targetResolution as? PhoebeRouteResolution.Missing
                                         val targetScreenRaw = (targetResolution as? PhoebeRouteResolution.Resolved)?.screen ?: AppScreen.Home
                                         // When Artwork is selected, Player screen should not occupy the panel — show existing content instead
@@ -689,6 +705,23 @@ internal fun DesktopPlayer(
                                     ),
                                     modifier = Modifier.fillMaxSize(),
                                 )
+                                AppScreen.ArtistMixBuilder -> ArtistMixBuilderRoute(
+                                    state = MixBuilderRouteState(catalog = catalog),
+                                    actions = MixBuilderRouteActions(
+                                        onBack = onPopDetail,
+                                        onBuildQueue = { tracks -> onPlayTracks(tracks, 0) },
+                                        onEnsureArtistSuggestions = onEnsureArtistSuggestions,
+                                    ),
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                                AppScreen.AlbumMixBuilder -> AlbumMixBuilderRoute(
+                                    state = MixBuilderRouteState(catalog = catalog),
+                                    actions = MixBuilderRouteActions(
+                                        onBack = onPopDetail,
+                                        onBuildQueue = { tracks -> onPlayTracks(tracks, 0) },
+                                    ),
+                                    modifier = Modifier.fillMaxSize(),
+                                )
                                 AppScreen.Player -> DesktopPlayerProgressScope(playerFlow, playbackState.player) { positionMs ->
                                     DesktopVisualizerRoute(
                                         state = DesktopVisualizerRouteState(
@@ -720,6 +753,7 @@ internal fun DesktopPlayer(
                                                 radioStations = radioStations,
                                                 radioStartingIds = radioStartingIds,
                                                 showPopularMix = shellState.session.isPlex(),
+                                                showArtistAlbumMixBuilders = showArtistAlbumMixBuilders,
                                             ),
                                             actions = DesktopHomeRouteActions(
                                                 onTrack = onSong,
@@ -745,6 +779,8 @@ internal fun DesktopPlayer(
                                                 onPlayPersonalMix = onPlayPersonalMix,
                                                 onPlayPopularMix = onPlayPopularMix,
                                                 onPlayTopTracksMix = onPlayTopTracksMix,
+                                                onArtistMixBuilder = onArtistMixBuilder,
+                                                onAlbumMixBuilder = onAlbumMixBuilder,
                                                 onPlayTracks = onPlayTracks,
                                                 onAddToUpNext = onAddToUpNext,
                                                 onDownload = onDownload,
@@ -855,6 +891,7 @@ internal fun DesktopPlayer(
                                             onCrossfadeSeconds = onCrossfadeSeconds,
                                             onScanLibraryOnLaunch = onScanLibraryOnLaunch,
                                             onNotifyWhenDownloadFinishes = onNotifyWhenDownloadFinishes,
+                                            onKeepPlayingEnabled = onKeepPlayingEnabled,
                                             onPersistEqualizerSettings = onPersistEqualizerSettingsFromSettings,
                                             onPersistVolumeSettings = onPersistVolumeSettingsFromSettings,
                                             onAudioProcessingSettings = settingsActions.onAudioProcessingSettings,
@@ -950,12 +987,16 @@ internal fun DesktopPlayer(
                                     state = QueueRouteState(
                                         upNext = upNext,
                                         currentTrack = track,
+                                        upNextDivider = upNextDivider,
+                                        keepPlayingEnabled = appSettings.keepPlayingEnabled,
+                                        currentIndex = currentIndex,
                                         repeat = repeat,
                                         currentTrackClickOpensDetail = true,
                                     ),
                                     actions = QueueRouteActions(
                                         onPlayQueue = onPlayQueue,
                                         onClearQueue = onClearQueue,
+                                        onKeepPlayingEnabled = onKeepPlayingEnabled,
                                         onMoveUpNext = onMoveUpNext,
                                         onRemoveUpNext = onRemoveUpNext,
                                         onOpenTrackDetail = onSong,
@@ -1054,6 +1095,8 @@ private fun PhoebeRoute.hasDesktopSharedElements(): Boolean = when (this) {
     -> true
 
     is PhoebeRoute.Collections,
+    PhoebeRoute.AlbumMixBuilder,
+    PhoebeRoute.ArtistMixBuilder,
     PhoebeRoute.LibraryPicker,
     PhoebeRoute.Player,
     PhoebeRoute.ServerPicker,
@@ -1082,6 +1125,8 @@ private fun previewRoutesFor(screen: AppScreen, section: BrowseSection): List<Ph
         AppScreen.FavoritePlaylists -> PhoebeRoute.FavoritePlaylists
         AppScreen.FavoriteArtists -> PhoebeRoute.FavoriteArtists
         AppScreen.FavoriteAlbums -> PhoebeRoute.FavoriteAlbums
+        AppScreen.ArtistMixBuilder -> PhoebeRoute.ArtistMixBuilder
+        AppScreen.AlbumMixBuilder -> PhoebeRoute.AlbumMixBuilder
         is AppScreen.PlaylistDetail -> PhoebeRoute.PlaylistDetail(screen.playlist.id)
         AppScreen.Player -> PhoebeRoute.Player
     }

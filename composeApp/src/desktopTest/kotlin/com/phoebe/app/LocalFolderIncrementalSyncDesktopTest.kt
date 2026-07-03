@@ -13,6 +13,7 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class LocalFolderIncrementalSyncDesktopTest {
@@ -52,6 +53,101 @@ class LocalFolderIncrementalSyncDesktopTest {
 
         assertEquals(firstTracks.map { it.id }, secondTracks.map { it.id })
         assertEquals(firstAdded, secondTracks.associate { it.localUri to it.dateAddedMs })
+    }
+
+    @Test
+    fun localArtworkIsPromotedToAlbumAndArtistArtworkAndCached() = runTest {
+        val (db, sqlDriver) = newInMemoryPhoebeDatabase()
+        driver = sqlDriver
+        val cache = LocalFileMetadataCache(db)
+        val reader = FakeLocalAudioLibraryReader(
+            files = listOf(localFile("file:///music/alpha.mp3", size = 10, modified = 100)),
+            metadata = mapOf(
+                "file:///music/alpha.mp3" to AudioMetadata(
+                    title = "Alpha",
+                    artist = "Artist",
+                    album = "Album",
+                    durationMs = 1_000,
+                    artworkUri = "file:///music/cover.jpg",
+                ),
+            ),
+        )
+        val config = testConfig()
+
+        val first = LocalFolderCatalogBuilder.build(config, cache, reader)
+        val firstTrack = first.tracksByParent.values.flatten().single()
+
+        assertEquals("file:///music/cover.jpg", firstTrack.localArtworkUri)
+        assertEquals("file:///music/cover.jpg", first.albums.single().thumbUrl)
+        assertEquals("file:///music/cover.jpg", first.artists.single().thumbUrl)
+
+        reader.metadata = emptyMap()
+        val second = LocalFolderCatalogBuilder.build(config, cache, reader)
+        val cachedTrack = second.tracksByParent.values.flatten().single()
+
+        assertEquals(1, reader.metadataReads)
+        assertEquals("file:///music/cover.jpg", cachedTrack.localArtworkUri)
+        assertEquals("file:///music/cover.jpg", second.albums.single().thumbUrl)
+        assertNotNull(
+            db.catalogQueries.selectLocalFileMetadataCacheForFolder(config.id)
+                .awaitAsList()
+                .single()
+                .localArtworkUri,
+        )
+    }
+
+    @Test
+    fun legacyCachedLocalFilesAreRecheckedForArtworkOnce() = runTest {
+        val (db, sqlDriver) = newInMemoryPhoebeDatabase()
+        driver = sqlDriver
+        val cache = LocalFileMetadataCache(db)
+        val config = testConfig()
+        db.catalogQueries.upsertLocalFileMetadataCache(
+            folderId = config.id,
+            uri = "file:///music/alpha.mp3",
+            sizeBytes = 10,
+            modifiedAtMs = 100,
+            trackId = "cached-track",
+            albumId = "cached-album",
+            title = "Alpha",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 1_000,
+            year = null,
+            genre = null,
+            mood = null,
+            style = null,
+            bitrateKbps = null,
+            audioCodec = null,
+            filepath = "alpha.mp3",
+            localArtworkUri = null,
+            dateAddedMs = 123,
+        )
+        val reader = FakeLocalAudioLibraryReader(
+            files = listOf(localFile("file:///music/alpha.mp3", size = 10, modified = 100)),
+            metadata = mapOf(
+                "file:///music/alpha.mp3" to AudioMetadata(
+                    title = "Alpha",
+                    artist = "Artist",
+                    album = "Album",
+                    durationMs = 1_000,
+                    artworkUri = "file:///music/cover.jpg",
+                ),
+            ),
+        )
+
+        val first = LocalFolderCatalogBuilder.build(config, cache, reader)
+        val firstTrack = first.tracksByParent.values.flatten().single()
+
+        assertEquals(1, reader.metadataReads)
+        assertEquals("cached-track", firstTrack.id)
+        assertEquals("file:///music/cover.jpg", firstTrack.localArtworkUri)
+
+        reader.metadata = emptyMap()
+        val second = LocalFolderCatalogBuilder.build(config, cache, reader)
+
+        assertEquals(1, reader.metadataReads)
+        assertEquals("file:///music/cover.jpg", second.tracksByParent.values.flatten().single().localArtworkUri)
     }
 
     @Test

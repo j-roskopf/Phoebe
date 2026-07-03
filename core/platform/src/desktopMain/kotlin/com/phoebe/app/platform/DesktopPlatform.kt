@@ -1,7 +1,6 @@
 package com.phoebe.app.platform
 
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.client.plugins.HttpTimeout
@@ -23,8 +22,6 @@ import java.net.URI
 import java.net.SocketTimeoutException
 import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
-import javax.swing.JFileChooser
-import javax.swing.SwingUtilities
 
 actual fun createPlatformHttpClient(): HttpClient = HttpClient(OkHttp) {
     engine {
@@ -201,20 +198,11 @@ actual class DownloadNotifier actual constructor() {
 
 @Composable
 actual fun rememberPickDownloadDirectory(onPicked: (String?) -> Unit): () -> Unit =
-    remember(onPicked) {
-        {
-            SwingUtilities.invokeLater {
-                val chooser = JFileChooser(defaultDownloadDirectory()).apply {
-                    fileSelectionMode = JFileChooser.DIRECTORIES_ONLY
-                    dialogTitle = "Choose downloads folder"
-                    isAcceptAllFileFilterUsed = false
-                }
-                val ok = chooser.showOpenDialog(null) == JFileChooser.APPROVE_OPTION
-                val file = chooser.selectedFile
-                onPicked(if (ok && file != null) file.toURI().toString() else null)
-            }
-        }
-    }
+    rememberPickDesktopDirectory(
+        title = "Choose downloads folder",
+        initialDirectory = defaultDownloadDirectory(),
+        onPicked = onPicked,
+    )
 
 private const val DownloadDirectoryFile = "download-location.txt"
 

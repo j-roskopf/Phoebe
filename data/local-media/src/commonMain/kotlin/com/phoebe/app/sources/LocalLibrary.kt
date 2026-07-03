@@ -13,6 +13,7 @@ data class AudioMetadata(
     val style: String? = null,
     val bitrateKbps: Int? = null,
     val audioCodec: String? = null,
+    val artworkUri: String? = null,
 )
 
 data class LocalAudioFile(

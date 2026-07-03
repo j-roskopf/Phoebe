@@ -40,11 +40,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phoebe.app.domain.RepeatMode
 import com.phoebe.app.domain.Track
+import com.phoebe.app.domain.UpNextDividerMarker
 
 @Composable
 fun MobileQueueSheet(
     currentTrack: Track?,
     upNext: List<Track>,
+    upNextDivider: UpNextDividerMarker? = null,
+    keepPlayingEnabled: Boolean = false,
+    currentIndex: Int = -1,
     repeat: RepeatMode,
     sheetProgress: Float,
     expanded: Boolean,
@@ -55,6 +59,7 @@ fun MobileQueueSheet(
     onSheetDragEnd: (velocityPxPerSec: Float) -> Unit,
     modifier: Modifier,
     onPlayQueue: (Int) -> Unit,
+    onKeepPlayingEnabled: (Boolean) -> Unit = {},
     onMoveUpNext: (Int, Int) -> Unit,
     onRemoveUpNext: (Int) -> Unit,
     onOpenTrackDetail: (Track) -> Unit = {},
@@ -132,6 +137,11 @@ fun MobileQueueSheet(
                     Spacer(Modifier.width(8.dp))
                     RepeatBadge(mode = repeat)
                 }
+                Spacer(Modifier.width(8.dp))
+                KeepPlayingQueueToggle(
+                    enabled = keepPlayingEnabled,
+                    onEnabledChange = onKeepPlayingEnabled,
+                )
                 Spacer(Modifier.weight(1f))
                 val queueCount = upNext.size + if (currentTrack != null) 1 else 0
                 Text(
@@ -184,6 +194,8 @@ fun MobileQueueSheet(
                 UpNextList(
                     currentTrack = currentTrack,
                     upNext = upNext,
+                    upNextDivider = upNextDivider,
+                    currentIndex = currentIndex,
                     repeat = repeat,
                     onPlayQueue = onPlayQueue,
                     onMoveUpNext = onMoveUpNext,

@@ -424,6 +424,29 @@ class PlexClient(
             }
     }
 
+    suspend fun similarTracksForMetadata(
+        server: PlexServer,
+        ratingKey: String,
+        token: String,
+        limit: Int = 100,
+    ): List<Track> {
+        if (ratingKey.isBlank() || limit <= 0) return emptyList()
+        val body = runCatching {
+            plexGetRaw(server, token, "/library/metadata/$ratingKey/similar?count=$limit")
+        }.getOrElse { error ->
+            PhoebeLog.d("PlexClient") { "similarTracksForMetadata failed for $ratingKey: ${error.message}" }
+            return emptyList()
+        }
+        val response = runCatching {
+            PlexJson.decodeFromString(PlexMediaContainerResponse.serializer(), body)
+        }.onFailure { error ->
+            PhoebeLog.d("PlexClient") {
+                "similarTracksForMetadata decode failed for $ratingKey: ${error.message}; body=${body.take(400)}"
+            }
+        }.getOrNull() ?: return emptyList()
+        return hydratePlayQueueTracks(server, token, response.mediaContainer.metadata).take(limit)
+    }
+
     suspend fun trackPlaybackStat(server: PlexServer, ratingKey: String, token: String): PlexTrackPlaybackStat? {
         val body = runCatching {
             plexGetRaw(server, token, "/library/metadata/$ratingKey?includeUserState=1")

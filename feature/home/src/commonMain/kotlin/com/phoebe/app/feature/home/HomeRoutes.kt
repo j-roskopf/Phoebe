@@ -28,6 +28,7 @@ data class DesktopHomeRouteState(
     val radioStations: List<PlexRadioStation> = emptyList(),
     val radioStartingIds: Set<String> = emptySet(),
     val showPopularMix: Boolean = true,
+    val showArtistAlbumMixBuilders: Boolean = true,
 )
 
 @Immutable
@@ -62,6 +63,8 @@ data class DesktopHomeRouteActions(
     val onPlayPersonalMix: () -> Unit,
     val onPlayPopularMix: () -> Unit,
     val onPlayTopTracksMix: () -> Unit,
+    val onArtistMixBuilder: () -> Unit,
+    val onAlbumMixBuilder: () -> Unit,
     val onPlayTracks: (List<Track>, Int) -> Unit,
     val onAddToUpNext: (Track) -> Unit,
     val onDownload: (Track) -> Unit,
@@ -106,7 +109,10 @@ fun DesktopHomeRoute(
         onPlayPersonalMix = actions.onPlayPersonalMix,
         onPlayPopularMix = actions.onPlayPopularMix,
         onPlayTopTracksMix = actions.onPlayTopTracksMix,
+        onArtistMixBuilder = actions.onArtistMixBuilder,
+        onAlbumMixBuilder = actions.onAlbumMixBuilder,
         showPopularMix = state.showPopularMix,
+        showArtistAlbumMixBuilders = state.showArtistAlbumMixBuilders,
         onPlayTracks = actions.onPlayTracks,
         onAddToUpNext = actions.onAddToUpNext,
         onDownload = actions.onDownload,

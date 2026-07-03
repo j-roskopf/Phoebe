@@ -55,6 +55,7 @@ class AppSettingsRepositoryDesktopTest {
             setCrossfadeSeconds(7)
             setScanLibraryOnLaunch(true)
             setNotifyWhenDownloadFinishes(true)
+            setKeepPlayingEnabled(true)
             setPersistEqualizerSettings(true, EqualizerProfile.Default.normalized().withGain(7, 4.5f))
             setPersistVolumeSettings(true, 0.42f)
             setNowPlayingVisualizerInTvFrame(true)
@@ -67,6 +68,7 @@ class AppSettingsRepositoryDesktopTest {
         assertEquals(7, restored.settings.value.crossfadeSeconds)
         assertTrue(restored.settings.value.scanLibraryOnLaunch)
         assertTrue(restored.settings.value.notifyWhenDownloadFinishes)
+        assertFalse(restored.settings.value.keepPlayingEnabled)
         assertTrue(restored.settings.value.persistEqualizerSettings)
         assertTrue(restored.settings.value.persistVolumeSettings)
         assertEquals(0.42f, restored.settings.value.savedVolume)
@@ -75,6 +77,24 @@ class AppSettingsRepositoryDesktopTest {
         assertFalse(restored.settings.value.blurredArtworkAppearance)
         assertFalse(restored.settings.value.fullBleedDetailArtwork)
         assertFalse(restored.settings.value.tintedBackgroundGradient)
+    }
+
+    @Test
+    fun keepPlayingIsSessionOnlyAndDoesNotPersist() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val repository = AppSettingsRepository(db)
+
+        repository.setKeepPlayingEnabled(true)
+        repository.setCrossfadeSeconds(3)
+
+        assertTrue(repository.settings.value.keepPlayingEnabled)
+        assertEquals(3, repository.settings.value.crossfadeSeconds)
+
+        val restored = AppSettingsRepository(db).apply { restore() }
+
+        assertFalse(restored.settings.value.keepPlayingEnabled)
+        assertEquals(3, restored.settings.value.crossfadeSeconds)
     }
 
     @Test

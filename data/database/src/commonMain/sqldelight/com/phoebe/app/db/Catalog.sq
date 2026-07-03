@@ -171,6 +171,7 @@ CREATE TABLE LocalFileMetadataCacheRow (
     albumSort TEXT,
     audioCodec TEXT,
     filepath TEXT,
+    localArtworkUri TEXT,
     dateAddedMs INTEGER NOT NULL,
     PRIMARY KEY (folderId, uri)
 );
@@ -333,8 +334,8 @@ SELECT * FROM LocalFileMetadataCacheRow WHERE folderId = ?;
 upsertLocalFileMetadataCache:
 INSERT OR REPLACE INTO LocalFileMetadataCacheRow(
     folderId, uri, sizeBytes, modifiedAtMs, trackId, albumId, title, artist,
-    album, durationMs, year, genre, mood, style, bitrateKbps, audioCodec, filepath, dateAddedMs
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    album, durationMs, year, genre, mood, style, bitrateKbps, audioCodec, filepath, localArtworkUri, dateAddedMs
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 deleteLocalFileMetadataCache:
 DELETE FROM LocalFileMetadataCacheRow WHERE folderId = ? AND uri = ?;

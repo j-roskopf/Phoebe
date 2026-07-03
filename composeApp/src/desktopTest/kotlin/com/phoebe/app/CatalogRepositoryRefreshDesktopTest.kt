@@ -368,6 +368,7 @@ class CatalogRepositoryRefreshDesktopTest {
         assertEquals(listOf("plex:artist"), repo.catalog.value.artists.map { it.id })
         assertEquals(listOf("plex:album"), repo.catalog.value.albums.map { it.id })
         assertTrue(repo.catalog.value.tracksByParent.values.flatten().none { it.id.startsWith("local_") })
+        assertTrue(repo.resolveTracksByIds(listOf("local_lf-old:track:1")).isEmpty())
     }
 
     @Test

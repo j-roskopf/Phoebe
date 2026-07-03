@@ -38,6 +38,16 @@ class PhoebeWebRoutesTest {
             phoebeWebRoutesForPath("/radio/globe"),
         )
         assertEquals("/radio/map", PhoebeRoute.RadioMap.toPhoebeWebPath())
+        assertEquals(
+            listOf(PhoebeRoute.Browse(BrowseSection.Home), PhoebeRoute.ArtistMixBuilder),
+            phoebeWebRoutesForPath("/mix/artists"),
+        )
+        assertEquals(
+            listOf(PhoebeRoute.Browse(BrowseSection.Home), PhoebeRoute.AlbumMixBuilder),
+            phoebeWebRoutesForPath("/mix/albums"),
+        )
+        assertEquals("/mix/artists", PhoebeRoute.ArtistMixBuilder.toPhoebeWebPath())
+        assertEquals("/mix/albums", PhoebeRoute.AlbumMixBuilder.toPhoebeWebPath())
     }
 
     @Test

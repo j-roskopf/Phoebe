@@ -57,6 +57,7 @@ fun FlippableSongArtwork(
     radius: Dp = 10.dp,
     shape: Shape = RoundedCornerShape(radius),
     maxDecodeDimension: Int = ListArtworkMaxDecodeDimension,
+    forceSquare: Boolean = true,
     onFlipRotationChange: (Float) -> Unit = {},
     frontOverlay: @Composable BoxScope.() -> Unit = {},
 ) {
@@ -77,9 +78,10 @@ fun FlippableSongArtwork(
         }
     }
 
+    val rootModifier = if (forceSquare) modifier.aspectRatio(1f) else modifier
+
     Box(
-        modifier
-            .aspectRatio(1f)
+        rootModifier
             .graphicsLayer {
                 rotationY = rotation
                 cameraDistance = 12f * density.density

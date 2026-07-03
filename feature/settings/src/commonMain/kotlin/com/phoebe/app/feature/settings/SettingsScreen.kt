@@ -137,6 +137,7 @@ fun SettingsDesktopView(
     onCrossfadeSeconds: (Int) -> Unit,
     onScanLibraryOnLaunch: (Boolean) -> Unit,
     onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
+    onKeepPlayingEnabled: (Boolean) -> Unit = {},
     onPersistEqualizerSettings: (Boolean) -> Unit = {},
     onPersistVolumeSettings: (Boolean) -> Unit = {},
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
@@ -238,6 +239,7 @@ fun SettingsDesktopView(
                         capabilities = audioProcessingCapabilities,
                         onCrossfadeSeconds = onCrossfadeSeconds,
                         onScanLibraryOnLaunch = onScanLibraryOnLaunch,
+                        onKeepPlayingEnabled = onKeepPlayingEnabled,
                         onPersistEqualizerSettings = onPersistEqualizerSettings,
                         onPersistVolumeSettings = onPersistVolumeSettings,
                         onAudioProcessingSettings = onAudioProcessingSettings,
@@ -334,6 +336,7 @@ fun SettingsMobileView(
     onCrossfadeSeconds: (Int) -> Unit,
     onScanLibraryOnLaunch: (Boolean) -> Unit,
     onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
+    onKeepPlayingEnabled: (Boolean) -> Unit = {},
     onPersistEqualizerSettings: (Boolean) -> Unit = {},
     onPersistVolumeSettings: (Boolean) -> Unit = {},
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
@@ -438,6 +441,7 @@ fun SettingsMobileView(
             capabilities = audioProcessingCapabilities,
             onCrossfadeSeconds = onCrossfadeSeconds,
             onScanLibraryOnLaunch = onScanLibraryOnLaunch,
+            onKeepPlayingEnabled = onKeepPlayingEnabled,
             onPersistEqualizerSettings = onPersistEqualizerSettings,
             onPersistVolumeSettings = onPersistVolumeSettings,
             onAudioProcessingSettings = onAudioProcessingSettings,
@@ -745,6 +749,7 @@ private fun AudioPlaybackSettingsCard(
     capabilities: AudioProcessingCapabilities,
     onCrossfadeSeconds: (Int) -> Unit,
     onScanLibraryOnLaunch: (Boolean) -> Unit,
+    onKeepPlayingEnabled: (Boolean) -> Unit = {},
     onPersistEqualizerSettings: (Boolean) -> Unit,
     onPersistVolumeSettings: (Boolean) -> Unit = {},
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit,
@@ -786,6 +791,12 @@ private fun AudioPlaybackSettingsCard(
             checked = audio.gaplessEnabled && capabilities.gapless.isSupported,
             enabled = capabilities.gapless.isSupported,
             onCheckedChange = { checked -> onAudioProcessingSettings(audio.copy(gaplessEnabled = checked)) },
+        )
+        SettingsSwitchRow(
+            title = "Keep Playing",
+            subtitle = "Add related songs before the queue ends",
+            checked = settings.keepPlayingEnabled,
+            onCheckedChange = onKeepPlayingEnabled,
         )
         Spacer(Modifier.height(12.dp))
         SettingsSwitchRow(
@@ -2604,6 +2615,16 @@ private val UnsplashImageCredits = listOf(
         photographer = "Clay Banks",
         description = "Black and white vinyl record",
         url = "https://unsplash.com/photos/black-and-white-vinyl-record-fEVaiLwWvlU$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Eric Krull",
+        description = "Black vinyl record on black vinyl record",
+        url = "https://unsplash.com/photos/black-vinyl-record-on-black-vinyl-record-fi3_lDi3qPE$UnsplashReferral",
+    ),
+    UnsplashImageCredit(
+        photographer = "Chris",
+        description = "Man in black t-shirt and hat playing guitar",
+        url = "https://unsplash.com/photos/man-in-black-t-shirt-and-hat-playing-guitar-7WfcHibcR3Y$UnsplashReferral",
     ),
     UnsplashImageCredit(
         photographer = "Markus Spiske",

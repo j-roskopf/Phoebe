@@ -21,7 +21,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -36,8 +35,10 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -48,16 +49,21 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.phoebe.app.domain.RepeatMode
 import com.phoebe.app.domain.Track
+import com.phoebe.app.domain.UpNextDividerMarker
 import kotlin.math.roundToInt
 
 @Composable
 fun QueuePanel(
     upNext: List<Track>,
     currentTrack: Track?,
+    upNextDivider: UpNextDividerMarker? = null,
+    keepPlayingEnabled: Boolean = false,
+    currentIndex: Int = -1,
     repeat: RepeatMode,
     modifier: Modifier,
     onPlayQueue: (Int) -> Unit,
     onClearQueue: () -> Unit,
+    onKeepPlayingEnabled: (Boolean) -> Unit = {},
     onMoveUpNext: (Int, Int) -> Unit,
     onRemoveUpNext: (Int) -> Unit,
     onOpenTrackDetail: (Track) -> Unit = {},
@@ -71,6 +77,11 @@ fun QueuePanel(
                 Spacer(Modifier.width(8.dp))
                 RepeatBadge(mode = repeat)
             }
+            Spacer(Modifier.width(8.dp))
+            KeepPlayingQueueToggle(
+                enabled = keepPlayingEnabled,
+                onEnabledChange = onKeepPlayingEnabled,
+            )
             Spacer(Modifier.weight(1f))
             if (upNext.isNotEmpty()) {
                 Text(
@@ -90,6 +101,8 @@ fun QueuePanel(
             UpNextList(
                 currentTrack = currentTrack,
                 upNext = upNext,
+                upNextDivider = upNextDivider,
+                currentIndex = currentIndex,
                 repeat = repeat,
                 onPlayQueue = onPlayQueue,
                 onMoveUpNext = onMoveUpNext,
@@ -98,6 +111,73 @@ fun QueuePanel(
                 currentTrackClickOpensDetail = currentTrackClickOpensDetail,
                 listState = listState,
                 modifier = Modifier.fillMaxWidth(),
+            )
+        }
+    }
+}
+
+@Composable
+internal fun KeepPlayingQueueToggle(
+    enabled: Boolean,
+    onEnabledChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    compact: Boolean = false,
+) {
+    val label = if (compact) "Keep" else "Keep Playing"
+    val activeColor = PhoebeUi.accentLight
+    val inactiveText = PhoebeUi.mutedText.copy(alpha = 0.9f)
+    val containerColor = if (enabled) {
+        PhoebeUi.accent.copy(alpha = 0.18f)
+    } else {
+        PhoebeUi.primaryText.copy(alpha = 0.06f)
+    }
+    val trackColor = if (enabled) {
+        activeColor.copy(alpha = 0.48f)
+    } else {
+        PhoebeUi.progressTrack
+    }
+    val thumbColor = if (enabled) Color.White else PhoebeUi.mutedText.copy(alpha = 0.82f)
+    Row(
+        modifier = modifier
+            .heightIn(min = 28.dp)
+            .clip(RoundedCornerShape(999.dp))
+            .background(containerColor)
+            .clickable(
+                onClickLabel = if (enabled) "Disable Keep Playing" else "Enable Keep Playing",
+                role = Role.Switch,
+                onClick = { onEnabledChange(!enabled) },
+            )
+            .semantics {
+                contentDescription = "Keep Playing"
+                stateDescription = if (enabled) "On" else "Off"
+            }
+            .padding(start = 8.dp, end = 7.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            label,
+            color = if (enabled) activeColor else inactiveText,
+            fontSize = 10.sp,
+            lineHeight = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Box(
+            Modifier
+                .width(24.dp)
+                .height(14.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(trackColor)
+                .padding(horizontal = 2.dp),
+            contentAlignment = if (enabled) Alignment.CenterEnd else Alignment.CenterStart,
+        ) {
+            Box(
+                Modifier
+                    .size(10.dp)
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(thumbColor),
             )
         }
     }
@@ -140,6 +220,8 @@ fun RepeatBadge(mode: RepeatMode) {
 fun UpNextList(
     currentTrack: Track?,
     upNext: List<Track>,
+    upNextDivider: UpNextDividerMarker? = null,
+    currentIndex: Int = -1,
     repeat: RepeatMode = RepeatMode.Off,
     onPlayQueue: (Int) -> Unit,
     onMoveUpNext: (Int, Int) -> Unit,
@@ -158,6 +240,7 @@ fun UpNextList(
     var dragStartIndex by remember { mutableStateOf<Int?>(null) }
     var dragTargetIndex by remember { mutableStateOf<Int?>(null) }
     var dragOffsetPx by remember { mutableStateOf(0f) }
+    val dividerUpNextIndex = upNextDivider.upNextIndex(currentIndex, upNext)
 
     LazyColumn(state = listState, modifier = modifier, verticalArrangement = Arrangement.spacedBy(rowSpacing)) {
         if (currentTrack != null) {
@@ -178,80 +261,98 @@ fun UpNextList(
                 )
             }
         }
-        itemsIndexed(upNext, key = { _, t -> t.id }, contentType = { _, _ -> "up-next" }) { index, track ->
-            val isDragging = draggingTrackId == track.id
-            val draggingId = draggingTrackId
-            val startIndex = dragStartIndex
-            val targetIndex = dragTargetIndex
-            val rowOffsetPx = when {
-                draggingId == null || startIndex == null || targetIndex == null -> 0f
-                isDragging -> dragOffsetPx
-                targetIndex > startIndex && index in (startIndex + 1)..targetIndex -> -rowStepPx
-                targetIndex < startIndex && index in targetIndex until startIndex -> rowStepPx
-                else -> 0f
+        upNext.forEachIndexed { index, track ->
+            if (dividerUpNextIndex == index && upNextDivider != null) {
+                item(
+                    key = "keep-playing-divider-${upNextDivider.beforeQueueIndex}",
+                    contentType = "keep-playing-divider",
+                ) {
+                    KeepPlayingDivider(upNextDivider.label)
+                }
             }
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .offset { IntOffset(0, rowOffsetPx.roundToInt()) }
-                    .zIndex(if (isDragging) 1f else 0f),
+            item(key = track.id, contentType = "up-next") {
+                val isDragging = draggingTrackId == track.id
+                val draggingId = draggingTrackId
+                val startIndex = dragStartIndex
+                val targetIndex = dragTargetIndex
+                val rowOffsetPx = when {
+                    draggingId == null || startIndex == null || targetIndex == null -> 0f
+                    isDragging -> dragOffsetPx
+                    targetIndex > startIndex && index in (startIndex + 1)..targetIndex -> -rowStepPx
+                    targetIndex < startIndex && index in targetIndex until startIndex -> rowStepPx
+                    else -> 0f
+                }
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .offset { IntOffset(0, rowOffsetPx.roundToInt()) }
+                        .zIndex(if (isDragging) 1f else 0f),
+                ) {
+                    UpNextRow(
+                        track = track,
+                        active = false,
+                        thumbnail = thumbnail,
+                        rowHeight = rowHeight,
+                        backgroundAlpha = if (isDragging) 0.22f else 0f,
+                        dragHandle = {
+                            Box(
+                                Modifier
+                                    .size(36.dp)
+                                    .pointerInput(track.id, index, upNext.lastIndex, rowStepPx) {
+                                        detectDragGestures(
+                                            onDragStart = {
+                                                draggingTrackId = track.id
+                                                dragStartIndex = index
+                                                dragTargetIndex = index
+                                                dragOffsetPx = 0f
+                                            },
+                                            onDragEnd = {
+                                                val from = dragStartIndex
+                                                val to = dragTargetIndex
+                                                draggingTrackId = null
+                                                dragStartIndex = null
+                                                dragTargetIndex = null
+                                                dragOffsetPx = 0f
+                                                if (from != null && to != null && from != to) {
+                                                    onMoveUpNext(from, to)
+                                                }
+                                            },
+                                            onDragCancel = {
+                                                draggingTrackId = null
+                                                dragStartIndex = null
+                                                dragTargetIndex = null
+                                                dragOffsetPx = 0f
+                                            },
+                                            onDrag = { change, drag ->
+                                                change.consume()
+                                                val startIndex = dragStartIndex
+                                                    ?: return@detectDragGestures
+                                                val minOffset = -startIndex * rowStepPx
+                                                val maxOffset = (upNext.lastIndex - startIndex) * rowStepPx
+                                                dragOffsetPx = (dragOffsetPx + drag.y).coerceIn(minOffset, maxOffset)
+                                                dragTargetIndex = (startIndex + (dragOffsetPx / rowStepPx).roundToInt())
+                                                    .coerceIn(0, upNext.lastIndex)
+                                            },
+                                        )
+                                    }
+                                    .semantics { contentDescription = "Reorder ${track.title}" },
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                PhoebeIconView(PhoebeIcon.Drag, tint = PhoebeUi.mutedText, modifier = Modifier.size(18.dp))
+                            }
+                        },
+                        onClick = { onPlayQueue(index) },
+                        onLongPress = { onOpenTrackDetail(track) },
+                    )
+                }
+            }
+        }
+        if (dividerUpNextIndex == upNext.size && upNextDivider != null) {
+            item(
+                key = "keep-playing-divider-${upNextDivider.beforeQueueIndex}",
+                contentType = "keep-playing-divider",
             ) {
-                UpNextRow(
-                    track = track,
-                    active = false,
-                    thumbnail = thumbnail,
-                    rowHeight = rowHeight,
-                    backgroundAlpha = if (isDragging) 0.22f else 0f,
-                    dragHandle = {
-                        Box(
-                            Modifier
-                                .size(36.dp)
-                                .pointerInput(track.id, index, upNext.lastIndex, rowStepPx) {
-                                    detectDragGestures(
-                                        onDragStart = {
-                                            draggingTrackId = track.id
-                                            dragStartIndex = index
-                                            dragTargetIndex = index
-                                            dragOffsetPx = 0f
-                                        },
-                                        onDragEnd = {
-                                            val from = dragStartIndex
-                                            val to = dragTargetIndex
-                                            draggingTrackId = null
-                                            dragStartIndex = null
-                                            dragTargetIndex = null
-                                            dragOffsetPx = 0f
-                                            if (from != null && to != null && from != to) {
-                                                onMoveUpNext(from, to)
-                                            }
-                                        },
-                                        onDragCancel = {
-                                            draggingTrackId = null
-                                            dragStartIndex = null
-                                            dragTargetIndex = null
-                                            dragOffsetPx = 0f
-                                        },
-                                        onDrag = { change, drag ->
-                                            change.consume()
-                                            val startIndex = dragStartIndex
-                                                ?: return@detectDragGestures
-                                            val minOffset = -startIndex * rowStepPx
-                                            val maxOffset = (upNext.lastIndex - startIndex) * rowStepPx
-                                            dragOffsetPx = (dragOffsetPx + drag.y).coerceIn(minOffset, maxOffset)
-                                            dragTargetIndex = (startIndex + (dragOffsetPx / rowStepPx).roundToInt())
-                                                .coerceIn(0, upNext.lastIndex)
-                                        },
-                                    )
-                                }
-                                .semantics { contentDescription = "Reorder ${track.title}" },
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            PhoebeIconView(PhoebeIcon.Drag, tint = PhoebeUi.mutedText, modifier = Modifier.size(18.dp))
-                        }
-                    },
-                    onClick = { onPlayQueue(index) },
-                    onLongPress = { onOpenTrackDetail(track) },
-                )
+                KeepPlayingDivider(upNextDivider.label)
             }
         }
         if (repeat == RepeatMode.All && (currentTrack != null || upNext.isNotEmpty())) {
@@ -259,6 +360,32 @@ fun UpNextList(
                 RepeatAllDivider()
             }
         }
+    }
+}
+
+private fun UpNextDividerMarker?.upNextIndex(currentIndex: Int, upNext: List<Track>): Int? {
+    val marker = this ?: return null
+    if (currentIndex < 0) return null
+    val index = marker.beforeQueueIndex - currentIndex - 1
+    return index.takeIf { it in 0..upNext.size }
+}
+
+@Composable
+internal fun KeepPlayingDivider(label: String) {
+    Row(
+        Modifier.fillMaxWidth().padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Box(Modifier.weight(1f).height(1.dp).background(PhoebeUi.accent.copy(alpha = 0.24f)))
+        Text(
+            label,
+            color = PhoebeUi.accentLight,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.SemiBold,
+            letterSpacing = 0.10.em,
+        )
+        Box(Modifier.weight(1f).height(1.dp).background(PhoebeUi.accent.copy(alpha = 0.24f)))
     }
 }
 
