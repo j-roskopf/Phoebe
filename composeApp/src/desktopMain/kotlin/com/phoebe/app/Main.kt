@@ -169,11 +169,12 @@ private fun configureDesktopApplicationIcon(debug: Boolean) {
     if (!isMacOs()) return
     val resourceName = if (debug) "icon-macos-debug.png" else "icon-macos.png"
     val iconFile = runCatching {
+        val stream = Thread.currentThread().contextClassLoader.getResourceAsStream(resourceName)
+            ?: return@runCatching null
         val tempFile = Files.createTempFile("phoebe-app-icon-", ".png")
-        Thread.currentThread().contextClassLoader.getResourceAsStream(resourceName)?.use { stream ->
-            Files.copy(stream, tempFile, StandardCopyOption.REPLACE_EXISTING)
-        } ?: return
-        tempFile.toFile().apply { deleteOnExit() }
+        val file = tempFile.toFile().apply { deleteOnExit() }
+        stream.use { Files.copy(it, tempFile, StandardCopyOption.REPLACE_EXISTING) }
+        file
     }.onFailure { error ->
         PhoebeLog.d("Phoebe") { "macOS application icon setup failed: ${error.message}" }
     }.getOrNull() ?: return
