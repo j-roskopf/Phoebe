@@ -36,6 +36,8 @@ import java.awt.event.HierarchyEvent
 import java.awt.event.HierarchyListener
 import java.awt.event.WindowAdapter
 import java.awt.event.WindowEvent
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import javax.imageio.ImageIO
@@ -48,6 +50,7 @@ private val desktopShutdownStarted = AtomicBoolean(false)
 
 fun main(args: Array<String>) {
     configureDesktopApplicationName()
+    configureDesktopApplicationIcon(isDebugBuild())
     configureWindowsDesktopRendering()
     configureSandboxedNativeLibraries()
     if (runDesktopPlaybackSmokeIfRequested(args)) return
@@ -160,6 +163,22 @@ private fun configureDesktopApplicationName() {
     val displayName = appDisplayName()
     System.setProperty("apple.awt.application.name", displayName)
     System.setProperty("com.apple.mrj.application.apple.menu.about.name", displayName)
+}
+
+private fun configureDesktopApplicationIcon(debug: Boolean) {
+    if (!isMacOs()) return
+    val resourceName = if (debug) "icon-macos-debug.png" else "icon-macos.png"
+    val iconFile = runCatching {
+        val tempFile = Files.createTempFile("phoebe-app-icon-", ".png")
+        Thread.currentThread().contextClassLoader.getResourceAsStream(resourceName)?.use { stream ->
+            Files.copy(stream, tempFile, StandardCopyOption.REPLACE_EXISTING)
+        } ?: return
+        tempFile.toFile().apply { deleteOnExit() }
+    }.onFailure { error ->
+        PhoebeLog.d("Phoebe") { "macOS application icon setup failed: ${error.message}" }
+    }.getOrNull() ?: return
+
+    System.setProperty("apple.awt.application.icon", iconFile.absolutePath)
 }
 
 private fun loadDesktopResourceImage(resourcePath: String) =

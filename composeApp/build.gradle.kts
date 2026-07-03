@@ -397,8 +397,13 @@ sentry {
 }
 
 private val macosLocalNetworkInfoPlistKeys = """
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_googlecast._tcp</string>
+        <string>_CC1AD845._googlecast._tcp</string>
+    </array>
     <key>NSLocalNetworkUsageDescription</key>
-    <string>Phoebe connects to Jellyfin, Plex, Emby, and other media servers on your home network.</string>
+    <string>Phoebe uses the local network to discover and control Chromecast devices and connect to media servers on your home network.</string>
 """.trimIndent()
 
 val macMediaKeysAppResources = layout.buildDirectory.dir("generated/appResources")
