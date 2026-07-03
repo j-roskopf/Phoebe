@@ -506,6 +506,7 @@ jobs:
       - name: Notarize macOS package
         shell: bash
         run: |
+          set -euo pipefail
           mac_artifacts=()
           while IFS= read -r artifact; do
             mac_artifacts+=("${artifact}")
@@ -514,13 +515,54 @@ jobs:
             echo "::error::Could not find macOS artifacts to notarize"
             exit 1
           fi
+          notary_credentials=(
+            --apple-id "${APPLE_ID}"
+            --password "${APPLE_APP_SPECIFIC_PASSWORD}"
+            --team-id "${APPLE_TEAM_ID}"
+          )
+          max_notary_attempts=2
           for artifact in "${mac_artifacts[@]}"; do
-            xcrun notarytool submit "${artifact}" \
-              --apple-id "${APPLE_ID}" \
-              --password "${APPLE_APP_SPECIFIC_PASSWORD}" \
-              --team-id "${APPLE_TEAM_ID}" \
-              --wait
-            xcrun stapler staple "${artifact}"
+            artifact_name="$(basename "${artifact}")"
+            for attempt in $(seq 1 "${max_notary_attempts}"); do
+              submit_log="${RUNNER_TEMP}/notarytool-submit-${artifact_name}-${attempt}.json"
+              echo "Submitting ${artifact_name} for notarization (attempt ${attempt}/${max_notary_attempts})"
+              if ! xcrun notarytool submit "${artifact}" \
+                "${notary_credentials[@]}" \
+                --wait \
+                --output-format json > "${submit_log}"; then
+                cat "${submit_log}" || true
+                submission_id="$(plutil -extract id raw "${submit_log}" 2>/dev/null || true)"
+                if [[ -n "${submission_id}" ]]; then
+                  echo "::group::Notary log for ${artifact_name} attempt ${attempt}"
+                  xcrun notarytool log "${submission_id}" "${notary_credentials[@]}" || true
+                  echo "::endgroup::"
+                fi
+                if (( attempt < max_notary_attempts )); then
+                  echo "::warning::Notarization command failed for ${artifact_name}; retrying in 30 seconds"
+                  sleep 30
+                  continue
+                fi
+                echo "::error::Notarization command failed for ${artifact_name}"
+                exit 1
+              fi
+              cat "${submit_log}"
+              submission_id="$(plutil -extract id raw "${submit_log}")"
+              status="$(plutil -extract status raw "${submit_log}")"
+              if [[ "${status}" == "Accepted" ]]; then
+                xcrun stapler staple "${artifact}"
+                continue 2
+              fi
+              echo "::group::Notary log for ${artifact_name} attempt ${attempt}"
+              xcrun notarytool log "${submission_id}" "${notary_credentials[@]}" || true
+              echo "::endgroup::"
+              if (( attempt < max_notary_attempts )); then
+                echo "::warning::Notarization failed for ${artifact_name} with status ${status}; retrying in 30 seconds"
+                sleep 30
+                continue
+              fi
+              echo "::error::Notarization failed for ${artifact_name} with status ${status}"
+              exit 1
+            done
           done
 
       - name: Smoke test notarized macOS DMG playback
@@ -691,11 +733,13 @@ jobs:
               '    </dict>' \
               '</dict>' \
               '</plist>' > "${RUNNER_TEMP}/ExportOptions.plist"
-            
+
             # Share variables to following steps
-            echo "SIGN_IOS=true" >> "${GITHUB_ENV}"
-            echo "IOS_TEAM_ID=${TEAM_ID}" >> "${GITHUB_ENV}"
-            echo "IOS_PROVISIONING_PROFILE_UUID=${UUID}" >> "${GITHUB_ENV}"
+            {
+              echo "SIGN_IOS=true"
+              echo "IOS_TEAM_ID=${TEAM_ID}"
+              echo "IOS_PROVISIONING_PROFILE_UUID=${UUID}"
+            } >> "${GITHUB_ENV}"
           else
             echo "iOS signing secrets not fully provided. Building unsigned IPA."
             echo "SIGN_IOS=false" >> "${GITHUB_ENV}"
@@ -832,7 +876,7 @@ jobs:
     timeout-minutes: 15
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+      url: ${{ steps.pages_url.outputs.page_url }}
     permissions:
       contents: read
       id-token: write
@@ -892,3 +936,35 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5
+        continue-on-error: true
+        with:
+          timeout: 900000
+          error_count: 20
+
+      - name: Wait before retrying GitHub Pages deployment
+        if: steps.deployment.outcome == 'failure'
+        shell: bash
+        run: sleep 30
+
+      - name: Retry GitHub Pages deployment
+        if: steps.deployment.outcome == 'failure'
+        id: deployment_retry
+        uses: actions/deploy-pages@v5
+        with:
+          timeout: 900000
+          error_count: 20
+
+      - name: Set GitHub Pages deployment URL
+        if: always()
+        id: pages_url
+        shell: bash
+        env:
+          PRIMARY_PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+          RETRY_PAGE_URL: ${{ steps.deployment_retry.outputs.page_url }}
+        run: |
+          page_url="${RETRY_PAGE_URL:-${PRIMARY_PAGE_URL}}"
+          if [[ -z "${page_url}" ]]; then
+            echo "::error::GitHub Pages deployment did not produce a page URL"
+            exit 1
+          fi
+          echo "page_url=${page_url}" >> "${GITHUB_OUTPUT}"
