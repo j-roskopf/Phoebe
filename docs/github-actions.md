@@ -45,21 +45,16 @@ input or timeout.
 
 ## Releases
 
-Create a tag named `release/x.x.x`, for example:
+Release CI runs on pushes to `main`, so merging a PR starts the release. You can also start it manually from the Actions tab with an optional custom version such as `1.2.3`; otherwise CI uses an auto-incremented version code and UTC timestamp version name.
 
-```sh
-git tag release/1.2.3
-git push origin release/1.2.3
-```
-
-The release version comes from `gradle.properties`:
+The version job updates `gradle.properties`:
 
 ```properties
 phoebe.versionName=1.2.3
 phoebe.versionCode=1002003
 ```
 
-The release workflow requires the pushed tag to match `phoebe.versionName`, so `phoebe.versionName=1.2.3` must be released with tag `release/1.2.3`. It validates that the version is plain semver, then starts the production events backend deploy and the Android, Linux, Windows, macOS, iOS, and web build jobs in parallel. Native package jobs use `phoebe.versionCode` for Android, rename the generated binaries to include `phoebe.versionName`, then create a draft GitHub release with the generated APK, AAB, DEB, Flatpak bundle, MSI, and DMG assets attached after those jobs and the backend smoke test finish successfully. The iOS IPA is built on its own macOS runner and is uploaded to the same release afterward, so a slow iOS build no longer blocks publishing the other platform artifacts.
+The release workflow validates that the version is plain semver, commits the version bump back to `main`, creates the matching `release/x.y.z` tag, then starts the production events backend deploy and the Android, Linux, Windows, macOS, iOS, and web build jobs in parallel. Native package jobs use `phoebe.versionCode` for Android, rename the generated binaries to include `phoebe.versionName`, then create a draft GitHub release with the generated APK, AAB, DEB, Flatpak bundle, MSI, and DMG assets attached after those jobs and the backend smoke test finish successfully. The iOS IPA is built on its own macOS runner and is uploaded to the same release afterward, so a slow iOS build no longer blocks publishing the other platform artifacts.
 
 The web build job prepares the Wasm distribution independently of the draft GitHub release. The final GitHub Pages deploy waits for both the web build and the backend smoke test to finish successfully.
 
