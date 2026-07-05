@@ -165,7 +165,6 @@ jobs:
     name: Android release
     needs:
       - version
-      - events-backend
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -250,7 +249,6 @@ jobs:
     name: Linux release
     needs:
       - version
-      - events-backend
     runs-on: ubuntu-latest
     timeout-minutes: 90
     env:
@@ -344,7 +342,6 @@ jobs:
     name: Windows release
     needs:
       - version
-      - events-backend
     runs-on: windows-latest
     timeout-minutes: 90
     environment: release
@@ -462,7 +459,6 @@ jobs:
     name: macOS release
     needs:
       - version
-      - events-backend
     runs-on: macos-latest
     timeout-minutes: 90
     env:
@@ -700,7 +696,6 @@ jobs:
     name: iOS release
     needs:
       - version
-      - events-backend
     runs-on: macos-26
     timeout-minutes: 90
     env:
@@ -944,21 +939,14 @@ jobs:
           tag_name: ${{ needs.version.outputs.tag_name }}
           files: release-artifacts/**/*.ipa
 
-  web-pages-deploy:
-    name: Deploy web to GitHub Pages
+  web:
+    name: Web release
     needs:
       - version
-      - events-backend
-    if: needs.version.result == 'success' && needs.events-backend.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment:
-      name: github-pages
-      url: ${{ steps.pages_url.outputs.page_url }}
     permissions:
       contents: read
-      id-token: write
-      pages: write
     env:
       PHOEBE_GOOGLE_MAPS_WEB_API_KEY: ${{ secrets.PHOEBE_GOOGLE_MAPS_WEB_API_KEY }}
 
@@ -1011,6 +999,23 @@ jobs:
           path: composeApp/build/dist/wasmJs/productionExecutable
           include-hidden-files: true
 
+  web-pages-deploy:
+    name: Deploy web to GitHub Pages
+    needs:
+      - events-backend
+      - web
+    if: always() && needs.events-backend.result == 'success' && needs.web.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: github-pages
+      url: ${{ steps.pages_url.outputs.page_url }}
+    permissions:
+      contents: read
+      id-token: write
+      pages: write
+
+    steps:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5

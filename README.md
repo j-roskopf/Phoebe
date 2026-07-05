@@ -272,7 +272,7 @@ For release CI, add these GitHub Actions repository secrets:
 - `VERCEL_ORG_ID`: from `.vercel/project.json`
 - `VERCEL_PROJECT_ID_EVENTS_PROD`: from `.vercel/project.json`
 
-The release workflow runs on every push to `main`, so merging to `main` triggers a release. Its `events-backend` job deploys the production backend with `scripts/deploy-events-backend-vercel.sh --prod --yes`, checks `/health`, and runs a Ticketmaster smoke lookup before app packaging jobs continue.
+The release workflow runs on every push to `main`, so merging to `main` triggers a release. Its `events-backend` job deploys the production backend with `scripts/deploy-events-backend-vercel.sh --prod --yes`, checks `/health`, and runs a Ticketmaster smoke lookup in parallel with the client packaging jobs. The GitHub release and final web Pages deploy still wait for the backend smoke test to pass.
 
 **iOS debug build:**
 
@@ -283,7 +283,7 @@ xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Debug 
 
 ## Releases
 
-Every push to `main` runs the release workflow. It bumps `gradle.properties`, tags `release/x.y.z`, deploys the events backend to Vercel, then builds signed Android APK/AAB, Linux DEB and Flatpak, Windows MSI, macOS DMG, web, and iOS artifacts as draft GitHub releases. Signing secrets and setup are documented in [docs/github-actions.md](docs/github-actions.md) and `docs/release-signing-setup.md`.
+Every push to `main` runs the release workflow. It bumps `gradle.properties`, tags `release/x.y.z`, then deploys the events backend to Vercel in parallel with signed Android APK/AAB, Linux DEB and Flatpak, Windows MSI, macOS DMG, web, and iOS artifact generation. Signing secrets and setup are documented in [docs/github-actions.md](docs/github-actions.md) and `docs/release-signing-setup.md`.
 
 ## Debug logging
 

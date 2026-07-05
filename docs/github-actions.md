@@ -59,9 +59,9 @@ phoebe.versionName=1.2.3
 phoebe.versionCode=1002003
 ```
 
-The release workflow requires the pushed tag to match `phoebe.versionName`, so `phoebe.versionName=1.2.3` must be released with tag `release/1.2.3`. It validates that the version is plain semver, deploys the production events backend to Vercel, then starts the Android, Linux, Windows, macOS, iOS, and web deploy jobs. Native package jobs use `phoebe.versionCode` for Android, rename the generated binaries to include `phoebe.versionName`, then create a draft GitHub release with the generated APK, AAB, DEB, Flatpak bundle, MSI, and DMG assets attached as soon as those jobs finish. The iOS IPA is built on its own macOS runner and is uploaded to the same release afterward, so a slow iOS build no longer blocks publishing the other platform artifacts.
+The release workflow requires the pushed tag to match `phoebe.versionName`, so `phoebe.versionName=1.2.3` must be released with tag `release/1.2.3`. It validates that the version is plain semver, then starts the production events backend deploy and the Android, Linux, Windows, macOS, iOS, and web build jobs in parallel. Native package jobs use `phoebe.versionCode` for Android, rename the generated binaries to include `phoebe.versionName`, then create a draft GitHub release with the generated APK, AAB, DEB, Flatpak bundle, MSI, and DMG assets attached after those jobs and the backend smoke test finish successfully. The iOS IPA is built on its own macOS runner and is uploaded to the same release afterward, so a slow iOS build no longer blocks publishing the other platform artifacts.
 
-The web deploy job builds the Wasm distribution and deploys it to this repository's GitHub Pages site independently of the draft GitHub release.
+The web build job prepares the Wasm distribution independently of the draft GitHub release. The final GitHub Pages deploy waits for both the web build and the backend smoke test to finish successfully.
 
 ## GitHub Pages
 
