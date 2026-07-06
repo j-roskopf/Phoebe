@@ -205,6 +205,7 @@ internal fun DesktopPlayer(
     val downloadManager = settingsState.downloadManager
     val defaultDownloadDirectoryLabel = settingsState.defaultDownloadDirectoryLabel
     val useLightAppearance = settingsState.useLightAppearance
+    val appearanceDesignId = settingsState.appearanceDesignId
     val appearanceTintId = settingsState.appearanceTintId
     val settingsInitialCategory = settingsState.settingsInitialCategory
     val listenBrainzCredentialAvailability = settingsState.listenBrainzCredentialAvailability
@@ -345,6 +346,7 @@ internal fun DesktopPlayer(
     val onClearFailedDownloads = settingsActions.onClearFailedDownloads
     val onRetryFailedDownloads = settingsActions.onRetryFailedDownloads
     val onUseLightAppearanceChange = settingsActions.onUseLightAppearanceChange
+    val onAppearanceDesignChange = settingsActions.onAppearanceDesignChange
     val onAppearanceTintChange = settingsActions.onAppearanceTintChange
     val onConnectListenBrainz = settingsActions.onConnectListenBrainz
     val onDisconnectListenBrainz = settingsActions.onDisconnectListenBrainz
@@ -917,6 +919,7 @@ internal fun DesktopPlayer(
                                     (section == BrowseSection.Settings || section == BrowseSection.Downloads) && selectedPlaylistId == null -> SettingsDesktopRoute(
                                         state = SettingsRouteState(
                                             isLightMode = useLightAppearance,
+                                            designId = appearanceDesignId,
                                             tintId = appearanceTintId,
                                             downloadDirectory = downloadDirectory,
                                             downloadCount = downloadCount,
@@ -938,6 +941,7 @@ internal fun DesktopPlayer(
                                         ),
                                         actions = SettingsRouteActions(
                                             onLightModeChange = onUseLightAppearanceChange,
+                                            onDesignChange = onAppearanceDesignChange,
                                             onTintChange = onAppearanceTintChange,
                                             onDownloadDirectory = onDownloadDirectory,
                                             onDeleteAllDownloads = onDeleteAllDownloads,

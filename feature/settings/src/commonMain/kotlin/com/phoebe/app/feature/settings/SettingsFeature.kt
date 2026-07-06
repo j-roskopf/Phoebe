@@ -16,12 +16,14 @@ import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.PersonalMixPreferences
 import com.phoebe.app.domain.PlexSession
 import com.phoebe.app.platform.SecureCredentialAvailability
+import com.phoebe.app.ui.PhoebeDesignSystem
 import com.phoebe.app.ui.HomeScreenLayoutMode
 import com.phoebe.app.updates.AppUpdateState
 
 @Immutable
 data class SettingsRouteState(
     val isLightMode: Boolean,
+    val designId: String = PhoebeDesignSystem.Default.id,
     val tintId: String,
     val downloadDirectory: String?,
     val downloadCount: Int,
@@ -50,6 +52,7 @@ data class DownloadManagerUiSummary(
 @Immutable
 class SettingsRouteActions(
     val onLightModeChange: (Boolean) -> Unit,
+    val onDesignChange: (String) -> Unit = {},
     val onTintChange: (String) -> Unit,
     val onDownloadDirectory: (String?) -> Unit,
     val onDeleteAllDownloads: () -> Unit,
@@ -110,6 +113,8 @@ fun SettingsDesktopRoute(
     SettingsDesktopView(
         isLightMode = state.isLightMode,
         onLightModeChange = actions.onLightModeChange,
+        designId = state.designId,
+        onDesignChange = actions.onDesignChange,
         tintId = state.tintId,
         onTintChange = actions.onTintChange,
         downloadDirectory = state.downloadDirectory,
@@ -186,6 +191,8 @@ fun SettingsMobileRoute(
     SettingsMobileView(
         isLightMode = state.isLightMode,
         onLightModeChange = actions.onLightModeChange,
+        designId = state.designId,
+        onDesignChange = actions.onDesignChange,
         tintId = state.tintId,
         onTintChange = actions.onTintChange,
         downloadDirectory = state.downloadDirectory,

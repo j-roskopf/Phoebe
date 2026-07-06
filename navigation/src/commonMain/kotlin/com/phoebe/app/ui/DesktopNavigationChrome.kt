@@ -43,7 +43,7 @@ fun NavRow(
     androidx.compose.foundation.layout.Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .clip(RoundedCornerShape(PhoebeUi.shapes.controlRadius))
             .background(if (showActive) PhoebeUi.elevatedFill else Color.Transparent)
             .phoebeClickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 9.dp),

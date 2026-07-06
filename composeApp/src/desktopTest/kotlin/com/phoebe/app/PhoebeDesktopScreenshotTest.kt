@@ -10,6 +10,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
 import androidx.compose.ui.unit.dp
 import com.phoebe.app.feature.radio.LocalRadioStationRemoteArtworkEnabled
+import com.phoebe.app.ui.PhoebeDesignSystem
 import com.phoebe.app.ui.PhoebeScreenshotApp
 import com.phoebe.app.ui.PhoebeScreenshotScenario
 import com.phoebe.app.ui.PhoebeTintOption
@@ -17,6 +18,21 @@ import io.github.takahirom.roborazzi.captureRoboImage
 import kotlin.test.Test
 
 class PhoebeDesktopScreenshotTest {
+
+    private val appearanceDesigns = listOf(
+        PhoebeDesignSystem.Porcelain,
+        PhoebeDesignSystem.Nocturne,
+        PhoebeDesignSystem.Brutalist,
+        PhoebeDesignSystem.Minimalist,
+    )
+
+    private val designScenarios = listOf(
+        PhoebeScreenshotScenario.Home,
+        PhoebeScreenshotScenario.Library,
+        PhoebeScreenshotScenario.Album,
+        PhoebeScreenshotScenario.Player,
+        PhoebeScreenshotScenario.Settings,
+    )
 
     @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
     @Test
@@ -223,5 +239,64 @@ class PhoebeDesktopScreenshotTest {
                 filePath = "src/screenshotTest/roborazzi/desktop-settings-blue-tint-${if (useLightAppearance) "light" else "dark"}.png",
             )
         }
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopDesignSystemsRepresentativeFlows() = runDesktopComposeUiTest(width = 1365, height = 900) {
+        appearanceDesigns.forEach { design ->
+            listOf(false, true).forEach { useLightAppearance ->
+                designScenarios.forEach { scenario ->
+                    setContent {
+                        Box(Modifier.size(1365.dp, 900.dp)) {
+                            PhoebeScreenshotApp(
+                                scenario = scenario,
+                                useLightAppearance = useLightAppearance,
+                                designId = design.id,
+                            )
+                        }
+                    }
+                    waitForIdle()
+                    onRoot().captureRoboImage(
+                        filePath = "src/screenshotTest/roborazzi/desktop-${design.id}-${scenario.name.lowercase()}-${if (useLightAppearance) "light" else "dark"}.png",
+                    )
+                }
+            }
+        }
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopBrutalistDenseListDark() = runDesktopComposeUiTest(width = 1365, height = 900) {
+        setContent {
+            Box(Modifier.size(1365.dp, 900.dp)) {
+                PhoebeScreenshotApp(
+                    scenario = PhoebeScreenshotScenario.LibraryScrollbar,
+                    designId = PhoebeDesignSystem.Brutalist.id,
+                )
+            }
+        }
+        waitForIdle()
+        onRoot().captureRoboImage(
+            filePath = "src/screenshotTest/roborazzi/desktop-brutalist-library-scrollbar-dark.png",
+        )
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopNocturnePlayerQueueDark() = runDesktopComposeUiTest(width = 1365, height = 900) {
+        setContent {
+            Box(Modifier.size(1365.dp, 900.dp)) {
+                PhoebeScreenshotApp(
+                    scenario = PhoebeScreenshotScenario.PlayerUpNextExpanded,
+                    designId = PhoebeDesignSystem.Nocturne.id,
+                    forceShowQueue = true,
+                )
+            }
+        }
+        waitForIdle()
+        onRoot().captureRoboImage(
+            filePath = "src/screenshotTest/roborazzi/desktop-nocturne-player-queue-dark.png",
+        )
     }
 }

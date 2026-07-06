@@ -27,6 +27,10 @@ class SettingsViewModel : ViewModel() {
         mutableState.update { it?.copy(isLightMode = enabled) }
     }
 
+    fun onDesignChange(designId: String) {
+        mutableState.update { it?.copy(designId = designId) }
+    }
+
     fun onTintChange(tintId: String) {
         mutableState.update { it?.copy(tintId = tintId) }
     }

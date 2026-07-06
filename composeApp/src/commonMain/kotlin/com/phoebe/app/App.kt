@@ -25,6 +25,7 @@ import com.phoebe.app.ui.DesktopKeyboardShortcutsEffect
 import com.phoebe.app.feature.playback.GlobalMediaKeysEffect
 import com.phoebe.app.ui.HomeScreenLayoutMode
 import com.phoebe.app.ui.PhoebePaletteDark
+import com.phoebe.app.ui.PhoebeDesignSystem
 import com.phoebe.app.ui.PhoebeTheme
 import com.phoebe.app.ui.PhoebeTintOption
 import com.phoebe.app.ui.PhoebeRoot
@@ -43,6 +44,7 @@ import kotlinx.coroutines.withContext
 
 private const val AppearanceThemeFile = "appearance_theme"
 private const val AppearanceTintFile = "appearance_tint"
+private const val AppearanceDesignFile = "appearance_design"
 private const val HomeScreenLayoutModeFile = "home_screen_layout_mode"
 
 private object AppDependencyRuntime {
@@ -156,6 +158,7 @@ fun App(
     }
 
     var useLightAppearance by remember(readyDependencies) { mutableStateOf(false) }
+    var appearanceDesignId by remember(readyDependencies) { mutableStateOf(PhoebeDesignSystem.Default.id) }
     var appearanceTintId by remember(readyDependencies) { mutableStateOf(PhoebeTintOption.Purple.id) }
     var homeScreenLayoutMode by remember(readyDependencies) { mutableStateOf<HomeScreenLayoutMode?>(null) }
 
@@ -163,11 +166,15 @@ fun App(
         installPlatformPlayback(readyDependencies)
         val stored = readyDependencies.platformStorage.readText(AppearanceThemeFile)?.trim()?.lowercase()
         useLightAppearance = stored == "light" || stored == "true"
+        val storedDesign = PhoebeDesignSystem.fromId(
+            readyDependencies.platformStorage.readText(AppearanceDesignFile),
+        )
+        appearanceDesignId = storedDesign.id
         appearanceTintId = readyDependencies.platformStorage.readText(AppearanceTintFile)
             ?.trim()
             ?.lowercase()
-            ?.let { PhoebeTintOption.fromId(it).id }
-            ?: PhoebeTintOption.Purple.id
+            ?.let { PhoebeTintOption.fromId(it, storedDesign).id }
+            ?: PhoebeTintOption.defaultForDesign(storedDesign).id
         homeScreenLayoutMode = HomeScreenLayoutMode.fromStorage(
             readyDependencies.platformStorage.readText(HomeScreenLayoutModeFile)?.trim(),
         )
@@ -182,7 +189,7 @@ fun App(
         onAppearanceChange?.invoke(useLightAppearance)
     }
 
-    PhoebeTheme(useLightAppearance = useLightAppearance, tintId = appearanceTintId) {
+    PhoebeTheme(useLightAppearance = useLightAppearance, tintId = appearanceTintId, designId = appearanceDesignId) {
         PlatformInteractionLocals {
         val resolvedHomeScreenLayoutMode = homeScreenLayoutMode ?: return@PlatformInteractionLocals
 
@@ -219,9 +226,27 @@ fun App(
                         )
                     }
                 },
+                appearanceDesignId = appearanceDesignId,
+                onAppearanceDesignChange = { value ->
+                    val design = PhoebeDesignSystem.fromId(value)
+                    val tint = PhoebeTintOption.fromId(appearanceTintId, design)
+                    appearanceDesignId = design.id
+                    appearanceTintId = tint.id
+                    uiScope.launch {
+                        readyDependencies.platformStorage.writeText(
+                            AppearanceDesignFile,
+                            design.id,
+                        )
+                        readyDependencies.platformStorage.writeText(
+                            AppearanceTintFile,
+                            tint.id,
+                        )
+                    }
+                },
                 appearanceTintId = appearanceTintId,
                 onAppearanceTintChange = { value ->
-                    val tintId = PhoebeTintOption.fromId(value).id
+                    val design = PhoebeDesignSystem.fromId(appearanceDesignId)
+                    val tintId = PhoebeTintOption.fromId(value, design).id
                     appearanceTintId = tintId
                     uiScope.launch {
                         readyDependencies.platformStorage.writeText(

@@ -347,7 +347,7 @@ internal fun Sidebar(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(PhoebeUi.shapes.controlRadius))
                     .phoebeClickable { profileExpanded = !profileExpanded }
                     .background(PhoebeUi.subtleFill)
                     .padding(horizontal = 8.dp, vertical = 10.dp),
@@ -379,7 +379,7 @@ internal fun Sidebar(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(PhoebeUi.shapes.controlRadius))
                             .phoebeClickable {
                                 profileExpanded = false
                                 onNavigate(BrowseSection.Settings)

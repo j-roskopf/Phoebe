@@ -32,6 +32,7 @@ fun main() {
         ignoreCase = true,
     )
     val useLightAppearance = queryParams["theme"] == "light"
+    val designId = queryParams["design"]
     val e2eMode = queryParams["e2e"]
     ComposeViewport(viewportContainerId = "composeApp") {
         when {
@@ -40,6 +41,7 @@ fun main() {
                 PhoebeScreenshotApp(
                     scenario = screenshotScenario,
                     useLightAppearance = useLightAppearance,
+                    designId = designId ?: com.phoebe.app.ui.PhoebeDesignSystem.Default.id,
                     forceCustomLibraryScrollIndex = forceCustomLibraryScrollIndex,
                 )
             }

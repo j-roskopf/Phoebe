@@ -6,6 +6,7 @@ import com.github.takahirom.roborazzi.RoborazziComposeOptions
 import com.github.takahirom.roborazzi.RoborazziOptions
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.github.takahirom.roborazzi.size
+import com.phoebe.app.ui.PhoebeDesignSystem
 import com.phoebe.app.ui.PhoebeScreenshotApp
 import com.phoebe.app.ui.PhoebeScreenshotScenario
 import com.phoebe.app.ui.PhoebeTintOption
@@ -14,6 +15,30 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+
+private val screenshotAppearanceDesigns = listOf(
+    PhoebeDesignSystem.Porcelain,
+    PhoebeDesignSystem.Nocturne,
+    PhoebeDesignSystem.Brutalist,
+    PhoebeDesignSystem.Minimalist,
+)
+
+private val phoneDesignScenarios = listOf(
+    "home" to PhoebeScreenshotScenario.Home,
+    "library" to PhoebeScreenshotScenario.Library,
+    "album" to PhoebeScreenshotScenario.Album,
+    "player" to PhoebeScreenshotScenario.Player,
+    "settings" to PhoebeScreenshotScenario.Settings,
+    "search" to PhoebeScreenshotScenario.Search,
+)
+
+private val tabletDesignScenarios = listOf(
+    "home" to PhoebeScreenshotScenario.Home,
+    "library" to PhoebeScreenshotScenario.Library,
+    "album" to PhoebeScreenshotScenario.Album,
+    "player" to PhoebeScreenshotScenario.Player,
+    "settings" to PhoebeScreenshotScenario.Settings,
+)
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -73,6 +98,27 @@ class PhoebeAndroidPhoneScreenshotTest {
     @Test fun phoneHomeRedTintDark() = capturePhone("home-red-tint", PhoebeScreenshotScenario.Home, tintId = PhoebeTintOption.fromId("red").id)
     @Test fun phoneLibraryRedTintDark() = capturePhone("library-red-tint", PhoebeScreenshotScenario.Library, tintId = PhoebeTintOption.fromId("red").id)
     @Test fun phoneSearchRedTintDark() = capturePhone("search-red-tint", PhoebeScreenshotScenario.Search, tintId = PhoebeTintOption.fromId("red").id)
+
+    @Test fun phoneDesignSystemsRepresentativeFlows() {
+        screenshotAppearanceDesigns.forEach { design ->
+            listOf(false, true).forEach { useLightAppearance ->
+                phoneDesignScenarios.forEach { (slug, scenario) ->
+                    capturePhone(
+                        slug = slug,
+                        scenario = scenario,
+                        useLightAppearance = useLightAppearance,
+                        designId = design.id,
+                    )
+                }
+            }
+        }
+    }
+
+    @Test fun phoneBrutalistDenseLibraryDark() = capturePhone(
+        slug = "library-five-column-grid",
+        scenario = PhoebeScreenshotScenario.LibraryFiveColumnGrid,
+        designId = PhoebeDesignSystem.Brutalist.id,
+    )
 }
 
 @RunWith(RobolectricTestRunner::class)
@@ -91,6 +137,21 @@ class PhoebeAndroidTabletScreenshotTest {
     @Test fun tabletSearchDark() = captureTablet("search", PhoebeScreenshotScenario.Search)
     @Test fun tabletSearchUpNextExpandedDark() = captureTabletUpNextExpanded("search", PhoebeScreenshotScenario.Search)
     @Test fun tabletPlayerDark() = captureTablet("player", PhoebeScreenshotScenario.Player)
+
+    @Test fun tabletDesignSystemsRepresentativeFlows() {
+        screenshotAppearanceDesigns.forEach { design ->
+            listOf(false, true).forEach { useLightAppearance ->
+                tabletDesignScenarios.forEach { (slug, scenario) ->
+                    captureTablet(
+                        slug = slug,
+                        scenario = scenario,
+                        useLightAppearance = useLightAppearance,
+                        designId = design.id,
+                    )
+                }
+            }
+        }
+    }
 }
 
 private fun capturePhone(
@@ -98,25 +159,31 @@ private fun capturePhone(
     scenario: PhoebeScreenshotScenario,
     useLightAppearance: Boolean = false,
     tintId: String = PhoebeTintOption.Purple.id,
+    designId: String = PhoebeDesignSystem.Default.id,
     heightDp: Int = 932,
 ) = capture(
-    name = "android-phone-$slug-${if (useLightAppearance) "light" else "dark"}",
+    name = screenshotName("android-phone", slug, useLightAppearance, designId),
     scenario = scenario,
     widthDp = 430,
     heightDp = heightDp,
     useLightAppearance = useLightAppearance,
+    designId = designId,
     tintId = tintId,
 )
 
 private fun captureTablet(
     slug: String,
     scenario: PhoebeScreenshotScenario,
+    useLightAppearance: Boolean = false,
     tintId: String = PhoebeTintOption.Purple.id,
+    designId: String = PhoebeDesignSystem.Default.id,
 ) = capture(
-    name = "android-tablet-$slug-dark",
+    name = screenshotName("android-tablet", slug, useLightAppearance, designId),
     scenario = scenario,
     widthDp = 1180,
     heightDp = 820,
+    useLightAppearance = useLightAppearance,
+    designId = designId,
     tintId = tintId,
 )
 
@@ -139,6 +206,7 @@ private fun capture(
     heightDp: Int,
     useLightAppearance: Boolean = false,
     tintId: String = PhoebeTintOption.Purple.id,
+    designId: String = PhoebeDesignSystem.Default.id,
     forceShowQueue: Boolean = false,
 ) {
     captureRoboImage(
@@ -153,9 +221,20 @@ private fun capture(
         PhoebeScreenshotApp(
             scenario = scenario,
             useLightAppearance = useLightAppearance,
+            designId = designId,
             tintId = tintId,
             forceShowQueue = forceShowQueue,
             modifier = Modifier,
         )
     }
+}
+
+private fun screenshotName(
+    formFactor: String,
+    slug: String,
+    useLightAppearance: Boolean,
+    designId: String,
+): String {
+    val designSegment = designId.takeUnless { it == PhoebeDesignSystem.Default.id }?.let { "$it-" }.orEmpty()
+    return "$formFactor-$designSegment$slug-${if (useLightAppearance) "light" else "dark"}"
 }

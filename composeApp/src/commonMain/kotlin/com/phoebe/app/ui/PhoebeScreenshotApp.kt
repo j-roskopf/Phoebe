@@ -316,18 +316,21 @@ private fun PhoebeScreenshotScenario.visualizerPreset(): NowPlayingVisualizerPre
 internal fun PhoebeScreenshotApp(
     scenario: PhoebeScreenshotScenario,
     useLightAppearance: Boolean = false,
+    designId: String = PhoebeDesignSystem.Default.id,
     tintId: String = PhoebeTintOption.Purple.id,
     forceShowQueue: Boolean = false,
     forceCustomLibraryScrollIndex: Boolean = scenario == PhoebeScreenshotScenario.LibraryScrollbar,
     modifier: Modifier = Modifier,
 ) {
     val fixture = remember { PhoebeScreenshotFixture }
-    val settingsInitialCategory = if (scenario == PhoebeScreenshotScenario.Settings && tintId != PhoebeTintOption.Purple.id) {
+    val settingsInitialCategory = if (scenario == PhoebeScreenshotScenario.Settings &&
+        (PhoebeDesignSystem.fromId(designId) != PhoebeDesignSystem.Default || tintId != PhoebeTintOption.Purple.id)
+    ) {
         SettingsCategory.Appearance
     } else {
         SettingsCategory.AudioPlayback
     }
-    PhoebeTheme(useLightAppearance = useLightAppearance, tintId = tintId) {
+    PhoebeTheme(useLightAppearance = useLightAppearance, tintId = tintId, designId = designId) {
         CompositionLocalProvider(
             LocalCatalogHasContent provides true,
             LocalNowPlaying provides NowPlayingIndicatorState(
@@ -366,13 +369,21 @@ internal fun PhoebeScreenshotApp(
         ) {
             BoxWithConstraints(modifier.fillMaxSize()) {
                 if (maxWidth < 900.dp) {
-                    PhoebeMobileScreenshotScenario(scenario, fixture, Modifier.fillMaxSize())
+                    PhoebeMobileScreenshotScenario(
+                        scenario,
+                        fixture,
+                        useLightAppearance,
+                        designId,
+                        tintId,
+                        Modifier.fillMaxSize(),
+                    )
                 } else {
                     val wideDesktop = maxWidth >= 1280.dp
                     PhoebeDesktopScreenshotScenario(
                         scenario = scenario,
                         fixture = fixture,
                         useLightAppearance = useLightAppearance,
+                        designId = designId,
                         tintId = tintId,
                         settingsInitialCategory = settingsInitialCategory,
                         showQueue = wideDesktop || forceShowQueue,
@@ -391,6 +402,7 @@ internal fun PhoebeDesktopScreenshotScenario(
     scenario: PhoebeScreenshotScenario,
     fixture: PhoebeScreenshotFixtureData,
     useLightAppearance: Boolean,
+    designId: String = PhoebeDesignSystem.Default.id,
     tintId: String = PhoebeTintOption.Purple.id,
     tintedBackgroundGradient: Boolean = AppSettings.Default.tintedBackgroundGradient,
     settingsInitialCategory: SettingsCategory = SettingsCategory.AudioPlayback,
@@ -603,6 +615,7 @@ internal fun PhoebeDesktopScreenshotScenario(
             downloadCount = fixture.catalog.downloads.size,
             defaultDownloadDirectoryLabel = "App storage",
             useLightAppearance = useLightAppearance,
+            appearanceDesignId = designId,
             appearanceTintId = tintId,
             settingsInitialCategory = settingsInitialCategory,
         ),
@@ -621,6 +634,7 @@ internal fun PhoebeDesktopScreenshotScenario(
             onDownloadDirectory = {},
             onDeleteAllDownloads = {},
             onUseLightAppearanceChange = {},
+            onAppearanceDesignChange = {},
             onAppearanceTintChange = {},
         ),
     )
@@ -630,6 +644,9 @@ internal fun PhoebeDesktopScreenshotScenario(
 internal fun PhoebeMobileScreenshotScenario(
     scenario: PhoebeScreenshotScenario,
     fixture: PhoebeScreenshotFixtureData,
+    useLightAppearance: Boolean = false,
+    designId: String = PhoebeDesignSystem.Default.id,
+    tintId: String = PhoebeTintOption.Purple.id,
     modifier: Modifier = Modifier,
 ) {
     val catalog = if (scenario == PhoebeScreenshotScenario.LibraryFiveColumnGrid) {
@@ -889,6 +906,9 @@ internal fun PhoebeMobileScreenshotScenario(
                     PhoebeScreenshotScenario.HomeAccordionsExpanded -> PhoneHomeAccordionSection.Random
                     else -> null
                 },
+                useLightAppearance = useLightAppearance,
+                designId = designId,
+                tintId = tintId,
             )
             PhoebeScreenshotScenario.HomePlayedRows -> MobileHomeRoute(
                 routeState = MobileHomeRouteState(
@@ -982,9 +1002,11 @@ internal fun PhoebeMobileScreenshotScenario(
                 defaultDownloadDirectoryLabel = "App storage",
                 onDownloadDirectory = {},
                 onDeleteAllDownloads = {},
-                useLightAppearance = false,
+                useLightAppearance = useLightAppearance,
                 onUseLightAppearanceChange = {},
-                appearanceTintId = PhoebeTintOption.Purple.id,
+                appearanceDesignId = designId,
+                onAppearanceDesignChange = {},
+                appearanceTintId = tintId,
                 onAppearanceTintChange = {},
                 radioStations = fixture.radioStations,
                 internetRadioDirectory = fixture.radioDirectory,
@@ -1121,6 +1143,9 @@ private fun rememberScreenshotRouteViewModelFactory(): RouteViewModelFactory =
 private fun MobileHomeAccordionScreenshot(
     fixture: PhoebeScreenshotFixtureData,
     expandedSection: PhoneHomeAccordionSection?,
+    useLightAppearance: Boolean,
+    designId: String,
+    tintId: String,
 ) {
     val routeViewModelFactory = rememberScreenshotRouteViewModelFactory()
     val homeSections = HomeAccordionScreenshotSections
@@ -1194,9 +1219,11 @@ private fun MobileHomeAccordionScreenshot(
         defaultDownloadDirectoryLabel = "App storage",
         onDownloadDirectory = {},
         onDeleteAllDownloads = {},
-        useLightAppearance = false,
+        useLightAppearance = useLightAppearance,
         onUseLightAppearanceChange = {},
-        appearanceTintId = PhoebeTintOption.Purple.id,
+        appearanceDesignId = designId,
+        onAppearanceDesignChange = {},
+        appearanceTintId = tintId,
         onAppearanceTintChange = {},
         homeScreenLayoutMode = HomeScreenLayoutMode.Default,
         radioStations = fixture.radioStations,

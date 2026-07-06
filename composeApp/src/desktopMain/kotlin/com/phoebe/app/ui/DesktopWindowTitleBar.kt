@@ -40,7 +40,7 @@ fun WindowScope.DesktopWindowTitleBar(
     useLightAppearance: Boolean,
     onClose: () -> Unit,
 ) {
-    val palette = if (useLightAppearance) PhoebePaletteLight else PhoebePaletteDark
+    val palette = LocalPhoebePalette.current
     val captionHeight = desktopTitleBarHeight()
     val composeWindow = window as? ComposeWindow
     var isMaximized by remember(composeWindow) {

@@ -381,6 +381,8 @@ internal fun MobileBrowseShell(
     onDownloadPolicySettings: (DownloadPolicySettings) -> Unit = {},
     useLightAppearance: Boolean,
     onUseLightAppearanceChange: (Boolean) -> Unit,
+    appearanceDesignId: String = PhoebeDesignSystem.Default.id,
+    onAppearanceDesignChange: (String) -> Unit = {},
     appearanceTintId: String,
     onAppearanceTintChange: (String) -> Unit,
     onHomeScreenLayoutModeChange: (HomeScreenLayoutMode) -> Unit = {},
@@ -603,6 +605,7 @@ internal fun MobileBrowseShell(
                 (section == BrowseSection.Settings || section == BrowseSection.Downloads) && selectedPlaylistId == null -> SettingsMobileRoute(
                     state = SettingsRouteState(
                         isLightMode = useLightAppearance,
+                        designId = appearanceDesignId,
                         tintId = appearanceTintId,
                         downloadDirectory = downloadDirectory,
                         downloadCount = downloadCount,
@@ -624,6 +627,7 @@ internal fun MobileBrowseShell(
                     ),
                     actions = SettingsRouteActions(
                         onLightModeChange = onUseLightAppearanceChange,
+                        onDesignChange = onAppearanceDesignChange,
                         onTintChange = onAppearanceTintChange,
                         onDownloadDirectory = onDownloadDirectory,
                         onDeleteAllDownloads = onDeleteAllDownloads,

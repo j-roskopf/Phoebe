@@ -69,7 +69,7 @@ fun MobileBottomNavigation(
     val topShape = if (attachedToMiniPlayer) {
         RoundedCornerShape(0.dp)
     } else {
-        RoundedCornerShape(topStart = 16.dp, topEnd = 16.dp)
+        RoundedCornerShape(topStart = PhoebeUi.shapes.sheetTopRadius, topEnd = PhoebeUi.shapes.sheetTopRadius)
     }
     Column(
         Modifier
@@ -95,7 +95,7 @@ fun MobileBottomNavigation(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(10.dp))
+                        .clip(RoundedCornerShape(PhoebeUi.shapes.controlRadius))
                         .clickable { onSection(target) }
                         .padding(vertical = 6.dp, horizontal = 2.dp)
                         .semantics { contentDescription = label },
