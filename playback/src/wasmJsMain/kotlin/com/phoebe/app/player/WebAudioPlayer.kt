@@ -46,12 +46,22 @@ private class WebAudioPlayer(
     private var webCrossfadeGeneration = -1
     private var webCrossfadeJob: Job? = null
     private var webCrossfadeIncoming: HTMLAudioElement? = null
+    private var webGaplessAudio: HTMLAudioElement? = null
+    private var webGaplessGeneration = -1
+    private var webGaplessTrackId: String? = null
+    private var webGaplessUri: String? = null
+    private var webGaplessUsesCors = true
+    private var webGaplessPrerolled = false
+    private var webGaplessHotStartRequested = false
+    private var webGaplessHotStarted = false
+    private var webGaplessHotStartJob: Job? = null
 
     private var audio = createAudioElement(useCors = true)
 
     override fun stopCurrentPlaybackImmediately() {
         retryJob?.cancel()
         stopWebCrossfade()
+        stopWebGapless()
         stopWebAudioAnalysis(audio)
         cancelWebAudioPrefetch()
         resetWebAudioPrefetch()
@@ -103,6 +113,7 @@ private class WebAudioPlayer(
         retryGeneration = generation
         retryCount = 0
         stopWebCrossfade()
+        stopWebGapless()
         corsFallbackAttempted = false
         equalizerUnavailableForCurrentStream = false
         equalizerUnavailableNoticeShown = false
@@ -133,6 +144,7 @@ private class WebAudioPlayer(
         retryJob?.cancel()
         pendingPlayAfterLoad = false
         stopWebCrossfade()
+        stopWebGapless()
         audio.pause()
     }
 
@@ -142,6 +154,7 @@ private class WebAudioPlayer(
 
     override fun seek(positionMs: Long) {
         stopWebCrossfade()
+        stopWebGapless()
         setWebAudioCurrentTime(audio, positionMs / 1000.0)
     }
 
@@ -161,6 +174,9 @@ private class WebAudioPlayer(
                 }
             }
         }
+        webGaplessAudio?.let { prepared ->
+            prepared.volume = v.toDouble()
+        }
     }
 
     override fun applyEqualizer(profile: EqualizerProfile) {
@@ -170,6 +186,126 @@ private class WebAudioPlayer(
         }
         applyCurrentEqualizer()
         startAudioAnalysisForCurrentElement()
+    }
+
+    override fun startGaplessPrepareOnPlatform(
+        queue: List<Track>,
+        targetIndex: Int,
+        track: Track,
+        generation: Int,
+    ): Boolean {
+        if (targetIndex !in queue.indices || audio.paused) return false
+        val rawUri = track.localUri?.takeIf { it.isNotBlank() } ?: track.streamUrl.takeIf { it.isNotBlank() } ?: return false
+        if (rawUri.startsWith("web-download://")) return false
+        val playbackUri = resolveWebLocalAudioUri(rawUri)
+        stopWebGapless()
+        val prepared = createAudioElement(useCors = audioUsesCors)
+        webGaplessAudio = prepared
+        webGaplessGeneration = generation
+        webGaplessTrackId = track.id
+        webGaplessUri = playbackUri
+        webGaplessUsesCors = audioUsesCors
+        resetWebGaplessHotStartState()
+        prepared.muted = true
+        prepared.volume = 0.0
+        prepared.onplaying = {
+            if (webGaplessAudio === prepared && webGaplessGeneration == generation) {
+                when {
+                    webGaplessHotStartRequested -> {
+                        webGaplessHotStarted = true
+                    }
+                    !webGaplessPrerolled -> {
+                        prepared.pause()
+                        setWebAudioCurrentTime(prepared, 0.0)
+                        prepared.muted = false
+                        prepared.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+                        webGaplessPrerolled = true
+                    }
+                }
+            }
+        }
+        prepared.onerror = { _, _, _, _, _ ->
+            if (webGaplessAudio === prepared) stopWebGapless()
+            null
+        }
+        prepared.src = playbackUri
+        prepared.load()
+        playWebAudio(prepared) { message ->
+            if (webGaplessAudio !== prepared || webGaplessGeneration != generation) return@playWebAudio
+            if (!message.isBrowserAutoplayBlockedFailure()) {
+                stopWebGapless()
+                return@playWebAudio
+            }
+            prepared.muted = false
+            prepared.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+        }
+        webGaplessHotStartJob?.cancel()
+        webGaplessHotStartJob = scope.launch {
+            while (webGaplessAudio === prepared && webGaplessGeneration == generation) {
+                val durationMs = webAudioPlaybackDurationMs(
+                    currentDurationMs = state.value.durationMs,
+                    browserDurationSeconds = audio.duration,
+                )
+                val positionMs = (audio.currentTime * 1000.0).toLong().coerceAtLeast(0L)
+                maybeHotStartWebGapless(generation, positionMs, durationMs)
+                maybeCommitWebGaplessBoundary(generation, positionMs, durationMs)
+                if (webGaplessAudio !== prepared) break
+                delay(WebGaplessHotStartPollMs)
+            }
+        }
+        return true
+    }
+
+    override fun commitGaplessPreparedOnPlatform(
+        queue: List<Track>,
+        targetIndex: Int,
+        track: Track,
+        generation: Int,
+    ): Boolean {
+        val incoming = webGaplessAudio ?: return false
+        val playbackUri = webGaplessUri ?: return false
+        if (webGaplessGeneration != generation || webGaplessTrackId != track.id) return false
+        val outgoing = audio
+        stopWebAudioAnalysis(outgoing)
+        audio = incoming
+        audioUsesCors = webGaplessUsesCors
+        currentUri = playbackUri
+        retryGeneration = generation
+        retryCount = 0
+        corsFallbackAttempted = !webGaplessUsesCors
+        equalizerUnavailableForCurrentStream = !webGaplessUsesCors && playbackUri.isRemoteWebAudioUri()
+        equalizerUnavailableNoticeShown = false
+        sourcePreparedForWebEqualizer = false
+        val hotStarted = webGaplessHotStarted && !incoming.paused && !isWebAudioEnded(incoming)
+        webGaplessHotStartJob?.cancel()
+        webGaplessHotStartJob = null
+        webGaplessAudio = null
+        webGaplessGeneration = -1
+        webGaplessTrackId = null
+        webGaplessUri = null
+        incoming.muted = false
+        incoming.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+        if (!hotStarted) {
+            setWebAudioCurrentTime(incoming, 0.0)
+        }
+        resetWebGaplessHotStartState()
+        installAudioEventHandlers(generation)
+        prepareAudioElementForCurrentEqualizer()
+        applyCurrentEqualizer()
+        setOutputVolume(effectiveOutputVolume())
+        startAudioAnalysisForCurrentElement()
+        disposeWebAudioElement(outgoing)
+        if (playWhenReady && !hotStarted) {
+            playWebAudio(generation)
+        }
+        syncFromAudio(generation, isBuffering = false)
+        return true
+    }
+
+    override fun cancelGaplessPrepareOnPlatform(generation: Int) {
+        if (webGaplessGeneration == generation) {
+            stopWebGapless()
+        }
     }
 
     override fun startCrossfadeOnPlatform(
@@ -453,6 +589,24 @@ private class WebAudioPlayer(
         setOutputVolume(effectiveOutputVolume())
     }
 
+    private fun stopWebGapless() {
+        webGaplessHotStartJob?.cancel()
+        webGaplessHotStartJob = null
+        webGaplessAudio?.let { disposeWebAudioElement(it) }
+        webGaplessAudio = null
+        webGaplessGeneration = -1
+        webGaplessTrackId = null
+        webGaplessUri = null
+        webGaplessUsesCors = true
+        resetWebGaplessHotStartState()
+    }
+
+    private fun resetWebGaplessHotStartState() {
+        webGaplessPrerolled = false
+        webGaplessHotStartRequested = false
+        webGaplessHotStarted = false
+    }
+
     private fun isWebCrossfadeCurrent(
         generation: Int,
         outgoing: HTMLAudioElement,
@@ -594,7 +748,7 @@ private class WebAudioPlayer(
         eventAudio.onended = {
             if (isCurrentAudioEvent()) {
                 syncEndedPositionFromAudio(generation)
-                next()
+                advanceAfterPlatformTrackEnded(generation)
             }
         }
         eventAudio.onerror = { _, _, _, _, _ ->
@@ -646,6 +800,7 @@ private class WebAudioPlayer(
         val positionSeconds = previousAudio.currentTime.takeIf { it.isFinite() && it > 0.0 } ?: 0.0
         audio = createAudioElement(useCors = false)
         audioUsesCors = false
+        stopWebGapless()
         cancelWebAudioPrefetch()
         resetWebAudioPrefetch()
         sourcePreparedForWebEqualizer = false
@@ -685,6 +840,8 @@ private class WebAudioPlayer(
             browserDurationSeconds = audio.duration,
         )
         val positionMs = (audio.currentTime * 1000.0).toLong().coerceAtLeast(0L)
+        maybeHotStartWebGapless(generation, positionMs, durationMs)
+        maybeCommitWebGaplessBoundary(generation, positionMs, durationMs)
         diagnostics.playbackProgress(PlaybackEnginePath.WebAudioElement, positionMs, durationMs)
         if (!audio.paused && !isBuffering) {
             diagnostics.platformPlaying(PlaybackEnginePath.WebAudioElement, positionMs, durationMs)
@@ -697,6 +854,53 @@ private class WebAudioPlayer(
             bufferedPositionMs = bufferedPositionMs(positionMs, durationMs),
             generation = generation,
         )
+    }
+
+    private fun maybeHotStartWebGapless(
+        generation: Int,
+        positionMs: Long,
+        durationMs: Long,
+    ) {
+        if (durationMs <= 0L || positionMs < 0L) return
+        val remainingMs = durationMs - positionMs
+        if (remainingMs !in 0L..WebGaplessHotStartLeadMs) return
+        val prepared = webGaplessAudio ?: return
+        if (webGaplessGeneration != generation ||
+            webGaplessHotStartRequested ||
+            !webGaplessPrerolled ||
+            audio.paused
+        ) {
+            return
+        }
+        webGaplessHotStartRequested = true
+        prepared.muted = true
+        prepared.volume = 0.0
+        setWebAudioCurrentTime(prepared, 0.0)
+        playWebAudio(prepared) { message ->
+            if (webGaplessAudio !== prepared || webGaplessGeneration != generation) return@playWebAudio
+            webGaplessHotStartRequested = false
+            if (!message.isBrowserAutoplayBlockedFailure()) {
+                stopWebGapless()
+            }
+        }
+    }
+
+    private fun maybeCommitWebGaplessBoundary(
+        generation: Int,
+        positionMs: Long,
+        durationMs: Long,
+    ) {
+        if (durationMs <= 0L || positionMs < 0L) return
+        val remainingMs = durationMs - positionMs
+        if (remainingMs !in 0L..WebGaplessBoundaryCommitLeadMs) return
+        if (webGaplessGeneration != generation ||
+            webGaplessAudio == null ||
+            !webGaplessPrerolled ||
+            audio.paused
+        ) {
+            return
+        }
+        commitPreparedGapless(generation)
     }
 
     private fun syncEndedPositionFromAudio(generation: Int) {
@@ -956,6 +1160,9 @@ private fun org.w3c.dom.TimeRanges.toWebAudioTimeRanges(): List<WebAudioTimeRang
 private const val WebAudioRangeStartToleranceMs = 250L
 private const val WebAudioDurationEndToleranceMs = 750L
 private const val WebAudioPrefetchUpdateThreshold = 0.005
+private const val WebGaplessHotStartLeadMs = 90L
+private const val WebGaplessBoundaryCommitLeadMs = 20L
+private const val WebGaplessHotStartPollMs = 20L
 
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun("(audio, callback) => { audio.onprogress = () => callback(); }")

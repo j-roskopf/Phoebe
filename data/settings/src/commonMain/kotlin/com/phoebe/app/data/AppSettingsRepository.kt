@@ -49,7 +49,15 @@ class AppSettingsRepository(
 
     suspend fun setCrossfadeSeconds(seconds: Int) {
         updateAndSave { current ->
-            current.copy(crossfadeSeconds = seconds)
+            val normalizedSeconds = seconds.coerceIn(AppSettings.MinCrossfadeSeconds, AppSettings.MaxCrossfadeSeconds)
+            current.copy(
+                crossfadeSeconds = normalizedSeconds,
+                audioProcessing = if (normalizedSeconds > 0) {
+                    current.audioProcessing.copy(gaplessEnabled = false)
+                } else {
+                    current.audioProcessing
+                },
+            )
         }
     }
 
@@ -120,6 +128,12 @@ class AppSettingsRepository(
         }
     }
 
+    suspend fun setShowUltimateGuitarButton(enabled: Boolean) {
+        updateAndSave { current ->
+            current.copy(showUltimateGuitarButton = enabled)
+        }
+    }
+
     suspend fun setBlurredArtworkAppearance(enabled: Boolean) {
         updateAndSave { current ->
             current.copy(blurredArtworkAppearance = enabled)
@@ -158,7 +172,11 @@ class AppSettingsRepository(
 
     suspend fun setAudioProcessingSettings(settings: AudioProcessingSettings) {
         updateAndSave { current ->
-            current.copy(audioProcessing = settings.normalized())
+            val normalizedSettings = settings.normalized()
+            current.copy(
+                crossfadeSeconds = if (normalizedSettings.gaplessEnabled) 0 else current.crossfadeSeconds,
+                audioProcessing = normalizedSettings,
+            )
         }
     }
 
@@ -187,29 +205,36 @@ class AppSettingsRepository(
     private suspend fun updateAndSave(transform: (AppSettings) -> AppSettings) {
         withContext(NonCancellable + Dispatchers.Default) {
             saveMutex.withLock {
+                val previous = mutableState.value
                 val normalized = transform(mutableState.value).normalized()
-                val persisted = normalized.withoutSessionSettings()
-                database.appSettingsQueries.upsert(
-                    crossfadeSeconds = persisted.crossfadeSeconds.toLong(),
-                    scanLibraryOnLaunch = persisted.scanLibraryOnLaunch.toDb(),
-                    notifyWhenDownloadFinishes = persisted.notifyWhenDownloadFinishes.toDb(),
-                    keepPlayingEnabled = persisted.keepPlayingEnabled.toDb(),
-                    persistEqualizerSettings = persisted.persistEqualizerSettings.toDb(),
-                    persistVolumeSettings = persisted.persistVolumeSettings.toDb(),
-                    savedVolume = persisted.savedVolume.toDouble(),
-                    equalizerProfile = json.encodeToString(persisted.equalizerProfile),
-                    nowPlayingVisualizerPreset = persisted.nowPlayingVisualizerPreset.name,
-                    nowPlayingVisualizerInTvFrame = persisted.nowPlayingVisualizerInTvFrame.toDb(),
-                    blurredArtworkAppearance = persisted.blurredArtworkAppearance.toDb(),
-                    fullBleedDetailArtwork = persisted.fullBleedDetailArtwork.toDb(),
-                    tintedBackgroundGradient = persisted.tintedBackgroundGradient.toDb(),
-                    listenBrainzSettings = json.encodeToString(persisted.listenBrainz),
-                    lastFmSettings = json.encodeToString(persisted.lastFm),
-                    downloadPolicySettings = json.encodeToString(persisted.downloadPolicy),
-                    audioProcessingSettings = json.encodeToString(persisted.audioProcessing),
-                    eventSettings = json.encodeToString(persisted.events),
-                )
                 mutableState.value = normalized
+                val persisted = normalized.withoutSessionSettings()
+                try {
+                    database.appSettingsQueries.upsert(
+                        crossfadeSeconds = persisted.crossfadeSeconds.toLong(),
+                        scanLibraryOnLaunch = persisted.scanLibraryOnLaunch.toDb(),
+                        notifyWhenDownloadFinishes = persisted.notifyWhenDownloadFinishes.toDb(),
+                        keepPlayingEnabled = persisted.keepPlayingEnabled.toDb(),
+                        persistEqualizerSettings = persisted.persistEqualizerSettings.toDb(),
+                        persistVolumeSettings = persisted.persistVolumeSettings.toDb(),
+                        savedVolume = persisted.savedVolume.toDouble(),
+                        equalizerProfile = json.encodeToString(persisted.equalizerProfile),
+                        nowPlayingVisualizerPreset = persisted.nowPlayingVisualizerPreset.name,
+                        nowPlayingVisualizerInTvFrame = persisted.nowPlayingVisualizerInTvFrame.toDb(),
+                        showUltimateGuitarButton = persisted.showUltimateGuitarButton.toDb(),
+                        blurredArtworkAppearance = persisted.blurredArtworkAppearance.toDb(),
+                        fullBleedDetailArtwork = persisted.fullBleedDetailArtwork.toDb(),
+                        tintedBackgroundGradient = persisted.tintedBackgroundGradient.toDb(),
+                        listenBrainzSettings = json.encodeToString(persisted.listenBrainz),
+                        lastFmSettings = json.encodeToString(persisted.lastFm),
+                        downloadPolicySettings = json.encodeToString(persisted.downloadPolicy),
+                        audioProcessingSettings = json.encodeToString(persisted.audioProcessing),
+                        eventSettings = json.encodeToString(persisted.events),
+                    )
+                } catch (error: Throwable) {
+                    mutableState.value = previous
+                    throw error
+                }
             }
         }
     }
@@ -226,6 +251,7 @@ class AppSettingsRepository(
             equalizerProfile = decodeEqualizerProfile(equalizerProfile),
             nowPlayingVisualizerPreset = NowPlayingVisualizerPreset.fromStoredName(nowPlayingVisualizerPreset),
             nowPlayingVisualizerInTvFrame = nowPlayingVisualizerInTvFrame.toBool(),
+            showUltimateGuitarButton = showUltimateGuitarButton.toBool(),
             blurredArtworkAppearance = blurredArtworkAppearance.toBool(),
             fullBleedDetailArtwork = fullBleedDetailArtwork.toBool(),
             tintedBackgroundGradient = tintedBackgroundGradient.toBool(),

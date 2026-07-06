@@ -222,6 +222,7 @@ kotlin {
             implementation(project(":data:listenbrainz"))
             implementation(project(":data:local-media"))
             implementation(project(":data:lyrics"))
+            implementation(project(":data:musicbrainz"))
             implementation(project(":data:network"))
             implementation(project(":data:play-history"))
             implementation(project(":data:playlists"))

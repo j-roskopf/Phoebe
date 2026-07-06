@@ -1,14 +1,18 @@
 package com.phoebe.app.feature.lyrics
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.MutableTransitionState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -26,6 +30,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -44,14 +49,16 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -242,6 +249,16 @@ private fun LyricsDocumentView(
     fun markUserBrowsing() {
         lastUserTouchMs = currentTimeMs()
     }
+    val userScrollConnection = remember(document.trackFingerprint) {
+        object : NestedScrollConnection {
+            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                if (source == NestedScrollSource.UserInput && available.y != 0f) {
+                    markUserBrowsing()
+                }
+                return Offset.Zero
+            }
+        }
+    }
     LaunchedEffect(document.trackFingerprint, activeIndex) {
         val autoScrollSuppressed = currentTimeMs() - lastUserTouchMs < LyricsAutoScrollPauseMs
         if (activeIndex >= 0 && !autoScrollSuppressed) {
@@ -262,7 +279,7 @@ private fun LyricsDocumentView(
                     selectedLineIndex = selectedLineIndex,
                     onSelectLine = { selectedLineIndex = it },
                     listState = listState,
-                    markUserBrowsing = ::markUserBrowsing,
+                    userScrollConnection = userScrollConnection,
                     modifier = Modifier.weight(1f).fillMaxHeight(),
                 )
                 if (selectedAnnotations.isNotEmpty()) {
@@ -299,7 +316,7 @@ private fun LyricsDocumentView(
                     }
                 },
                 listState = listState,
-                markUserBrowsing = ::markUserBrowsing,
+                userScrollConnection = userScrollConnection,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -316,7 +333,7 @@ private fun LyricsLinesList(
     selectedLineIndex: Int?,
     onSelectLine: (Int?) -> Unit,
     listState: androidx.compose.foundation.lazy.LazyListState,
-    markUserBrowsing: () -> Unit,
+    userScrollConnection: NestedScrollConnection,
     modifier: Modifier,
 ) {
     LazyColumn(
@@ -325,30 +342,7 @@ private fun LyricsLinesList(
             .clip(RoundedCornerShape(14.dp))
             .background(PhoebeUi.panel)
             .border(BorderStroke(1.dp, PhoebeUi.border), RoundedCornerShape(14.dp))
-            .pointerInput(document.trackFingerprint) {
-                detectTapGestures(
-                    onPress = {
-                        markUserBrowsing()
-                        tryAwaitRelease()
-                    },
-                )
-            }
-            .pointerInput(document.trackFingerprint) {
-                detectDragGestures(
-                    onDragStart = { markUserBrowsing() },
-                    onDrag = { _, _ -> markUserBrowsing() },
-                )
-            }
-            .pointerInput(document.trackFingerprint) {
-                awaitPointerEventScope {
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        if (event.type == PointerEventType.Scroll) {
-                            markUserBrowsing()
-                        }
-                    }
-                }
-            },
+            .nestedScroll(userScrollConnection),
         contentPadding = PaddingValues(horizontal = 22.dp, vertical = 28.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -436,31 +430,61 @@ private fun LyricsLineRow(
             modifier = Modifier.weight(1f),
         )
         if (annotationCount > 0) {
-            AnnotationMarker(count = annotationCount, selected = selected)
+            AnnotationMarker(
+                count = annotationCount,
+                selected = selected,
+                onClick = onClick,
+                contentDescription = "$annotationCount Genius annotations",
+            )
         }
     }
 }
 
 @Composable
-private fun AnnotationMarker(count: Int, selected: Boolean) {
+private fun AnnotationMarker(
+    count: Int,
+    selected: Boolean,
+    onClick: (() -> Unit)? = null,
+    contentDescription: String? = null,
+) {
+    val markerShape = RoundedCornerShape(999.dp)
+    val visualMarker: @Composable () -> Unit = {
+        Box(
+            Modifier
+                .size(24.dp)
+                .clip(markerShape)
+                .background(if (selected) PhoebeUi.accentLight else PhoebeUi.elevatedFill)
+                .border(
+                    BorderStroke(1.dp, if (selected) PhoebeUi.accentLight else PhoebeUi.border),
+                    markerShape,
+                ),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                count.coerceAtMost(9).let { if (count > 9) "9+" else it.toString() },
+                color = if (selected) PhoebeUi.panel else PhoebeUi.accentLight,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Black,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+    if (onClick == null) {
+        visualMarker()
+        return
+    }
     Box(
         Modifier
-            .size(24.dp)
+            .sizeIn(minWidth = 44.dp, minHeight = 44.dp)
             .clip(RoundedCornerShape(999.dp))
-            .background(if (selected) PhoebeUi.accentLight else PhoebeUi.elevatedFill)
-            .border(
-                BorderStroke(1.dp, if (selected) PhoebeUi.accentLight else PhoebeUi.border),
-                RoundedCornerShape(999.dp),
-            ),
+            .clickable(onClick = onClick)
+            .semantics {
+                role = Role.Button
+                this.contentDescription = contentDescription ?: "$count Genius annotations"
+            },
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            count.coerceAtMost(9).let { if (count > 9) "9+" else it.toString() },
-            color = if (selected) PhoebeUi.panel else PhoebeUi.accentLight,
-            fontSize = 11.sp,
-            fontWeight = FontWeight.Black,
-            textAlign = TextAlign.Center,
-        )
+        visualMarker()
     }
 }
 
@@ -627,88 +651,81 @@ private fun AnnotationBottomSheet(
     onDismissed: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val scope = rememberCoroutineScope()
-    val sheetOffsetPx = remember(sheet) { Animatable(10_000f) }
-    val scrimAlpha = remember(sheet) { Animatable(0f) }
+    val visibleState = remember(sheet) {
+        MutableTransitionState(false).apply { targetState = true }
+    }
+    val sheetOffsetPx = remember(sheet) { Animatable(0f) }
     var sheetHeightPx by remember(sheet) { mutableIntStateOf(0) }
-    var dismissing by remember(sheet) { mutableStateOf(false) }
-    var animatedSheet by remember { mutableStateOf<AnnotationSheetContent?>(null) }
 
     fun animateDismiss() {
-        if (dismissing) return
-        dismissing = true
-        scope.launch {
-            val hiddenOffset = sheetHeightPx.takeIf { it > 0 }?.toFloat() ?: sheetOffsetPx.value
-            launch {
-                scrimAlpha.animateTo(
-                    0f,
-                    animationSpec = tween(AnnotationSheetDismissAnimationMs, easing = FastOutSlowInEasing),
-                )
-            }
-            sheetOffsetPx.animateTo(
-                hiddenOffset,
-                animationSpec = tween(AnnotationSheetDismissAnimationMs, easing = FastOutSlowInEasing),
-            )
+        visibleState.targetState = false
+    }
+
+    LaunchedEffect(visibleState.currentState, visibleState.targetState) {
+        if (!visibleState.currentState && !visibleState.targetState) {
             onDismissed()
         }
     }
 
-    LaunchedEffect(sheet, sheetHeightPx) {
-        if (sheetHeightPx > 0 && animatedSheet != sheet) {
-            animatedSheet = sheet
-            sheetOffsetPx.snapTo(sheetHeightPx.toFloat())
-            scrimAlpha.snapTo(0f)
-            launch {
-                scrimAlpha.animateTo(
-                    AnnotationSheetScrimAlpha,
-                    animationSpec = tween(150, easing = FastOutSlowInEasing),
-                )
-            }
-            sheetOffsetPx.animateTo(
-                0f,
-                animationSpec = tween(280, easing = FastOutSlowInEasing),
+    PlatformBackHandler(enabled = visibleState.targetState, onBack = ::animateDismiss)
+    Box(modifier) {
+        AnimatedVisibility(
+            visibleState = visibleState,
+            enter = fadeIn(animationSpec = tween(150, easing = FastOutSlowInEasing)),
+            exit = fadeOut(animationSpec = tween(AnnotationSheetDismissAnimationMs, easing = FastOutSlowInEasing)),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = AnnotationSheetScrimAlpha))
+                    .clickable(onClick = ::animateDismiss)
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = "Dismiss Genius annotations"
+                    },
             )
         }
-    }
-
-    PlatformBackHandler(enabled = true, onBack = ::animateDismiss)
-    Box(modifier) {
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = scrimAlpha.value))
-                .clickable(onClick = ::animateDismiss)
-                .semantics {
-                    role = Role.Button
-                    contentDescription = "Dismiss Genius annotations"
-                },
-        )
-        AnnotationDetailPanel(
-            title = sheet.title,
-            annotations = sheet.annotations,
-            songAnnotations = sheet.songAnnotations,
-            onDismiss = ::animateDismiss,
-            shape = RoundedCornerShape(
-                topStart = 22.dp,
-                topEnd = 22.dp,
-                bottomEnd = 0.dp,
-                bottomStart = 0.dp,
+        AnimatedVisibility(
+            visibleState = visibleState,
+            enter = slideInVertically(
+                initialOffsetY = { height -> height },
+                animationSpec = tween(280, easing = FastOutSlowInEasing),
             ),
-            showDragHandle = true,
-            includeNavigationBarPadding = true,
-            dragHandleModifier = Modifier.annotationSheetDragHandle(
-                sheetOffsetPx = sheetOffsetPx,
-                sheetHeightPx = sheetHeightPx,
-                onDismiss = ::animateDismiss,
+            exit = slideOutVertically(
+                targetOffsetY = { height -> height },
+                animationSpec = tween(AnnotationSheetDismissAnimationMs, easing = FastOutSlowInEasing),
             ),
-            opaqueContainer = true,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .heightIn(max = maxHeight)
-                .onSizeChanged { size -> sheetHeightPx = size.height }
-                .offset { IntOffset(x = 0, y = sheetOffsetPx.value.roundToInt()) },
-        )
+                .fillMaxWidth(),
+        ) {
+            AnnotationDetailPanel(
+                title = sheet.title,
+                annotations = sheet.annotations,
+                songAnnotations = sheet.songAnnotations,
+                onDismiss = ::animateDismiss,
+                shape = RoundedCornerShape(
+                    topStart = 22.dp,
+                    topEnd = 22.dp,
+                    bottomEnd = 0.dp,
+                    bottomStart = 0.dp,
+                ),
+                showDragHandle = true,
+                includeNavigationBarPadding = true,
+                dragHandleModifier = Modifier.annotationSheetDragHandle(
+                    sheetOffsetPx = sheetOffsetPx,
+                    sheetHeightPx = sheetHeightPx,
+                    onDismiss = ::animateDismiss,
+                ),
+                opaqueContainer = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = maxHeight)
+                    .onSizeChanged { size -> sheetHeightPx = size.height }
+                    .offset { IntOffset(x = 0, y = sheetOffsetPx.value.roundToInt()) },
+            )
+        }
     }
 }
 

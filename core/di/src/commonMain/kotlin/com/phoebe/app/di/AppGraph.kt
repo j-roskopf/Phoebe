@@ -24,6 +24,7 @@ import com.phoebe.app.data.ListenBrainzPlaybackReporter
 import com.phoebe.app.data.ListenBrainzService
 import com.phoebe.app.data.LyricsRepository
 import com.phoebe.app.data.MediaSourcesRepository
+import com.phoebe.app.data.MusicBrainzRepository
 import com.phoebe.app.data.MusicAssistantClient
 import com.phoebe.app.data.MusicAssistantProviderAdapter
 import com.phoebe.app.data.MusicProviderRegistry
@@ -103,6 +104,7 @@ data class AppGraphServices(
     val libraryUiRepository: LibraryUiRepository,
     val libraryPreferencesService: LibraryPreferencesService,
     val lyricsRepository: LyricsRepository,
+    val musicBrainzRepository: MusicBrainzRepository,
     val playHistoryRepository: PlayHistoryRepository,
     val playlistService: PlaylistService,
     val radioRepository: RadioRepository,
@@ -162,6 +164,7 @@ interface AppGraphContributions {
     val libraryUiRepository: LibraryUiRepository
     val libraryPreferencesService: LibraryPreferencesService
     val lyricsRepository: LyricsRepository
+    val musicBrainzRepository: MusicBrainzRepository
     val playHistoryRepository: PlayHistoryRepository
     val playlistService: PlaylistService
     val radioRepository: RadioRepository
@@ -220,6 +223,7 @@ interface AppGraphProviders {
         libraryUiRepository: LibraryUiRepository,
         libraryPreferencesService: LibraryPreferencesService,
         lyricsRepository: LyricsRepository,
+        musicBrainzRepository: MusicBrainzRepository,
         playHistoryRepository: PlayHistoryRepository,
         playlistService: PlaylistService,
         radioRepository: RadioRepository,
@@ -264,6 +268,7 @@ interface AppGraphProviders {
             libraryUiRepository = libraryUiRepository,
             libraryPreferencesService = libraryPreferencesService,
             lyricsRepository = lyricsRepository,
+            musicBrainzRepository = musicBrainzRepository,
             playHistoryRepository = playHistoryRepository,
             playlistService = playlistService,
             radioRepository = radioRepository,

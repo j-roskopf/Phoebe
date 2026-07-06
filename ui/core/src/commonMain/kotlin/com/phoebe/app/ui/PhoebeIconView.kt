@@ -31,6 +31,7 @@ import phoebe.ui.core.generated.resources.phoebe_icon_download
 import phoebe.ui.core.generated.resources.phoebe_icon_drag
 import phoebe.ui.core.generated.resources.phoebe_icon_equalizer
 import phoebe.ui.core.generated.resources.phoebe_icon_forward
+import phoebe.ui.core.generated.resources.phoebe_icon_guitar
 import phoebe.ui.core.generated.resources.phoebe_icon_heart_filled
 import phoebe.ui.core.generated.resources.phoebe_icon_heart_outline
 import phoebe.ui.core.generated.resources.phoebe_icon_home
@@ -65,7 +66,7 @@ fun PhoebeIconView(
             painter = painterResource(resource),
             contentDescription = null,
             modifier = modifier,
-            colorFilter = ColorFilter.tint(tint),
+            colorFilter = if (icon.preservesOriginalColors()) null else ColorFilter.tint(tint),
             contentScale = ContentScale.Fit,
         )
         return
@@ -197,6 +198,7 @@ private fun PhoebeIcon.drawableResource(filled: Boolean): DrawableResource? =
         PhoebeIcon.Person -> Res.drawable.phoebe_icon_person
         PhoebeIcon.Calendar -> Res.drawable.phoebe_icon_calendar
         PhoebeIcon.Book -> Res.drawable.phoebe_icon_book
+        PhoebeIcon.Guitar -> Res.drawable.phoebe_icon_guitar
         PhoebeIcon.Knife -> Res.drawable.phoebe_icon_knife
         PhoebeIcon.InterwovenArrows -> Res.drawable.phoebe_icon_interwoven_arrows
         PhoebeIcon.MoodFace -> Res.drawable.mood_very_good
@@ -239,3 +241,6 @@ private fun PhoebeIcon.drawableResource(filled: Boolean): DrawableResource? =
         PhoebeIcon.Update,
         -> null
     }
+
+private fun PhoebeIcon.preservesOriginalColors(): Boolean =
+    this == PhoebeIcon.Guitar

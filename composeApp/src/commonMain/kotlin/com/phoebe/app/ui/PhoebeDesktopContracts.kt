@@ -36,6 +36,8 @@ import com.phoebe.app.domain.LibraryUiPreferences
 import com.phoebe.app.domain.LyricsLoadState
 import com.phoebe.app.domain.MediaProviderType
 import com.phoebe.app.domain.MediaSourcesState
+import com.phoebe.app.domain.MusicBrainzAlbumMetadataLoadState
+import com.phoebe.app.domain.MusicBrainzArtistArtworkLoadState
 import com.phoebe.app.domain.MusicLibrary
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.PersonalMixPreferences
@@ -93,6 +95,7 @@ internal data class PlaybackUiState(
     val equalizerRemoteUnavailable: Boolean = false,
     val visualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
     val showVisualizerInTvFrame: Boolean = false,
+    val showUltimateGuitarButton: Boolean = true,
     val audioAnalysis: AudioAnalysisFrame = AudioAnalysisFrame.Empty,
     val useFilamentVisualizers: Boolean = true,
 )
@@ -107,6 +110,7 @@ internal data class PlaybackActions(
     val onSeek: (Long) -> Unit,
     val onCast: () -> Unit = {},
     val onLyrics: () -> Unit = {},
+    val onUltimateGuitar: (Track) -> Unit = {},
     val onEqualizerEnabled: (Boolean) -> Unit = {},
     val onEqualizerBandCount: (Int) -> Unit = {},
     val onEqualizerGain: (Int, Float) -> Unit = { _, _ -> },
@@ -141,6 +145,8 @@ internal data class BrowseUiState(
     val radioRouteMode: RadioRouteMode = RadioRouteMode.Home,
     val artistRadioAvailability: Map<String, ArtistRadioAvailability> = emptyMap(),
     val artistEvents: Map<String, ArtistEventsLoadState> = emptyMap(),
+    val albumMusicBrainzMetadata: Map<String, MusicBrainzAlbumMetadataLoadState> = emptyMap(),
+    val artistMusicBrainzArtwork: Map<String, MusicBrainzArtistArtworkLoadState> = emptyMap(),
     val radioStartingIds: Set<String> = emptySet(),
     val internetRadioStartingIds: Set<String> = emptySet(),
 )
@@ -204,6 +210,8 @@ internal data class BrowseActions(
     val onPlayArtistRadio: (Artist) -> Unit,
     val onLoadArtistEventAvailability: (Artist) -> Unit = {},
     val onLoadArtistEvents: (Artist) -> Unit = {},
+    val onLoadAlbumMusicBrainzMetadata: (Album, List<Track>) -> Unit = { _, _ -> },
+    val onLoadArtistMusicBrainzArtwork: (Artist) -> Unit = {},
     val onArtistEvents: (Artist) -> Unit = {},
     val onDownloadAlbum: (Album) -> Unit,
     val onDownloadPlaylist: (Playlist) -> Unit,
@@ -286,6 +294,7 @@ internal data class SettingsActions(
     val audioProcessingCapabilities: AudioProcessingCapabilities = AudioProcessingCapabilities(),
     val onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
     val onShowVisualizerInTvFrame: (Boolean) -> Unit = {},
+    val onShowUltimateGuitarButton: (Boolean) -> Unit = {},
     val onBlurredArtworkAppearance: (Boolean) -> Unit = {},
     val onFullBleedDetailArtwork: (Boolean) -> Unit = {},
     val onTintedBackgroundGradient: (Boolean) -> Unit = {},

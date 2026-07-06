@@ -2,9 +2,13 @@ package com.phoebe.app.backend
 
 import com.phoebe.app.backend.events.ArtistEventsBackendFeature
 import com.phoebe.app.backend.lyrics.LyricsBackendFeature
+import com.phoebe.app.backend.musicbrainz.MusicBrainzBackendFeature
+import com.phoebe.app.backend.musicbrainz.NoopMusicBrainzRequestGate
 import com.phoebe.app.domain.ArtistEventsResponse
 import com.phoebe.app.domain.EventDataProvider
 import com.phoebe.app.domain.GeniusReferentsResponse
+import com.phoebe.app.domain.MusicBrainzAlbumMetadataResponse
+import com.phoebe.app.domain.MusicBrainzArtistArtworkResponse
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
@@ -19,6 +23,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -26,7 +31,11 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class PhoebeBackendApplicationTest {
-    private val testFeatures = listOf(ArtistEventsBackendFeature(), LyricsBackendFeature())
+    private val testFeatures = listOf(
+        ArtistEventsBackendFeature(),
+        LyricsBackendFeature(),
+        MusicBrainzBackendFeature(NoopMusicBrainzRequestGate),
+    )
     private val json = Json {
         ignoreUnknownKeys = true
         explicitNulls = false
@@ -317,6 +326,415 @@ class PhoebeBackendApplicationTest {
         assertEquals("http://localhost:3000", response.headers[HttpHeaders.AccessControlAllowOrigin])
     }
 
+    @Test
+    fun musicBrainzAlbumUsesExactMbidAndReturnsCreditsAndArtwork() = testApplication {
+        val userAgents = mutableListOf<String?>()
+        val releaseMbid = "11111111-2222-3333-4444-555555555555"
+        val providerClient = HttpClient(
+            MockEngine { request ->
+                userAgents += request.headers[HttpHeaders.UserAgent]
+                when ("${request.url.host}${request.url.encodedPath}") {
+                    "musicbrainz.org/ws/2/release/$releaseMbid" -> respondJson(musicBrainzReleasePayload(releaseMbid))
+                    "coverartarchive.org/release/$releaseMbid" -> respondJson(coverArtPayload())
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(ClientContentNegotiation) {
+                json(json)
+            }
+        }
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = providerClient, features = testFeatures)
+        }
+
+        val response = client.get("/v1/musicbrainz/album?album=Punisher&artist=Phoebe%20Bridgers&releaseMbid=$releaseMbid")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertTrue(userAgents.isNotEmpty())
+        assertTrue(userAgents.all { it == DefaultMusicBrainzUserAgent })
+        val body = json.decodeFromString<MusicBrainzAlbumMetadataResponse>(response.bodyAsText())
+        assertEquals(releaseMbid, body.match?.musicBrainzId)
+        assertEquals("Punisher", body.match?.title)
+        assertTrue(body.credits.any { it.role == "Album artist" && "Phoebe Bridgers" in it.names })
+        assertTrue(body.credits.any { it.role == "Label" && "Dead Oceans" in it.names })
+        assertTrue(body.credits.any { it.role == "Production" && "Tony Berg" in it.names })
+        assertTrue(body.credits.any { it.role == "Visuals" && "Olof Grind" in it.names })
+        assertEquals("https://img.example/front-1200.jpg", body.artwork.single().largeThumbnailUrl)
+    }
+
+    @Test
+    fun musicBrainzAlbumSearchFallbackIsCached() = testApplication {
+        val releaseMbid = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+        var searchCount = 0
+        var lookupCount = 0
+        val providerClient = HttpClient(
+            MockEngine { request ->
+                when {
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/release" -> {
+                        searchCount += 1
+                        assertTrue(request.url.parameters["query"].orEmpty().contains("release:\"Stranger in the Alps\""))
+                        respondJson(musicBrainzReleaseSearchPayload(releaseMbid))
+                    }
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/release/$releaseMbid" -> {
+                        lookupCount += 1
+                        respondJson(musicBrainzReleasePayload(releaseMbid))
+                    }
+                    request.url.host == "coverartarchive.org" && request.url.encodedPath == "/release/$releaseMbid" -> {
+                        respondJson(coverArtPayload())
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(ClientContentNegotiation) {
+                json(json)
+            }
+        }
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = providerClient, features = testFeatures)
+        }
+
+        repeat(2) {
+            val response = client.get("/v1/musicbrainz/album?album=Stranger%20in%20the%20Alps&artist=Phoebe%20Bridgers&year=2017")
+            assertEquals(HttpStatusCode.OK, response.status)
+            val body = json.decodeFromString<MusicBrainzAlbumMetadataResponse>(response.bodyAsText())
+            assertEquals(releaseMbid, body.match?.musicBrainzId)
+        }
+        assertEquals(1, searchCount)
+        assertEquals(1, lookupCount)
+    }
+
+    @Test
+    fun musicBrainzAlbumNoMatchReturnsEmptyMetadata() = testApplication {
+        application {
+            phoebeBackendModule(
+                config = testConfig(),
+                httpClient = mockProviderClient("""{"releases":[]}"""),
+                features = testFeatures,
+            )
+        }
+
+        val response = client.get("/v1/musicbrainz/album?album=Missing&artist=Nobody")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<MusicBrainzAlbumMetadataResponse>(response.bodyAsText())
+        assertEquals("Missing", body.query.album)
+        assertEquals(null, body.match)
+        assertEquals(emptyList(), body.credits)
+        assertEquals(emptyList(), body.artwork)
+    }
+
+    @Test
+    fun musicBrainzArtistArtworkBrowsesReleaseGroupsAndDeduplicatesImages() = testApplication {
+        val providerClient = HttpClient(
+            MockEngine { request ->
+                when ("${request.url.host}${request.url.encodedPath}") {
+                    "musicbrainz.org/ws/2/artist" -> respondJson(musicBrainzArtistSearchPayload())
+                    "musicbrainz.org/ws/2/release-group" -> respondJson(musicBrainzReleaseGroupsPayload())
+                    "coverartarchive.org/release-group/rg-1" -> respond(
+                        content = "",
+                        status = HttpStatusCode.TemporaryRedirect,
+                        headers = headersOf(HttpHeaders.Location, "/release/release-1"),
+                    )
+                    "coverartarchive.org/release-group/rg-2" -> respond(
+                        content = "",
+                        status = HttpStatusCode.TemporaryRedirect,
+                        headers = headersOf(HttpHeaders.Location, "https://coverartarchive.org/release/release-2"),
+                    )
+                    "coverartarchive.org/release/release-1" -> respondJson(
+                        coverArtPayload(imageUrl = "https://img.example/shared.jpg", title = "Front", rawId = "8423939044"),
+                    )
+                    "coverartarchive.org/release/release-2" -> respondJson(coverArtPayload(imageUrl = "https://img.example/shared.jpg", title = "Front"))
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(ClientContentNegotiation) {
+                json(json)
+            }
+        }
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = providerClient, features = testFeatures)
+        }
+
+        val response = client.get("/v1/musicbrainz/artist-artwork?artist=Phoebe%20Bridgers&limit=4")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<MusicBrainzArtistArtworkResponse>(response.bodyAsText())
+        assertEquals("artist-1", body.match?.musicBrainzId)
+        assertEquals(1, body.artwork.size)
+        assertEquals("https://img.example/shared.jpg", body.artwork.single().imageUrl)
+    }
+
+    @Test
+    fun musicBrainzArtistArtworkCapsReleaseGroupScan() = testApplication {
+        val requestedGroups = mutableListOf<String>()
+        val providerClient = HttpClient(
+            MockEngine { request ->
+                when {
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/artist" -> {
+                        respondJson(musicBrainzArtistSearchPayload())
+                    }
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/release-group" -> {
+                        respondJson(musicBrainzReleaseGroupsPayload(count = 20))
+                    }
+                    request.url.host == "coverartarchive.org" && request.url.encodedPath.startsWith("/release-group/") -> {
+                        synchronized(requestedGroups) {
+                            requestedGroups += request.url.encodedPath
+                                .removePrefix("/release-group/")
+                                .substringBefore("/")
+                        }
+                        respond("", HttpStatusCode.NotFound)
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(ClientContentNegotiation) {
+                json(json)
+            }
+        }
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = providerClient, features = testFeatures)
+        }
+
+        val response = client.get("/v1/musicbrainz/artist-artwork?artist=Phoebe%20Bridgers&limit=18")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<MusicBrainzArtistArtworkResponse>(response.bodyAsText())
+        assertEquals(emptyList(), body.artwork)
+        synchronized(requestedGroups) {
+            assertEquals(12, requestedGroups.distinct().size)
+        }
+    }
+
+    @Test
+    fun musicBrainzArtistArtworkFastModeCapsReleaseGroupScan() = testApplication {
+        val requestedGroups = mutableListOf<String>()
+        val providerClient = HttpClient(
+            MockEngine { request ->
+                when {
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/artist" -> {
+                        respondJson(musicBrainzArtistSearchPayload())
+                    }
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/release-group" -> {
+                        respondJson(musicBrainzReleaseGroupsPayload(count = 20))
+                    }
+                    request.url.host == "coverartarchive.org" && request.url.encodedPath.startsWith("/release-group/") -> {
+                        synchronized(requestedGroups) {
+                            requestedGroups += request.url.encodedPath
+                                .removePrefix("/release-group/")
+                                .substringBefore("/")
+                        }
+                        respond("", HttpStatusCode.NotFound)
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(ClientContentNegotiation) {
+                json(json)
+            }
+        }
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = providerClient, features = testFeatures)
+        }
+
+        val response = client.get("/v1/musicbrainz/artist-artwork?artist=Phoebe%20Bridgers&limit=12&fast=true")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<MusicBrainzArtistArtworkResponse>(response.bodyAsText())
+        assertEquals(emptyList(), body.artwork)
+        synchronized(requestedGroups) {
+            assertEquals(12, requestedGroups.distinct().size)
+        }
+    }
+
+    @Test
+    fun musicBrainzArtistArtworkFastModeReturnsUsefulSet() = testApplication {
+        val providerClient = HttpClient(
+            MockEngine { request ->
+                when {
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/artist" -> {
+                        respondJson(musicBrainzArtistSearchPayload())
+                    }
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/release-group" -> {
+                        respondJson(musicBrainzReleaseGroupsPayload(count = 20))
+                    }
+                    request.url.host == "coverartarchive.org" && request.url.encodedPath.startsWith("/release-group/rg-") -> {
+                        val group = request.url.encodedPath.removePrefix("/release-group/").substringBefore("/")
+                        val index = group.removePrefix("rg-").toIntOrNull() ?: 0
+                        if (index in 1..8) {
+                            respond(
+                                content = "",
+                                status = HttpStatusCode.TemporaryRedirect,
+                                headers = headersOf(HttpHeaders.Location, "http://img.example/rg-$index-500.jpg"),
+                            )
+                        } else {
+                            respond("", HttpStatusCode.NotFound)
+                        }
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(ClientContentNegotiation) {
+                json(json)
+            }
+        }
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = providerClient, features = testFeatures)
+        }
+
+        val response = client.get("/v1/musicbrainz/artist-artwork?artist=Phoebe%20Bridgers&limit=12&fast=true")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<MusicBrainzArtistArtworkResponse>(response.bodyAsText())
+        assertTrue(body.artwork.size >= 4)
+        assertEquals("https://img.example/rg-1-500.jpg", body.artwork.first().imageUrl)
+    }
+
+    @Test
+    fun musicBrainzArtistArtworkFastModeBrowsesBeyondScanLimitBeforeSorting() = testApplication {
+        val providerClient = HttpClient(
+            MockEngine { request ->
+                when {
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/artist" -> {
+                        respondJson(musicBrainzArtistSearchPayload())
+                    }
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/release-group" -> {
+                        respondJson(musicBrainzReleaseGroupsPayload(count = 20))
+                    }
+                    request.url.host == "coverartarchive.org" && request.url.encodedPath == "/release-group/rg-13/front-500" -> {
+                        respond(
+                            content = "",
+                            status = HttpStatusCode.TemporaryRedirect,
+                            headers = headersOf(HttpHeaders.Location, "http://img.example/rg-13-500.jpg"),
+                        )
+                    }
+                    request.url.host == "coverartarchive.org" && request.url.encodedPath.startsWith("/release-group/") -> {
+                        respond("", HttpStatusCode.NotFound)
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(ClientContentNegotiation) {
+                json(json)
+            }
+        }
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = providerClient, features = testFeatures)
+        }
+
+        val response = client.get("/v1/musicbrainz/artist-artwork?artist=Phoebe%20Bridgers&limit=12&fast=true")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<MusicBrainzArtistArtworkResponse>(response.bodyAsText())
+        assertEquals(listOf("https://img.example/rg-13-500.jpg"), body.artwork.map { it.imageUrl })
+    }
+
+    @Test
+    fun musicBrainzArtistArtworkExcludesCurrentArtwork() = testApplication {
+        val providerClient = HttpClient(
+            MockEngine { request ->
+                when {
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/artist" -> {
+                        respondJson(musicBrainzArtistSearchPayload())
+                    }
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/release-group" -> {
+                        respondJson(musicBrainzReleaseGroupsPayload(count = 4))
+                    }
+                    request.url.host == "coverartarchive.org" && request.url.encodedPath == "/release-group/rg-1/front-500" -> {
+                        respond(
+                            content = "",
+                            status = HttpStatusCode.TemporaryRedirect,
+                            headers = headersOf(HttpHeaders.Location, "https://img.example/current-500.jpg"),
+                        )
+                    }
+                    request.url.host == "coverartarchive.org" && request.url.encodedPath == "/release-group/rg-2/front-500" -> {
+                        respond(
+                            content = "",
+                            status = HttpStatusCode.TemporaryRedirect,
+                            headers = headersOf(HttpHeaders.Location, "https://img.example/new-500.jpg"),
+                        )
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(ClientContentNegotiation) {
+                json(json)
+            }
+        }
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = providerClient, features = testFeatures)
+        }
+
+        val response = client.get(
+            "/v1/musicbrainz/artist-artwork?artist=Phoebe%20Bridgers&limit=12&fast=true&excludeImageUrl=https%3A%2F%2Fimg.example%2Fcurrent.jpg",
+        )
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<MusicBrainzArtistArtworkResponse>(response.bodyAsText())
+        assertEquals(listOf("https://img.example/new-500.jpg"), body.artwork.map { it.imageUrl })
+    }
+
+    @Test
+    fun musicBrainzArtistArtworkStopsScanningAfterEnoughArtwork() = testApplication {
+        val requestedGroups = mutableListOf<String>()
+        val providerClient = HttpClient(
+            MockEngine { request ->
+                when {
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/artist" -> {
+                        respondJson(musicBrainzArtistSearchPayload())
+                    }
+                    request.url.host == "musicbrainz.org" && request.url.encodedPath == "/ws/2/release-group" -> {
+                        respondJson(musicBrainzReleaseGroupsPayload(count = 20))
+                    }
+                    request.url.host == "coverartarchive.org" && request.url.encodedPath.startsWith("/release-group/") -> {
+                        val group = request.url.encodedPath.substringAfterLast("/")
+                        synchronized(requestedGroups) {
+                            requestedGroups += group
+                        }
+                        respondJson(coverArtPayload(imageUrl = "http://img.example/$group.jpg", title = "Front"))
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        ) {
+            install(ClientContentNegotiation) {
+                json(json)
+            }
+        }
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = providerClient, features = testFeatures)
+        }
+
+        val response = client.get("/v1/musicbrainz/artist-artwork?artist=Phoebe%20Bridgers&limit=4")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        val body = json.decodeFromString<MusicBrainzArtistArtworkResponse>(response.bodyAsText())
+        assertEquals(4, body.artwork.size)
+        assertTrue(body.artwork.all { it.imageUrl.startsWith("https://") })
+        synchronized(requestedGroups) {
+            assertEquals(4, requestedGroups.distinct().size)
+        }
+    }
+
+    @Test
+    fun musicBrainzAlbumRequiresAlbumAndArtist() = testApplication {
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = mockProviderClient("{}"), features = testFeatures)
+        }
+
+        val response = client.get("/v1/musicbrainz/album?album=Punisher")
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(response.bodyAsText().contains("artist is required"))
+    }
+
     private fun mockProviderClient(
         payload: String,
         status: HttpStatusCode = HttpStatusCode.OK,
@@ -349,14 +767,127 @@ class PhoebeBackendApplicationTest {
         seatGeekClientId: String? = "sg-id",
         geniusAccessToken: String? = "genius-token",
         allowedOrigins: List<String> = emptyList(),
+        musicBrainzUserAgent: String = DefaultMusicBrainzUserAgent,
     ): PhoebeBackendConfig =
         PhoebeBackendConfig(
             ticketmasterApiKey = ticketmasterApiKey,
             seatGeekClientId = seatGeekClientId,
             geniusAccessToken = geniusAccessToken,
+            musicBrainzUserAgent = musicBrainzUserAgent,
             allowedOrigins = allowedOrigins,
             cacheTtlMinutes = 240,
         )
+
+    private fun musicBrainzReleaseSearchPayload(releaseMbid: String): String =
+        """
+        {
+          "releases": [
+            {
+              "id": "$releaseMbid",
+              "title": "Stranger in the Alps",
+              "score": 98,
+              "date": "2017-09-22",
+              "artist-credit": [
+                { "name": "Phoebe Bridgers", "artist": { "id": "artist-1", "name": "Phoebe Bridgers" } }
+              ],
+              "release-group": { "id": "rg-search", "title": "Stranger in the Alps" }
+            }
+          ]
+        }
+        """.trimIndent()
+
+    private fun musicBrainzReleasePayload(releaseMbid: String): String =
+        """
+        {
+          "id": "$releaseMbid",
+          "title": "Punisher",
+          "date": "2020-06-18",
+          "artist-credit": [
+            { "name": "Phoebe Bridgers", "artist": { "id": "artist-1", "name": "Phoebe Bridgers" } }
+          ],
+          "release-group": { "id": "rg-1", "title": "Punisher" },
+          "label-info": [
+            { "label": { "id": "label-1", "name": "Dead Oceans" } }
+          ],
+          "relations": [
+            { "type": "producer", "artist": { "id": "artist-2", "name": "Tony Berg" } },
+            { "type": "engineer", "artist": { "id": "artist-3", "name": "Ethan Gruska" } },
+            { "type": "photography", "artist": { "id": "artist-4", "name": "Olof Grind" } }
+          ],
+          "media": [
+            {
+              "tracks": [
+                {
+                  "recording": {
+                    "title": "DVD Menu",
+                    "relations": [
+                      { "type": "vocal", "artist": { "id": "artist-1", "name": "Phoebe Bridgers" }, "attributes": ["vocals"] },
+                      { "type": "composer", "artist": { "id": "artist-1", "name": "Phoebe Bridgers" } }
+                    ]
+                  }
+                }
+              ]
+            }
+          ]
+        }
+        """.trimIndent()
+
+    private fun musicBrainzArtistSearchPayload(): String =
+        """
+        {
+          "artists": [
+            { "id": "artist-1", "name": "Phoebe Bridgers", "score": 100 }
+          ]
+        }
+        """.trimIndent()
+
+    private fun musicBrainzReleaseGroupsPayload(count: Int = 2): String {
+        val groups = (1..count).joinToString(",") { index ->
+            val title = when (index) {
+                1 -> "Punisher"
+                2 -> "Copycat Killer"
+                else -> "Release Group $index"
+            }
+            val primaryType = if (index == 2) "EP" else "Album"
+            val year = 2025 - index
+            """
+            { "id": "rg-$index", "title": "$title", "primary-type": "$primaryType", "first-release-date": "$year-01-01" }
+            """.trimIndent()
+        }
+        return """
+        {
+          "release-groups": [
+            $groups
+          ]
+        }
+        """.trimIndent()
+    }
+
+    private fun coverArtPayload(
+        imageUrl: String = "https://img.example/front.jpg",
+        title: String = "Front",
+        rawId: String = """"art-1"""",
+    ): String =
+        """
+        {
+          "images": [
+            {
+              "id": $rawId,
+              "image": "$imageUrl",
+              "thumbnails": {
+                "250": "https://img.example/front-250.jpg",
+                "500": "https://img.example/front-500.jpg",
+                "1200": "https://img.example/front-1200.jpg",
+                "small": "https://img.example/front-small.jpg",
+                "large": "https://img.example/front-large.jpg"
+              },
+              "types": ["$title"],
+              "front": true,
+              "approved": true
+            }
+          ]
+        }
+        """.trimIndent()
 
     private fun ticketmasterPayload(): String =
         """

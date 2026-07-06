@@ -115,6 +115,11 @@ private class IosAudioPlayer(
     private var crossfadeJob: Job? = null
     private var crossfadeGeneration = -1
     private var crossfadeEqualizerTap: IosEqualizerTap? = null
+    private var gaplessPlayer: AVPlayer? = null
+    private var gaplessItem: AVPlayerItem? = null
+    private var gaplessAsset: AVURLAsset? = null
+    private var gaplessGeneration = -1
+    private var gaplessTrackId: String? = null
     private var equalizerTap: IosEqualizerTap? = null
     private var equalizerTapTrackLoadRequested = false
     private var equalizerInstallSuppressedForCurrentItem = false
@@ -129,6 +134,7 @@ private class IosAudioPlayer(
     override fun stopCurrentPlaybackImmediately() {
         retryJob?.cancel()
         stopIosCrossfade()
+        stopIosGapless()
         player?.pause()
     }
 
@@ -149,6 +155,7 @@ private class IosAudioPlayer(
         retryCount = 0
         retryJob?.cancel()
         stopIosCrossfade()
+        stopIosGapless()
         clearObservers()
         equalizerTap = null
         equalizerTapTrackLoadRequested = false
@@ -175,6 +182,7 @@ private class IosAudioPlayer(
     override fun pause() {
         retryJob?.cancel()
         stopIosCrossfade()
+        stopIosGapless()
         player?.pause()
     }
 
@@ -184,6 +192,7 @@ private class IosAudioPlayer(
 
     override fun seek(positionMs: Long) {
         stopIosCrossfade()
+        stopIosGapless()
         val avPlayer = player ?: return
         val seconds = positionMs.coerceAtLeast(0L) / 1000.0
         val time = CMTimeMakeWithSeconds(seconds, NSEC_PER_SEC.toInt())
@@ -194,6 +203,7 @@ private class IosAudioPlayer(
         val v = volume.coerceIn(0f, 1f)
         player?.volume = v
         crossfadePlayer?.volume = v
+        gaplessPlayer?.volume = v
     }
 
     override fun applyEqualizer(profile: EqualizerProfile) {
@@ -204,6 +214,78 @@ private class IosAudioPlayer(
         val asset = currentAsset
         if (item != null && asset != null && equalizerTap == null && !equalizerInstallSuppressedForCurrentItem) {
             installEqualizerTap(item, asset, allowTrackLoad = true)
+        }
+    }
+
+    override fun startGaplessPrepareOnPlatform(
+        queue: List<Track>,
+        targetIndex: Int,
+        track: Track,
+        generation: Int,
+    ): Boolean {
+        if (targetIndex !in queue.indices || player == null) return false
+        val uri = track.localUri?.takeIf { it.isNotBlank() } ?: track.streamUrl.takeIf { it.isNotBlank() } ?: return false
+        val url = NSURL.URLWithString(uri) ?: return false
+        stopIosGapless()
+        gaplessGeneration = generation
+        gaplessTrackId = track.id
+        val asset = AVURLAsset.URLAssetWithURL(url, options = null)
+        val item = if (isLiveStream(uri) || track.id.startsWith("radio:")) {
+            AVPlayerItem(asset = asset)
+        } else {
+            AVPlayerItem(asset = asset, automaticallyLoadedAssetKeys = listOf(IosAssetTracksKey))
+        }
+        item.preferredForwardBufferDuration = GaplessPreferredForwardBufferSeconds
+        val prepared = AVPlayer()
+        prepared.automaticallyWaitsToMinimizeStalling = true
+        prepared.volume = effectiveOutputVolume()
+        prepared.replaceCurrentItemWithPlayerItem(item)
+        gaplessPlayer = prepared
+        gaplessItem = item
+        gaplessAsset = asset
+        return true
+    }
+
+    override fun commitGaplessPreparedOnPlatform(
+        queue: List<Track>,
+        targetIndex: Int,
+        track: Track,
+        generation: Int,
+    ): Boolean {
+        if (gaplessGeneration != generation || gaplessTrackId != track.id) return false
+        val incoming = gaplessPlayer ?: return false
+        val item = gaplessItem ?: return false
+        val asset = gaplessAsset ?: return false
+        val uri = track.localUri?.takeIf { it.isNotBlank() } ?: track.streamUrl.takeIf { it.isNotBlank() } ?: return false
+        clearObservers()
+        player?.pause()
+        player?.replaceCurrentItemWithPlayerItem(null)
+        player = incoming
+        currentUri = uri
+        currentAsset = asset
+        lastKnownPositionMs = 0L
+        retryGeneration = generation
+        retryCount = 0
+        equalizerTap = null
+        equalizerTapTrackLoadRequested = false
+        equalizerInstallSuppressedForCurrentItem = false
+        gaplessPlayer = null
+        gaplessItem = null
+        gaplessAsset = null
+        gaplessGeneration = -1
+        gaplessTrackId = null
+        installEqualizerTap(item, asset, allowTrackLoad = true)
+        observePlayback(incoming, item, generation)
+        incoming.seekToTime(CMTimeMakeWithSeconds(0.0, NSEC_PER_SEC.toInt()))
+        if (playWhenReady) {
+            incoming.play()
+        }
+        return true
+    }
+
+    override fun cancelGaplessPrepareOnPlatform(generation: Int) {
+        if (gaplessGeneration == generation) {
+            stopIosGapless()
         }
     }
 
@@ -402,6 +484,16 @@ private class IosAudioPlayer(
         player?.volume = effectiveOutputVolume()
     }
 
+    private fun stopIosGapless() {
+        gaplessPlayer?.pause()
+        gaplessPlayer?.replaceCurrentItemWithPlayerItem(null)
+        gaplessPlayer = null
+        gaplessItem = null
+        gaplessAsset = null
+        gaplessGeneration = -1
+        gaplessTrackId = null
+    }
+
     private fun clearEndObserver() {
         endObserver?.let { token -> NSNotificationCenter.defaultCenter.removeObserver(token) }
         endObserver = null
@@ -557,7 +649,7 @@ private class IosAudioPlayer(
             queue = NSOperationQueue.mainQueue,
         ) { _ ->
             if (!isPlayRequestCurrent(generation)) return@addObserverForName
-            next()
+            advanceAfterPlatformTrackEnded(generation)
         }
         stalledObserver = NSNotificationCenter.defaultCenter.addObserverForName(
             name = AVPlayerItemPlaybackStalledNotification,
@@ -662,6 +754,7 @@ private class IosAudioPlayer(
     private companion object {
         // Avoid asking AVPlayer to retain very large forward buffers on device.
         const val PreferredForwardBufferSeconds = 60.0
+        const val GaplessPreferredForwardBufferSeconds = 5.0
         const val MaxStreamRetryCount = 5
         const val StreamRetryBaseDelayMs = 1_000L
         const val IosAssetTracksKey = "tracks"

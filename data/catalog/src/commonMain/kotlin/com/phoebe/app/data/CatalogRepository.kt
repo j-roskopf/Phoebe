@@ -2828,18 +2828,35 @@ class CatalogRepository(
         val batchMutex = Mutex()
         val progressMutex = Mutex()
         val incompleteMutex = Mutex()
+        val indexedParentsMutex = Mutex()
+        val indexedTrackIdsByParent = linkedMapOf<String, LinkedHashSet<String>>()
         var loadedTrackEstimate = firstPage.tracks.size
         var incomplete = false
+
+        suspend fun rememberIndexedParents(tracks: List<Track>) {
+            val snapshot = mutableCatalog.value
+            val parentTrackIds = tracks.mapNotNull { track ->
+                resolveIndexedTrackParentId(track, snapshot)?.let { parentId -> parentId to track.id }
+            }
+            if (parentTrackIds.isEmpty()) return
+            indexedParentsMutex.withLock {
+                parentTrackIds.forEach { (parentId, trackId) ->
+                    indexedTrackIdsByParent.getOrPut(parentId) { linkedSetOf() }.add(trackId)
+                }
+            }
+        }
 
         suspend fun flushBatch(publishToMemory: Boolean) {
             val batch = batchMutex.withLock {
                 if (pendingBatch.isEmpty()) return
                 pendingBatch.toList().also { pendingBatch.clear() }
             }
+            val prefixedBatch = batch.map { it.withPlexPrefix() }
             if (publishToMemory) {
                 publishIndexedPlexTracks(batch)
             }
-            runCatalogDbWrite { persistTrackBatch(batch.map { it.withPlexPrefix() }) }
+            rememberIndexedParents(prefixedBatch)
+            runCatalogDbWrite { persistTrackBatch(prefixedBatch) }
         }
 
         suspend fun enqueueTracks(tracks: List<Track>) {
@@ -2926,10 +2943,19 @@ class CatalogRepository(
         publisherJob.cancel()
         progressJob.cancel()
         flushBatch(publishToMemory = true)
+        val complete = !incompleteMutex.withLock { incomplete }
+        if (complete) {
+            val indexedParents = indexedParentsMutex.withLock {
+                indexedTrackIdsByParent.mapValues { (_, trackIds) -> trackIds.toList() }
+            }
+            trace?.disk("replaceIndexedPlexTrackParents") {
+                runCatalogDbWrite { replaceIndexedTrackParents(indexedParents) }
+            } ?: runCatalogDbWrite { replaceIndexedTrackParents(indexedParents) }
+        }
         trace?.disk("hydrateInMemoryTracksFromDatabase") {
             hydrateInMemoryTracksFromDatabase(preserveFrom = preserveTracksFrom)
         } ?: hydrateInMemoryTracksFromDatabase(preserveFrom = preserveTracksFrom)
-        !incompleteMutex.withLock { incomplete }
+        complete
     }
 
     private suspend fun plexTrackIndexPageOrNull(
@@ -7547,6 +7573,23 @@ class CatalogRepository(
                         trackId = trackId,
                         position = index.toLong(),
                         playlistItemId = mergedTrack?.playlistItemId,
+                    )
+                }
+            }
+        }
+    }
+
+    private suspend fun replaceIndexedTrackParents(indexedTrackIdsByParent: Map<String, List<String>>) {
+        if (indexedTrackIdsByParent.isEmpty()) return
+        database.transaction {
+            indexedTrackIdsByParent.forEach { (parentId, trackIds) ->
+                database.catalogQueries.deleteTrackParentsForParent(parentId)
+                trackIds.distinct().forEachIndexed { index, trackId ->
+                    database.catalogQueries.upsertTrackParent(
+                        parentId = parentId,
+                        trackId = trackId,
+                        position = index.toLong(),
+                        playlistItemId = null,
                     )
                 }
             }

@@ -1,0 +1,3 @@
+UPDATE AppSettingsRow
+SET audioProcessingSettings = '{"gaplessEnabled":false,"crossfeedEnabled":false,"crossfeedAmount":0.35,"selectedOutputDeviceId":null,"exclusiveMode":false,"bitPerfectPreference":false}'
+WHERE audioProcessingSettings = '{"gaplessEnabled":true,"crossfeedEnabled":false,"crossfeedAmount":0.35,"selectedOutputDeviceId":null,"exclusiveMode":false,"bitPerfectPreference":false}';

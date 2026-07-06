@@ -185,6 +185,8 @@ internal fun DesktopPlayer(
     val radioRouteMode = browseState.radioRouteMode
     val artistRadioAvailability = browseState.artistRadioAvailability
     val artistEvents = browseState.artistEvents
+    val albumMusicBrainzMetadata = browseState.albumMusicBrainzMetadata
+    val artistMusicBrainzArtwork = browseState.artistMusicBrainzArtwork
     val radioStartingIds = browseState.radioStartingIds
     val internetRadioStartingIds = browseState.internetRadioStartingIds
     val appMessage = authSetupState.appMessage
@@ -264,6 +266,8 @@ internal fun DesktopPlayer(
     val onPlayArtistRadio = browseActions.onPlayArtistRadio
     val onLoadArtistEventAvailability = browseActions.onLoadArtistEventAvailability
     val onLoadArtistEvents = browseActions.onLoadArtistEvents
+    val onLoadAlbumMusicBrainzMetadata = browseActions.onLoadAlbumMusicBrainzMetadata
+    val onLoadArtistMusicBrainzArtwork = browseActions.onLoadArtistMusicBrainzArtwork
     val onArtistEvents = browseActions.onArtistEvents
     val onDownloadAlbum = browseActions.onDownloadAlbum
     val onDownloadPlaylist = browseActions.onDownloadPlaylist
@@ -279,6 +283,7 @@ internal fun DesktopPlayer(
     val onSeek = playbackActions.onSeek
     val onCast = playbackActions.onCast
     val onLyrics = playbackActions.onLyrics
+    val onUltimateGuitar = playbackActions.onUltimateGuitar
     val onEqualizerEnabled = playbackActions.onEqualizerEnabled
     val onEqualizerBandCount = playbackActions.onEqualizerBandCount
     val onEqualizerGain = playbackActions.onEqualizerGain
@@ -331,6 +336,7 @@ internal fun DesktopPlayer(
     val onPersistVolumeSettingsFromSettings = settingsActions.onPersistVolumeSettings
     val onVisualizerPresetFromSettings = settingsActions.onVisualizerPreset
     val onShowVisualizerInTvFrameFromSettings = settingsActions.onShowVisualizerInTvFrame
+    val onShowUltimateGuitarButtonFromSettings = settingsActions.onShowUltimateGuitarButton
     val onBlurredArtworkAppearance = settingsActions.onBlurredArtworkAppearance
     val onFullBleedDetailArtwork = settingsActions.onFullBleedDetailArtwork
     val onDownloadDirectory = settingsActions.onDownloadDirectory
@@ -514,6 +520,8 @@ internal fun DesktopPlayer(
                                             artistRadioAvailability = artistRadioAvailability[targetScreen.artist.id],
                                             artistRadioStarting = targetScreen.artist.id in radioStartingIds,
                                             artistEventsAvailable = artistEvents[targetScreen.artist.id]?.hasEvents == true,
+                                            musicBrainzArtwork = artistMusicBrainzArtwork[targetScreen.artist.id]
+                                                ?: com.phoebe.app.domain.MusicBrainzArtistArtworkLoadState.Idle,
                                             fullBleedArtwork = appSettings.fullBleedDetailArtwork,
                                         ),
                                         actions = ArtistDetailRouteActions(
@@ -526,6 +534,7 @@ internal fun DesktopPlayer(
                                             onDownload = onDownload,
                                             onDownloadArtist = onDownloadArtist,
                                             onProbeArtistRadio = onProbeArtistRadio,
+                                            onLoadMusicBrainzArtwork = onLoadArtistMusicBrainzArtwork,
                                             onPlayArtistRadio = onPlayArtistRadio,
                                             onArtistEvents = onArtistEvents,
                                             onArtist = onArtist,
@@ -555,6 +564,22 @@ internal fun DesktopPlayer(
                                     )
                                 }
                                 is AppScreen.AlbumDetail -> Box(Modifier.fillMaxSize()) {
+                                    val albumForMetadata = catalog.albums.firstOrNull { it.id == targetScreen.album.id }
+                                        ?: targetScreen.album
+                                    val albumTracks = catalog.tracksByParent[albumForMetadata.id].orEmpty()
+                                    val albumMusicBrainzTrackKey = albumTracks
+                                        .mapNotNull { it.musicBrainzReleaseId }
+                                        .distinct()
+                                        .joinToString("|")
+                                    LaunchedEffect(
+                                        albumForMetadata.id,
+                                        albumForMetadata.title,
+                                        albumForMetadata.artist,
+                                        albumForMetadata.year,
+                                        albumMusicBrainzTrackKey,
+                                    ) {
+                                        onLoadAlbumMusicBrainzMetadata(albumForMetadata, albumTracks)
+                                    }
                                     AlbumDetailRoute(
                                         state = AlbumDetailRouteState(
                                             album = targetScreen.album,
@@ -562,6 +587,8 @@ internal fun DesktopPlayer(
                                             libraryUi = libraryUi,
                                             catalogRefreshing = catalogRefreshing,
                                             searchQuery = searchQuery,
+                                            musicBrainzMetadata = albumMusicBrainzMetadata[albumForMetadata.id]
+                                                ?: com.phoebe.app.domain.MusicBrainzAlbumMetadataLoadState.Idle,
                                             fullBleedArtwork = appSettings.fullBleedDetailArtwork,
                                         ),
                                         actions = AlbumDetailRouteActions(
@@ -930,6 +957,7 @@ internal fun DesktopPlayer(
                                             onAudioProcessingSettings = settingsActions.onAudioProcessingSettings,
                                             onVisualizerPreset = onVisualizerPresetFromSettings,
                                             onShowVisualizerInTvFrame = onShowVisualizerInTvFrameFromSettings,
+                                            onShowUltimateGuitarButton = onShowUltimateGuitarButtonFromSettings,
                                             onBlurredArtworkAppearance = onBlurredArtworkAppearance,
                                             onFullBleedDetailArtwork = onFullBleedDetailArtwork,
                                             onTintedBackgroundGradient = settingsActions.onTintedBackgroundGradient,
@@ -1058,6 +1086,7 @@ internal fun DesktopPlayer(
                                 equalizerRemoteUnavailable = equalizerRemoteUnavailable,
                                 visualizerPreset = visualizerPreset,
                                 showVisualizerInTvFrame = showVisualizerInTvFrame,
+                                showUltimateGuitarButton = playbackState.showUltimateGuitarButton,
                                 compact = compact,
                                 lyricsVisible = section == BrowseSection.Lyrics && selectedPlaylistId == null,
                                 upNextVisible = showQueue && desktopUpNextExpanded,
@@ -1070,6 +1099,7 @@ internal fun DesktopPlayer(
                                 onVolume = onVolume,
                                 onSeek = onSeek,
                                 onLyrics = onLyrics,
+                                onUltimateGuitar = onUltimateGuitar,
                                 onEqualizerEnabled = onEqualizerEnabled,
                                 onEqualizerBandCount = onEqualizerBandCount,
                                 onEqualizerGain = onEqualizerGain,

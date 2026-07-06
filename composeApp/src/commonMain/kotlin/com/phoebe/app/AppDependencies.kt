@@ -18,6 +18,7 @@ import com.phoebe.app.data.ListenBrainzPlaybackReporter
 import com.phoebe.app.data.ListenBrainzService
 import com.phoebe.app.data.LyricsRepository
 import com.phoebe.app.data.MediaSourcesRepository
+import com.phoebe.app.data.MusicBrainzRepository
 import com.phoebe.app.data.MusicProviderRegistry
 import com.phoebe.app.data.NavidromePlayHistorySyncer
 import com.phoebe.app.data.PlayHistoryRepository
@@ -62,6 +63,7 @@ class AppDependencies(
     val libraryUiRepository: LibraryUiRepository,
     val libraryPreferencesService: LibraryPreferencesService,
     val lyricsRepository: LyricsRepository,
+    val musicBrainzRepository: MusicBrainzRepository,
     val playHistoryRepository: PlayHistoryRepository,
     val playlistService: PlaylistService,
     val radioRepository: RadioRepository,
@@ -155,6 +157,7 @@ class AppDependencies(
                 libraryUiRepository = services.libraryUiRepository,
                 libraryPreferencesService = services.libraryPreferencesService,
                 lyricsRepository = services.lyricsRepository,
+                musicBrainzRepository = services.musicBrainzRepository,
                 playHistoryRepository = services.playHistoryRepository,
                 playlistService = services.playlistService,
                 radioRepository = radioRepository,

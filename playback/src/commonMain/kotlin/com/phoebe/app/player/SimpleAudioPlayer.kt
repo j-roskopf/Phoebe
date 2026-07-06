@@ -2,6 +2,7 @@ package com.phoebe.app.player
 
 import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.AudioAnalysisSource
+import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.PlayerState
 import com.phoebe.app.domain.RepeatMode
@@ -45,10 +46,15 @@ abstract class SimpleAudioPlayer(
     private var crossfadeDurationMs = 0L
     private var crossfadeRequestKey: String? = null
     private var manualSeekCrossfadeSuppression: ManualSeekCrossfadeSuppression? = null
+    private var audioProcessingSettings = AudioProcessingSettings().normalized()
+    private var gaplessEnabled = false
+    private var gaplessPrepareRequest: GaplessPrepareRequest? = null
     protected var equalizerProfile: EqualizerProfile = EqualizerProfile.Default.normalized()
         private set
     protected val isCrossfadeConfigured: Boolean
         get() = crossfadeDurationMs > 0L
+    protected val isGaplessConfigured: Boolean
+        get() = gaplessEnabled && crossfadeDurationMs == 0L
 
     /** When false, a superseded or user-paused load must not start audible playback. */
     protected var playWhenReady = false
@@ -99,6 +105,7 @@ abstract class SimpleAudioPlayer(
 
         playGeneration++
         clearCrossfadeRequestState()
+        cancelGaplessPrepare()
         resetAudioAnalysis()
         playWhenReady = true
         val generation = playGeneration
@@ -141,6 +148,7 @@ abstract class SimpleAudioPlayer(
         val track = queue.getOrNull(index)
         val generation = ++playGeneration
         clearCrossfadeRequestState()
+        cancelGaplessPrepare()
         resetAudioAnalysis()
         playWhenReady = false
         stopProgressTicker()
@@ -174,6 +182,7 @@ abstract class SimpleAudioPlayer(
         val track = queue.getOrNull(index)
         playGeneration++
         clearCrossfadeRequestState()
+        cancelGaplessPrepare()
         resetAudioAnalysis()
         playWhenReady = false
         stopProgressTicker()
@@ -200,6 +209,7 @@ abstract class SimpleAudioPlayer(
         if (state.isBuffering) {
             playWhenReady = false
             mutableState.value = state.copy(isPlaying = false, isBuffering = false)
+            cancelGaplessPrepare()
             pause()
             stopCurrentPlaybackImmediately()
             return
@@ -212,6 +222,7 @@ abstract class SimpleAudioPlayer(
             startProgressTicker()
         } else {
             pause()
+            cancelGaplessPrepare()
             stopProgressTicker()
         }
     }
@@ -225,6 +236,7 @@ abstract class SimpleAudioPlayer(
         val keep = (state.currentIndex + 1).coerceAtMost(state.queue.size)
         val nextQueue = state.queue.subList(0, keep).toList()
         mutableState.value = state.copy(queue = nextQueue)
+        cancelGaplessPrepare()
         onQueueEdited(nextQueue, state.currentIndex)
     }
 
@@ -232,6 +244,7 @@ abstract class SimpleAudioPlayer(
         playGeneration++
         playWhenReady = false
         clearCrossfadeRequestState()
+        cancelGaplessPrepare()
         resetAudioAnalysis()
         stopProgressTicker()
         stopPlaybackStartupWatchdog()
@@ -248,6 +261,7 @@ abstract class SimpleAudioPlayer(
         val newCurrent = if (state.currentIndex < 0) state.currentIndex
         else newQueue.indexOfFirst { it.id == state.currentTrack?.id }.takeIf { it >= 0 } ?: state.currentIndex
         mutableState.value = state.copy(queue = newQueue, currentIndex = newCurrent)
+        cancelGaplessPrepare()
         onQueueEdited(newQueue, newCurrent)
     }
 
@@ -259,6 +273,7 @@ abstract class SimpleAudioPlayer(
         if (additions.isEmpty()) return
         val nextQueue = state.queue + additions
         mutableState.value = state.copy(queue = nextQueue)
+        cancelGaplessPrepare()
         onQueueEdited(nextQueue, state.currentIndex)
     }
 
@@ -273,6 +288,7 @@ abstract class SimpleAudioPlayer(
         val moved = newQueue.removeAt(base + fromIndex)
         newQueue.add(base + target, moved)
         mutableState.value = state.copy(queue = newQueue)
+        cancelGaplessPrepare()
         onQueueEdited(newQueue, state.currentIndex)
     }
 
@@ -282,6 +298,7 @@ abstract class SimpleAudioPlayer(
         if (index !in state.upNext.indices) return
         val newQueue = state.queue.toMutableList().also { it.removeAt(base + index) }
         mutableState.value = state.copy(queue = newQueue)
+        cancelGaplessPrepare()
         onQueueEdited(newQueue, state.currentIndex)
     }
 
@@ -338,6 +355,7 @@ abstract class SimpleAudioPlayer(
             null
         }
         mutableState.value = current.copy(positionMs = boundedPositionMs)
+        cancelGaplessPrepare()
         seek(boundedPositionMs)
     }
 
@@ -346,23 +364,27 @@ abstract class SimpleAudioPlayer(
         if (enabled == state.shuffle) return
         if (!enabled) {
             mutableState.value = state.copy(shuffle = false)
+            cancelGaplessPrepare()
             return
         }
         // Pre-shuffle just the upcoming portion of the queue so the current track
         // keeps playing and the user can see the new order in Up Next.
         if (state.currentIndex < 0 || state.currentIndex >= state.queue.lastIndex) {
             mutableState.value = state.copy(shuffle = true)
+            cancelGaplessPrepare()
             return
         }
         val head = state.queue.subList(0, state.currentIndex + 1).toList()
         val tail = state.queue.subList(state.currentIndex + 1, state.queue.size).shuffled()
         val nextQueue = head + tail
         mutableState.value = state.copy(shuffle = true, queue = nextQueue)
+        cancelGaplessPrepare()
         onQueueEdited(nextQueue, state.currentIndex)
     }
 
     override fun setRepeat(mode: RepeatMode) {
         mutableState.value = mutableState.value.copy(repeat = mode)
+        cancelGaplessPrepare()
     }
 
     override fun setVolume(volume: Float) {
@@ -377,13 +399,24 @@ abstract class SimpleAudioPlayer(
         crossfadeDurationMs = durationMs.coerceIn(0L, MaxCrossfadeDurationMs)
         if (crossfadeDurationMs == 0L) {
             clearCrossfadeRequestState()
+        } else {
+            cancelGaplessPrepare()
         }
+    }
+
+    override fun setAudioProcessing(settings: AudioProcessingSettings) {
+        val normalized = settings.normalized()
+        if (audioProcessingSettings == normalized) return
+        audioProcessingSettings = normalized
+        gaplessEnabled = normalized.gaplessEnabled
+        cancelGaplessPrepare()
     }
 
     override fun setEqualizer(profile: EqualizerProfile) {
         val normalized = profile.normalized()
         if (equalizerProfile == normalized) return
         equalizerProfile = normalized
+        cancelGaplessPrepare()
         applyEqualizer(normalized)
     }
 
@@ -476,6 +509,7 @@ abstract class SimpleAudioPlayer(
             stopProgressTicker()
         }
         maybeStartCrossfade(generation)
+        maybeStartGapless(generation)
     }
 
     protected fun publishAudioAnalysis(frame: AudioAnalysisFrame) {
@@ -556,6 +590,7 @@ abstract class SimpleAudioPlayer(
             playbackErrorSerial = current.playbackErrorSerial + 1,
             playbackErrorMessage = message,
         )
+        cancelGaplessPrepare()
         stopProgressTicker()
     }
 
@@ -568,6 +603,7 @@ abstract class SimpleAudioPlayer(
             isPlaying = false,
             playbackErrorMessage = null,
         )
+        cancelGaplessPrepare()
         stopProgressTicker()
     }
 
@@ -625,6 +661,31 @@ abstract class SimpleAudioPlayer(
         generation: Int,
     ): Boolean = false
 
+    protected open fun startGaplessPrepareOnPlatform(
+        queue: List<Track>,
+        targetIndex: Int,
+        track: Track,
+        generation: Int,
+    ): Boolean = false
+
+    protected open fun commitGaplessPreparedOnPlatform(
+        queue: List<Track>,
+        targetIndex: Int,
+        track: Track,
+        generation: Int,
+    ): Boolean = false
+
+    protected open fun cancelGaplessPrepareOnPlatform(generation: Int) = Unit
+
+    protected fun advanceAfterPlatformTrackEnded(generation: Int = playGeneration) {
+        if (commitPreparedGapless(generation)) return
+        advanceNext(allowCrossfade = false)
+    }
+
+    protected fun clearGaplessPrepareState() {
+        gaplessPrepareRequest = null
+    }
+
     protected fun adoptCrossfadeTarget(
         queue: List<Track>,
         targetIndex: Int,
@@ -647,6 +708,31 @@ abstract class SimpleAudioPlayer(
             playbackErrorMessage = null,
         )
         clearCrossfadeRequestState()
+        cancelGaplessPrepare()
+    }
+
+    protected fun adoptGaplessTarget(
+        queue: List<Track>,
+        targetIndex: Int,
+        positionMs: Long,
+        generation: Int,
+    ) {
+        if (!isPlayRequestCurrent(generation)) return
+        val track = queue.getOrNull(targetIndex) ?: return
+        val boundedPositionMs = positionMs.coerceAtLeast(0L).let { position ->
+            if (track.durationMs > 0L) position.coerceAtMost(track.durationMs) else position
+        }
+        mutableState.value = mutableState.value.copy(
+            queue = queue,
+            currentIndex = targetIndex,
+            isPlaying = playWhenReady,
+            isBuffering = false,
+            positionMs = boundedPositionMs,
+            bufferedPositionMs = boundedPositionMs,
+            durationMs = track.durationMs,
+            playbackErrorMessage = null,
+        )
+        clearGaplessPrepareState()
     }
 
     protected fun effectiveOutputVolume(): Float {
@@ -665,6 +751,7 @@ abstract class SimpleAudioPlayer(
                 val nextPosition = (current.positionMs + 1000L).coerceAtMost(current.durationMs)
                 mutableState.value = current.copy(positionMs = nextPosition)
                 maybeStartCrossfade(activePlayGeneration)
+                maybeStartGapless(activePlayGeneration)
                 if (nextPosition >= current.durationMs && current.durationMs > 0L) break
             }
         }
@@ -749,6 +836,75 @@ abstract class SimpleAudioPlayer(
         return false
     }
 
+    private fun maybeStartGapless(generation: Int) {
+        if (!isGaplessConfigured || !isPlayRequestCurrent(generation)) return
+        val current = mutableState.value
+        if (!current.isPlaying ||
+            current.isBuffering ||
+            current.durationMs <= 0L ||
+            current.currentIndex !in current.queue.indices
+        ) {
+            return
+        }
+        val remainingMs = current.durationMs - current.positionMs
+        if (remainingMs > GaplessPrepareWindowMs) return
+        val targetIndex = gaplessTargetIndex(current) ?: return
+        val targetTrack = current.queue.getOrNull(targetIndex)?.takeIf { it.isGaplessCandidate() } ?: return
+        val existing = gaplessPrepareRequest
+        if (existing?.matches(generation, current.currentIndex, targetIndex, targetTrack.id) == true) return
+        if (existing != null) cancelGaplessPrepare()
+        val accepted = startGaplessPrepareOnPlatform(current.queue, targetIndex, targetTrack, generation)
+        if (accepted) {
+            gaplessPrepareRequest = GaplessPrepareRequest(
+                generation = generation,
+                sourceIndex = current.currentIndex,
+                targetIndex = targetIndex,
+                targetTrackId = targetTrack.id,
+            )
+        }
+    }
+
+    private fun gaplessTargetIndex(current: PlayerState): Int? =
+        when (current.repeat) {
+            RepeatMode.One -> current.currentIndex
+            RepeatMode.All -> if (current.currentIndex >= current.queue.lastIndex) 0 else current.currentIndex + 1
+            RepeatMode.Off -> (current.currentIndex + 1).takeIf { it <= current.queue.lastIndex }
+        }
+
+    protected fun commitPreparedGapless(generation: Int): Boolean {
+        val request = gaplessPrepareRequest ?: return false
+        val current = mutableState.value
+        val targetTrack = current.queue.getOrNull(request.targetIndex)
+        if (!isGaplessConfigured ||
+            !request.matches(generation, current.currentIndex, request.targetIndex, targetTrack?.id)
+        ) {
+            cancelGaplessPrepare()
+            return false
+        }
+        if (targetTrack == null || !targetTrack.isGaplessCandidate()) {
+            cancelGaplessPrepare()
+            return false
+        }
+        val committed = commitGaplessPreparedOnPlatform(current.queue, request.targetIndex, targetTrack, generation)
+        if (!committed) {
+            clearGaplessPrepareState()
+            return false
+        }
+        adoptGaplessTarget(
+            queue = current.queue,
+            targetIndex = request.targetIndex,
+            positionMs = 0L,
+            generation = generation,
+        )
+        return true
+    }
+
+    private fun cancelGaplessPrepare() {
+        val request = gaplessPrepareRequest ?: return
+        gaplessPrepareRequest = null
+        cancelGaplessPrepareOnPlatform(request.generation)
+    }
+
     private fun clearCrossfadeRequestState() {
         crossfadeRequestKey = null
         manualSeekCrossfadeSuppression = null
@@ -767,6 +923,7 @@ abstract class SimpleAudioPlayer(
 
     private companion object {
         const val MaxCrossfadeDurationMs = 12_000L
+        const val GaplessPrepareWindowMs = 3_000L
     }
 }
 
@@ -776,4 +933,36 @@ private data class ManualSeekCrossfadeSuppression(
 ) {
     fun matches(generation: Int, trackId: String?): Boolean =
         this.generation == generation && this.trackId == trackId
+}
+
+private data class GaplessPrepareRequest(
+    val generation: Int,
+    val sourceIndex: Int,
+    val targetIndex: Int,
+    val targetTrackId: String,
+) {
+    fun matches(
+        generation: Int,
+        sourceIndex: Int,
+        targetIndex: Int,
+        targetTrackId: String?,
+    ): Boolean =
+        this.generation == generation &&
+            this.sourceIndex == sourceIndex &&
+            this.targetIndex == targetIndex &&
+            this.targetTrackId == targetTrackId
+}
+
+private fun Track.isGaplessCandidate(): Boolean {
+    if (durationMs <= 0L) return false
+    if (id.startsWith("radio:")) return false
+    val uri = localUri?.takeIf { it.isNotBlank() } ?: streamUrl.takeIf { it.isNotBlank() } ?: return false
+    val lower = uri.lowercase()
+    return !lower.contains(".m3u8") &&
+        !lower.contains(".m3u") &&
+        !lower.contains("/live") &&
+        !lower.contains("://radio.") &&
+        !lower.contains(".radio.") &&
+        !lower.contains("/radio/") &&
+        !lower.endsWith("/radio")
 }

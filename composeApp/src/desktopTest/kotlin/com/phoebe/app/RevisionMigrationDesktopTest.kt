@@ -49,8 +49,10 @@ class RevisionMigrationDesktopTest {
         assertTrue(settings.listenBrainzSettings.contains("\"enabled\":false"))
         assertEquals("Artwork", settings.nowPlayingVisualizerPreset)
         assertEquals(0L, settings.nowPlayingVisualizerInTvFrame)
+        assertEquals(1L, settings.showUltimateGuitarButton)
         assertEquals(1L, settings.blurredArtworkAppearance)
         assertEquals(1L, settings.fullBleedDetailArtwork)
+        assertTrue(settings.audioProcessingSettings.contains("\"gaplessEnabled\":false"))
         assertEquals(PhoebeDatabase.Schema.version, readUserVersion(dbFile))
         assertEquals("18", revFile.readText().trim())
     }

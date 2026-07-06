@@ -22,6 +22,8 @@ import com.phoebe.app.domain.LibraryTab
 import com.phoebe.app.domain.LyricsLoadState
 import com.phoebe.app.domain.MediaProviderType
 import com.phoebe.app.domain.MusicLibrary
+import com.phoebe.app.domain.MusicBrainzAlbumMetadataLoadState
+import com.phoebe.app.domain.MusicBrainzArtistArtworkLoadState
 import com.phoebe.app.domain.MobileBottomTab
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.Playlist
@@ -320,6 +322,12 @@ class AppState(
     val artistRadioAvailability: StateFlow<Map<String, ArtistRadioAvailability>> = mutableArtistRadioAvailability
     private val mutableArtistEvents = MutableStateFlow<Map<String, ArtistEventsLoadState>>(emptyMap())
     val artistEvents: StateFlow<Map<String, ArtistEventsLoadState>> = mutableArtistEvents.asStateFlow()
+    private val mutableAlbumMusicBrainzMetadata = MutableStateFlow<Map<String, MusicBrainzAlbumMetadataLoadState>>(emptyMap())
+    val albumMusicBrainzMetadata: StateFlow<Map<String, MusicBrainzAlbumMetadataLoadState>> =
+        mutableAlbumMusicBrainzMetadata.asStateFlow()
+    private val mutableArtistMusicBrainzArtwork = MutableStateFlow<Map<String, MusicBrainzArtistArtworkLoadState>>(emptyMap())
+    val artistMusicBrainzArtwork: StateFlow<Map<String, MusicBrainzArtistArtworkLoadState>> =
+        mutableArtistMusicBrainzArtwork.asStateFlow()
     private val mutableEventsBackendHealth = MutableStateFlow(EventsBackendHealthState())
     val eventsBackendHealth: StateFlow<EventsBackendHealthState> = mutableEventsBackendHealth.asStateFlow()
 
@@ -364,6 +372,8 @@ class AppState(
     private var lastPlaybackHistoryRecord = PlaybackHistoryRecord()
     private var pendingLastFmAuth: PendingLastFmAuth? = null
     private val artistEventJobs = mutableMapOf<String, Job>()
+    private val albumMusicBrainzJobs = mutableMapOf<String, Job>()
+    private val artistMusicBrainzArtworkJobs = mutableMapOf<String, Job>()
     private var disposed = false
 
     fun dispose() {
@@ -381,6 +391,9 @@ class AppState(
             popularMixSeedBuildDeferred,
             topTracksMixBuildDeferred,
         ).forEach { it.cancel() }
+        albumMusicBrainzJobs.values.toList().forEach { it.cancel() }
+        artistMusicBrainzArtworkJobs.values.toList().forEach { it.cancel() }
+        artistEventJobs.values.toList().forEach { it.cancel() }
         activeDownloadJobs.toList().forEach { it.cancel() }
         catalogRefreshJob = null
         playHistorySyncJob = null
@@ -550,6 +563,8 @@ class AppState(
                 dependencies.audioPlayer.setCrossfadeDurationMs(settings.crossfadeSeconds * 1_000L)
                 dependencies.audioPlayer.setAudioProcessing(settings.audioProcessing)
                 mutableArtistEvents.value = emptyMap()
+                mutableAlbumMusicBrainzMetadata.value = emptyMap()
+                mutableArtistMusicBrainzArtwork.value = emptyMap()
                 if (settings.persistEqualizerSettings) {
                     val profile = settings.equalizerProfile.normalized()
                     if (mutableEqualizerProfile.value != profile) {
@@ -3034,6 +3049,10 @@ class AppState(
         dependencies.settingsService.setNowPlayingVisualizerInTvFrame(enabled)
     }
 
+    fun setShowUltimateGuitarButton(enabled: Boolean) = scope.launch {
+        dependencies.settingsService.setShowUltimateGuitarButton(enabled)
+    }
+
     fun setBlurredArtworkAppearance(enabled: Boolean) = scope.launch {
         dependencies.settingsService.setBlurredArtworkAppearance(enabled)
     }
@@ -3090,6 +3109,87 @@ class AppState(
                 }
             } finally {
                 artistEventJobs.remove(artist.id)
+            }
+        }
+    }
+
+    fun loadAlbumMusicBrainzMetadata(album: Album, tracks: List<Track>, force: Boolean = false) {
+        val existing = mutableAlbumMusicBrainzMetadata.value[album.id]
+        if (!force && existing != null && !existing.loading) return
+        if (albumMusicBrainzJobs[album.id]?.isActive == true) return
+        val settings = appSettings.value.events.normalized()
+        mutableAlbumMusicBrainzMetadata.update { current ->
+            current + (album.id to MusicBrainzAlbumMetadataLoadState(loading = true, metadata = existing?.metadata))
+        }
+        albumMusicBrainzJobs[album.id] = scope.launch {
+            try {
+                val response = dependencies.musicBrainzRepository.albumMetadata(
+                    album = album,
+                    tracks = tracks,
+                    settings = settings,
+                )
+                mutableAlbumMusicBrainzMetadata.update { current ->
+                    current + (album.id to MusicBrainzAlbumMetadataLoadState(metadata = response))
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                mutableAlbumMusicBrainzMetadata.update { current ->
+                    current + (
+                        album.id to MusicBrainzAlbumMetadataLoadState(
+                            metadata = existing?.metadata,
+                            error = error.message ?: "Couldn't load MusicBrainz album metadata.",
+                        )
+                    )
+                }
+            } finally {
+                albumMusicBrainzJobs.remove(album.id)
+            }
+        }
+    }
+
+    fun loadArtistMusicBrainzArtwork(artist: Artist, force: Boolean = false) {
+        val existing = mutableArtistMusicBrainzArtwork.value[artist.id]
+        if (!force && existing != null && !existing.loading) return
+        if (artistMusicBrainzArtworkJobs[artist.id]?.isActive == true) return
+        val settings = appSettings.value.events.normalized()
+        mutableArtistMusicBrainzArtwork.update { current ->
+            current + (artist.id to MusicBrainzArtistArtworkLoadState(loading = true, response = existing?.response))
+        }
+        artistMusicBrainzArtworkJobs[artist.id] = scope.launch {
+            try {
+                val response = withTimeoutOrNull(ArtistMusicBrainzArtworkTimeoutMs) {
+                    dependencies.musicBrainzRepository.artistArtwork(
+                        artist = artist.title,
+                        excludedArtworkUrls = listOfNotNull(artist.thumbUrl),
+                        settings = settings,
+                    )
+                }
+                mutableArtistMusicBrainzArtwork.update { current ->
+                    current + (
+                        artist.id to if (response == null) {
+                            MusicBrainzArtistArtworkLoadState(
+                                response = existing?.response,
+                                error = "MusicBrainz artwork lookup timed out.",
+                            )
+                        } else {
+                            MusicBrainzArtistArtworkLoadState(response = response)
+                        }
+                    )
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                mutableArtistMusicBrainzArtwork.update { current ->
+                    current + (
+                        artist.id to MusicBrainzArtistArtworkLoadState(
+                            response = existing?.response,
+                            error = error.message ?: "Couldn't load MusicBrainz artist artwork.",
+                        )
+                    )
+                }
+            } finally {
+                artistMusicBrainzArtworkJobs.remove(artist.id)
             }
         }
     }
@@ -4005,6 +4105,7 @@ private const val PopularMixSeedTrackLimit = 50
 private const val PopularMixTrackLimit = 500
 private const val PopularMixShuffleChunkSize = 50
 private const val MixProviderLoadTimeoutMs = 20_000L
+private const val ArtistMusicBrainzArtworkTimeoutMs = 35_000L
 
 private const val PlayHistoryCatalogResolveTimeoutMs = 1_500L
 

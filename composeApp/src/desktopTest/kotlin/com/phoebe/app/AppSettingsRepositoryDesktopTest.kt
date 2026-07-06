@@ -59,6 +59,7 @@ class AppSettingsRepositoryDesktopTest {
             setPersistEqualizerSettings(true, EqualizerProfile.Default.normalized().withGain(7, 4.5f))
             setPersistVolumeSettings(true, 0.42f)
             setNowPlayingVisualizerInTvFrame(true)
+            setShowUltimateGuitarButton(false)
             setBlurredArtworkAppearance(false)
             setFullBleedDetailArtwork(false)
             setTintedBackgroundGradient(false)
@@ -74,6 +75,7 @@ class AppSettingsRepositoryDesktopTest {
         assertEquals(0.42f, restored.settings.value.savedVolume)
         assertEquals(4.5f, restored.settings.value.equalizerProfile.gainsDb[7])
         assertTrue(restored.settings.value.nowPlayingVisualizerInTvFrame)
+        assertFalse(restored.settings.value.showUltimateGuitarButton)
         assertFalse(restored.settings.value.blurredArtworkAppearance)
         assertFalse(restored.settings.value.fullBleedDetailArtwork)
         assertFalse(restored.settings.value.tintedBackgroundGradient)
@@ -137,6 +139,34 @@ class AppSettingsRepositoryDesktopTest {
         repository.setNotifyWhenDownloadFinishes(false)
         assertFalse(repository.settings.value.scanLibraryOnLaunch)
         assertFalse(repository.settings.value.notifyWhenDownloadFinishes)
+    }
+
+    @Test
+    fun gaplessDefaultsOffForNewSettings() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val repository = AppSettingsRepository(db).apply { restore() }
+
+        assertFalse(repository.settings.value.audioProcessing.gaplessEnabled)
+    }
+
+    @Test
+    fun crossfadeAndGaplessSettingsAreMutuallyExclusive() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val repository = AppSettingsRepository(db)
+
+        repository.setAudioProcessingSettings(AudioProcessingSettings(gaplessEnabled = true))
+        assertTrue(repository.settings.value.audioProcessing.gaplessEnabled)
+        assertEquals(0, repository.settings.value.crossfadeSeconds)
+
+        repository.setCrossfadeSeconds(4)
+        assertEquals(4, repository.settings.value.crossfadeSeconds)
+        assertFalse(repository.settings.value.audioProcessing.gaplessEnabled)
+
+        repository.setAudioProcessingSettings(AudioProcessingSettings(gaplessEnabled = true))
+        assertEquals(0, repository.settings.value.crossfadeSeconds)
+        assertTrue(repository.settings.value.audioProcessing.gaplessEnabled)
     }
 
     @Test

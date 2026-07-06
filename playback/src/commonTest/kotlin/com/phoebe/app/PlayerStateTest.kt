@@ -1,5 +1,7 @@
 package com.phoebe.app
 
+import com.phoebe.app.domain.AudioProcessingSettings
+import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.RepeatMode
 import com.phoebe.app.player.SimpleAudioPlayer
@@ -677,6 +679,145 @@ class PlayerStateTest {
     }
 
     @Test
+    fun gaplessPreparesOnlyInsideEndWindow() {
+        val player = GaplessTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+            Track("t2", "Two", "Artist", "Album", 90_000, "http://b", ""),
+        )
+
+        player.setAudioProcessing(AudioProcessingSettings(gaplessEnabled = true))
+        player.play(tracks, 0)
+        player.platformPlayback(positionMs = 56_500, durationMs = 60_000, bufferedPositionMs = 60_000)
+
+        assertEquals(0, player.gaplessStarts)
+
+        player.platformPlayback(positionMs = 57_000, durationMs = 60_000, bufferedPositionMs = 60_000)
+
+        assertEquals(1, player.gaplessStarts)
+        assertEquals(1, player.lastGaplessTargetIndex)
+    }
+
+    @Test
+    fun gaplessDoesNotPrepareWhenCrossfadeIsConfigured() {
+        val player = GaplessTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+            Track("t2", "Two", "Artist", "Album", 90_000, "http://b", ""),
+        )
+
+        player.setAudioProcessing(AudioProcessingSettings(gaplessEnabled = true))
+        player.setCrossfadeDurationMs(6_000)
+        player.play(tracks, 0)
+        player.platformPlayback(positionMs = 58_000, durationMs = 60_000, bufferedPositionMs = 60_000)
+
+        assertEquals(0, player.gaplessStarts)
+    }
+
+    @Test
+    fun pauseAndSeekCancelPreparedGaplessTrack() {
+        val player = GaplessTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+            Track("t2", "Two", "Artist", "Album", 90_000, "http://b", ""),
+        )
+
+        player.setAudioProcessing(AudioProcessingSettings(gaplessEnabled = true))
+        player.play(tracks, 0)
+        player.platformPlayback(positionMs = 58_000, durationMs = 60_000, bufferedPositionMs = 60_000)
+
+        assertEquals(1, player.gaplessStarts)
+
+        player.togglePlayPause()
+
+        assertEquals(1, player.gaplessCancels)
+
+        player.togglePlayPause()
+        player.platformPlayback(positionMs = 58_500, durationMs = 60_000, bufferedPositionMs = 60_000)
+        player.seekTo(59_000)
+
+        assertEquals(2, player.gaplessCancels)
+    }
+
+    @Test
+    fun audioProcessingSettingsChangeCancelsPreparedGaplessTrack() {
+        val player = GaplessTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+            Track("t2", "Two", "Artist", "Album", 90_000, "http://b", ""),
+        )
+
+        player.setAudioProcessing(AudioProcessingSettings(gaplessEnabled = true))
+        player.play(tracks, 0)
+        player.platformPlayback(positionMs = 58_000, durationMs = 60_000, bufferedPositionMs = 60_000)
+
+        assertEquals(1, player.gaplessStarts)
+
+        player.setAudioProcessing(
+            AudioProcessingSettings(
+                gaplessEnabled = true,
+                crossfeedEnabled = true,
+            ),
+        )
+
+        assertEquals(1, player.gaplessCancels)
+    }
+
+    @Test
+    fun equalizerChangeCancelsPreparedGaplessTrack() {
+        val player = GaplessTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+            Track("t2", "Two", "Artist", "Album", 90_000, "http://b", ""),
+        )
+
+        player.setAudioProcessing(AudioProcessingSettings(gaplessEnabled = true))
+        player.play(tracks, 0)
+        player.platformPlayback(positionMs = 58_000, durationMs = 60_000, bufferedPositionMs = 60_000)
+
+        assertEquals(1, player.gaplessStarts)
+
+        player.setEqualizer(EqualizerProfile.Default.withEnabled(true).withGain(index = 0, gainDb = 2f))
+
+        assertEquals(1, player.gaplessCancels)
+    }
+
+    @Test
+    fun preparedGaplessCommitAdvancesToPreparedTarget() {
+        val player = GaplessTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+            Track("t2", "Two", "Artist", "Album", 90_000, "http://b", ""),
+        )
+
+        player.setAudioProcessing(AudioProcessingSettings(gaplessEnabled = true))
+        player.play(tracks, 0)
+        player.platformPlayback(positionMs = 58_000, durationMs = 60_000, bufferedPositionMs = 60_000)
+        player.endCurrentTrack()
+
+        assertEquals(1, player.gaplessCommits)
+        assertEquals(tracks[1], player.state.value.currentTrack)
+        assertEquals(0L, player.state.value.positionMs)
+    }
+
+    @Test
+    fun failedGaplessCommitFallsBackToNormalNext() {
+        val player = GaplessTestPlayer().also { it.commitAccepted = false }
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+            Track("t2", "Two", "Artist", "Album", 90_000, "http://b", ""),
+        )
+
+        player.setAudioProcessing(AudioProcessingSettings(gaplessEnabled = true))
+        player.play(tracks, 0)
+        player.platformPlayback(positionMs = 58_000, durationMs = 60_000, bufferedPositionMs = 60_000)
+        player.endCurrentTrack()
+
+        assertEquals(1, player.gaplessCommits)
+        assertEquals(tracks[1], player.state.value.currentTrack)
+    }
+
+    @Test
     fun queueEditsNotifyPlatformWithoutChangingCurrentTrack() {
         val player = QueueEditHookTestPlayer()
         val tracks = listOf(
@@ -1047,5 +1188,61 @@ private class CrossfadeTestPlayer : SimpleAudioPlayer() {
 
     fun commitCrossfade(positionMs: Long) {
         adoptCrossfadeTarget(pendingQueue, pendingTargetIndex, positionMs, pendingGeneration)
+    }
+}
+
+private class GaplessTestPlayer : SimpleAudioPlayer() {
+    var gaplessStarts = 0
+    var gaplessCommits = 0
+    var gaplessCancels = 0
+    var lastGaplessTargetIndex = -1
+    var commitAccepted = true
+
+    override fun playUri(uri: String) {
+        markPlaybackReady()
+    }
+
+    override fun startGaplessPrepareOnPlatform(
+        queue: List<Track>,
+        targetIndex: Int,
+        track: Track,
+        generation: Int,
+    ): Boolean {
+        gaplessStarts++
+        lastGaplessTargetIndex = targetIndex
+        return true
+    }
+
+    override fun commitGaplessPreparedOnPlatform(
+        queue: List<Track>,
+        targetIndex: Int,
+        track: Track,
+        generation: Int,
+    ): Boolean {
+        gaplessCommits++
+        return commitAccepted
+    }
+
+    override fun cancelGaplessPrepareOnPlatform(generation: Int) {
+        gaplessCancels++
+    }
+
+    fun platformPlayback(
+        positionMs: Long,
+        durationMs: Long,
+        bufferedPositionMs: Long,
+        isPlaying: Boolean = true,
+    ) {
+        applyPlatformPlayback(
+            positionMs = positionMs,
+            durationMs = durationMs,
+            isPlaying = isPlaying,
+            isBuffering = false,
+            bufferedPositionMs = bufferedPositionMs,
+        )
+    }
+
+    fun endCurrentTrack() {
+        advanceAfterPlatformTrackEnded()
     }
 }

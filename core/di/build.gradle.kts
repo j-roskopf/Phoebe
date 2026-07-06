@@ -13,6 +13,7 @@ kotlin {
                 implementation(project(":data:database"))
                 implementation(project(":data:events"))
                 implementation(project(":data:listenbrainz"))
+                implementation(project(":data:musicbrainz"))
                 implementation(project(":data:network"))
                 implementation(project(":data:play-history"))
                 implementation(project(":data:providers:jellyfin"))

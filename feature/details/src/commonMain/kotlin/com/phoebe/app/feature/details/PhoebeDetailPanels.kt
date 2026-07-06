@@ -66,6 +66,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
@@ -95,6 +97,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.setValue
@@ -122,7 +125,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.composed
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -166,6 +171,10 @@ import com.phoebe.app.domain.LibraryUiPreferences
 import com.phoebe.app.domain.DownloadState
 import com.phoebe.app.domain.LocalFolderMediaSourceConfig
 import com.phoebe.app.domain.MediaSourcesState
+import com.phoebe.app.domain.MusicBrainzAlbumMetadataLoadState
+import com.phoebe.app.domain.MusicBrainzArtistArtworkLoadState
+import com.phoebe.app.domain.MusicBrainzArtwork
+import com.phoebe.app.domain.MusicBrainzCreditSection
 import com.phoebe.app.domain.MusicLibrary
 import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.PlexSession
@@ -178,8 +187,10 @@ import com.phoebe.app.domain.isRemoteLibraryTrack
 import com.phoebe.app.domain.isLikedSongsPlaylist
 import com.phoebe.app.domain.remoteProviderPrefix
 import com.phoebe.app.domain.supportsPlexPlaylists
+import kotlinx.coroutines.launch
 import com.phoebe.app.domain.supportsTrackRemoval
 import com.phoebe.app.platform.currentTimeMs
+import com.phoebe.app.platform.isDesktopPlatform
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -986,6 +997,7 @@ private fun MobileDetailTopBar(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun FixedMobileDetailArtwork(
     seed: String,
     thumbUrl: String?,
@@ -994,12 +1006,21 @@ private fun FixedMobileDetailArtwork(
     modifier: Modifier = Modifier,
     alignment: Alignment = Alignment.Center,
     onClick: (() -> Unit)? = null,
+    onLongClick: (() -> Unit)? = null,
 ) {
     Box(
         modifier
             .fillMaxWidth()
             .height(height)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+            .then(
+                when {
+                    onClick != null || onLongClick != null -> Modifier.combinedClickable(
+                        onClick = { onClick?.invoke() },
+                        onLongClick = onLongClick,
+                    )
+                    else -> Modifier
+                },
+            ),
     ) {
         ArtworkImage(
             seed,
@@ -1016,6 +1037,7 @@ private fun FixedMobileDetailArtwork(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun MobileArtistDetailHeader(
     artist: Artist,
     artistThumbUrl: String?,
@@ -1030,6 +1052,7 @@ private fun MobileArtistDetailHeader(
     favoriteActions: FavoriteActions,
     onBack: () -> Unit,
     onArtworkClick: () -> Unit,
+    onArtworkLongClick: () -> Unit,
     onPlayAllTracks: (List<Track>) -> Unit,
     onShuffleAllTracks: (List<Track>) -> Unit,
     onPlayArtistRadio: (Artist) -> Unit,
@@ -1044,7 +1067,12 @@ private fun MobileArtistDetailHeader(
         verticalArrangement = Arrangement.spacedBy(0.dp),
     ) {
         Box(Modifier.fillMaxWidth()) {
-            Spacer(Modifier.fillMaxWidth().height(artworkHeight).clickable(onClick = onArtworkClick))
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .height(artworkHeight)
+                    .combinedClickable(onClick = onArtworkClick, onLongClick = onArtworkLongClick),
+            )
             MobileDetailTopBar(
                 onBack = onBack,
                 showOverflow = false,
@@ -1132,6 +1160,7 @@ private fun MobileArtistDetailHeader(
 }
 
 @Composable
+@OptIn(ExperimentalFoundationApi::class)
 private fun MobileAlbumDetailHeader(
     album: Album,
     tracks: List<Track>,
@@ -1142,6 +1171,7 @@ private fun MobileAlbumDetailHeader(
     onPlayTracks: (List<Track>, Int) -> Unit,
     onDownloadAlbum: (Album) -> Unit,
     onArtist: (Artist) -> Unit,
+    onArtworkLongClick: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(horizontal = 20.dp),
     topBarTopPadding: Dp = 0.dp,
     artworkHeight: Dp,
@@ -1152,7 +1182,12 @@ private fun MobileAlbumDetailHeader(
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(Modifier.fillMaxWidth()) {
-            Spacer(Modifier.fillMaxWidth().height(artworkHeight))
+            Spacer(
+                Modifier
+                    .fillMaxWidth()
+                    .height(artworkHeight)
+                    .combinedClickable(onClick = {}, onLongClick = onArtworkLongClick),
+            )
             MobileDetailTopBar(
                 onBack = onBack,
                 showOverflow = false,
@@ -1422,6 +1457,7 @@ private fun DesktopArtistDetailHeader(
     favoriteActions: FavoriteActions,
     onBack: () -> Unit,
     onArtworkClick: () -> Unit,
+    onStatsClick: () -> Unit,
     onPlayAllTracks: (List<Track>) -> Unit,
     onShuffleAllTracks: (List<Track>) -> Unit,
     onPlayArtistRadio: (Artist) -> Unit,
@@ -1445,6 +1481,7 @@ private fun DesktopArtistDetailHeader(
         onBack = onBack,
         immersive = immersive,
         modifier = modifier,
+        onBackgroundArtworkClick = onArtworkClick,
         searchQuery = searchQuery,
         onSearchQuery = onSearchQuery,
         backgroundArtwork = { revealFullArtwork ->
@@ -1466,6 +1503,10 @@ private fun DesktopArtistDetailHeader(
                     .fillMaxSize()
                     .sharedArtworkTransition("artist:${artist.id}")
                     .clip(RoundedCornerShape(28.dp))
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = "Open ${artist.title} artwork"
+                    }
                     .clickable(onClick = onArtworkClick),
             ) {
                 ArtworkImage(
@@ -1493,6 +1534,7 @@ private fun DesktopArtistDetailHeader(
                     onClick = { onPlayArtistRadio(artist) },
                 )
             }
+            DesktopDetailMetaLink("Stats", onStatsClick)
             DownloadActionButton("Download", tracks) { onDownloadArtist(artist) }
             DesktopDetailIconSurface {
                 LikeButton(
@@ -1516,6 +1558,7 @@ private fun DesktopAlbumDetailHeader(
     onPlayTracks: (List<Track>, Int) -> Unit,
     onDownloadAlbum: (Album) -> Unit,
     onArtist: (Artist) -> Unit,
+    onArtworkClick: () -> Unit,
     searchQuery: String,
     onSearchQuery: (String) -> Unit,
     immersive: Boolean,
@@ -1534,6 +1577,7 @@ private fun DesktopAlbumDetailHeader(
         onBack = onBack,
         immersive = immersive,
         modifier = modifier,
+        onBackgroundArtworkClick = onArtworkClick,
         searchQuery = searchQuery,
         onSearchQuery = onSearchQuery,
         backgroundArtwork = { revealFullArtwork ->
@@ -1550,16 +1594,26 @@ private fun DesktopAlbumDetailHeader(
             )
         },
         artwork = {
-            ArtworkImage(
-                album.title,
-                album.thumbUrl,
+            Box(
                 Modifier
                     .fillMaxSize()
-                    .sharedArtworkTransition("album:${album.id}"),
-                radius = 18.dp,
-                elevated = true,
-                maxDecodeDimension = HeroArtworkMaxDecodeDimension,
-            )
+                    .sharedArtworkTransition("album:${album.id}")
+                    .clip(RoundedCornerShape(18.dp))
+                    .semantics {
+                        role = Role.Button
+                        contentDescription = "Open ${album.title} artwork"
+                    }
+                    .clickable(onClick = onArtworkClick),
+            ) {
+                ArtworkImage(
+                    album.title,
+                    album.thumbUrl,
+                    Modifier.fillMaxSize(),
+                    radius = 18.dp,
+                    elevated = true,
+                    maxDecodeDimension = HeroArtworkMaxDecodeDimension,
+                )
+            }
         },
         titleModifier = Modifier.sharedBoundsTransition("album:${album.id}:title"),
         subtitleModifier = Modifier
@@ -1598,6 +1652,7 @@ private fun DesktopDetailHero(
     subtitle: String? = null,
     immersive: Boolean = true,
     backgroundArtwork: (@Composable (Boolean) -> Unit)? = null,
+    onBackgroundArtworkClick: (() -> Unit)? = null,
     searchQuery: String? = null,
     onSearchQuery: ((String) -> Unit)? = null,
     titleModifier: Modifier = Modifier,
@@ -1644,10 +1699,24 @@ private fun DesktopDetailHero(
             Box(
                 Modifier
                     .matchParentSize()
+                    .then(
+                        if (onBackgroundArtworkClick == null) {
+                            Modifier
+                        } else {
+                            Modifier.semantics {
+                                role = Role.Button
+                                contentDescription = "Open $title artwork"
+                            }
+                        },
+                    )
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
-                    ) { revealFullArtwork = !revealFullArtwork },
+                    ) {
+                        onBackgroundArtworkClick?.invoke() ?: run {
+                            revealFullArtwork = !revealFullArtwork
+                        }
+                    },
             ) {
                 Box(
                     Modifier
@@ -2061,6 +2130,7 @@ fun ArtistDetailPanel(
     libraryUi: LibraryUiPreferences,
     catalogRefreshing: Boolean = false,
     fullBleedArtwork: Boolean = true,
+    musicBrainzArtwork: MusicBrainzArtistArtworkLoadState = MusicBrainzArtistArtworkLoadState.Idle,
     modifier: Modifier = Modifier,
     searchQuery: String = "",
     onSearchQuery: (String) -> Unit = {},
@@ -2076,6 +2146,7 @@ fun ArtistDetailPanel(
     artistRadioStarting: Boolean = false,
     artistEventsAvailable: Boolean = false,
     onProbeArtistRadio: (Artist) -> Unit = {},
+    onLoadMusicBrainzArtwork: (Artist) -> Unit = {},
     onPlayArtistRadio: (Artist) -> Unit,
     onArtistEvents: (Artist) -> Unit = {},
     onArtist: (Artist) -> Unit,
@@ -2085,6 +2156,14 @@ fun ArtistDetailPanel(
     val albums = remember(catalog.albums, artist.title) { catalogAlbumsForArtist(catalog, artist.title) }
     val artistThumbUrl = remember(artist.thumbUrl, albums) {
         artist.thumbUrl ?: albums.firstNotNullOfOrNull { it.thumbUrl }
+    }
+    val artistGalleryItems = remember(artist.id, artist.title, artistThumbUrl, musicBrainzArtwork.response) {
+        artworkGalleryItems(
+            seed = artist.title,
+            primaryUrl = artistThumbUrl,
+            primaryTitle = "Current artist artwork",
+            remoteArtwork = musicBrainzArtwork.response?.artwork.orEmpty(),
+        )
     }
     val tracks = remember(catalog.tracksByParent, artist.title) { catalogTracksForArtist(catalog, artist.title) }
     val playHistory = LocalPlayHistory.current
@@ -2132,6 +2211,11 @@ fun ArtistDetailPanel(
         if (artist.id.startsWith("plex:") || artist.id.startsWith("jellyfin:")) onProbeArtistRadio(artist)
     }
     var showStats by remember(artist.id) { mutableStateOf(false) }
+    var showArtworkGallery by remember(artist.id) { mutableStateOf(false) }
+    val openArtworkGallery = {
+        showArtworkGallery = true
+        onLoadMusicBrainzArtwork(artist)
+    }
     val mobileChromeBottom = LocalMobileChromePadding.current.bottom
 
     BoxWithConstraints(modifier.fillMaxSize()) {
@@ -2205,6 +2289,7 @@ fun ArtistDetailPanel(
                         height = mobileArtworkHeight,
                         alignment = Alignment.TopCenter,
                         onClick = { showStats = true },
+                        onLongClick = openArtworkGallery,
                     )
                 }
                 LazyColumn(
@@ -2234,7 +2319,8 @@ fun ArtistDetailPanel(
                                     artistEventsAvailable = artistEventsAvailable,
                                     favoriteActions = favoriteActions,
                                     onBack = onBack,
-                                    onArtworkClick = { showStats = true },
+                                    onArtworkClick = openArtworkGallery,
+                                    onStatsClick = { showStats = true },
                                     onPlayAllTracks = onPlayAllTracks,
                                     onShuffleAllTracks = onShuffleAllTracks,
                                     onPlayArtistRadio = onPlayArtistRadio,
@@ -2291,6 +2377,7 @@ fun ArtistDetailPanel(
                                     favoriteActions = favoriteActions,
                                     onBack = onBack,
                                     onArtworkClick = { showStats = true },
+                                    onArtworkLongClick = openArtworkGallery,
                                     onPlayAllTracks = onPlayAllTracks,
                                     onShuffleAllTracks = onShuffleAllTracks,
                                     onPlayArtistRadio = onPlayArtistRadio,
@@ -2509,6 +2596,15 @@ fun ArtistDetailPanel(
                 }
             }
         }
+        if (showArtworkGallery) {
+            ArtworkGalleryDialog(
+                title = artist.title,
+                loading = musicBrainzArtwork.loading,
+                error = musicBrainzArtwork.error,
+                items = artistGalleryItems,
+                onDismiss = { showArtworkGallery = false },
+            )
+        }
     }
 }
 
@@ -2556,6 +2652,306 @@ private fun AboutPlainValue(value: String) {
         fontSize = 15.sp,
         fontWeight = FontWeight.Medium,
     )
+}
+
+@Composable
+private fun AlbumCreditsSection(credits: List<MusicBrainzCreditSection>) {
+    AboutSectionItem("Credits") {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            credits.forEach { section ->
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(
+                        section.role,
+                        color = PhoebeUi.mutedText,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        section.names.joinToString(", "),
+                        color = PhoebeUi.primaryText,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun ArtworkGalleryDialog(
+    title: String,
+    loading: Boolean,
+    error: String?,
+    items: List<ArtworkGalleryItem>,
+    onDismiss: () -> Unit,
+) {
+    val galleryItems = items.ifEmpty {
+        listOf(ArtworkGalleryItem(seed = title, id = "placeholder:$title", imageUrl = null, thumbnailUrl = null, title = title))
+    }
+    val pagerState = rememberPagerState(pageCount = { galleryItems.size })
+    val scope = rememberCoroutineScope()
+    val currentPage = pagerState.currentPage.coerceIn(0, galleryItems.lastIndex)
+    val topPadding = if (isDesktopPlatform()) windowTopPadding() else 14.dp
+    LaunchedEffect(galleryItems.size) {
+        if (pagerState.currentPage > galleryItems.lastIndex) {
+            pagerState.scrollToPage(galleryItems.lastIndex)
+        }
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(Color.Black.copy(alpha = 0.94f))
+                .windowInsetsPadding(WindowInsets.safeDrawing),
+        ) {
+            Column(
+                Modifier
+                    .fillMaxSize()
+                    .padding(start = 18.dp, top = topPadding, end = 18.dp, bottom = 14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            title,
+                            color = PhoebeUi.primaryText,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            "${currentPage + 1} of ${galleryItems.size}",
+                            color = PhoebeUi.secondaryText,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                    }
+                    GalleryIconButton(PhoebeIcon.Close, "Close artwork gallery", onClick = onDismiss)
+                }
+                if (loading) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = PhoebeUi.accentLight,
+                    )
+                }
+                if (!loading && error != null) {
+                    Text(
+                        "More artwork unavailable",
+                        color = PhoebeUi.mutedText,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Box(Modifier.fillMaxWidth().weight(1f)) {
+                    HorizontalPager(
+                        state = pagerState,
+                        modifier = Modifier.fillMaxSize(),
+                        key = { page -> galleryItems.getOrNull(page)?.id ?: "artwork-page:${galleryItems.size}:$page" },
+                    ) { page ->
+                        val pageIndex = page.coerceIn(0, galleryItems.lastIndex)
+                        val item = galleryItems[pageIndex]
+                        Column(
+                            Modifier.fillMaxSize(),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
+                        ) {
+                            ArtworkImage(
+                                seed = item.seed,
+                                thumbUrl = item.imageUrl,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .weight(1f)
+                                    .semantics {
+                                        contentDescription = item.accessibilityLabel(pageIndex, galleryItems.size)
+                                    },
+                                radius = 12.dp,
+                                elevated = false,
+                                maxDecodeDimension = HeroArtworkMaxDecodeDimension,
+                                contentScale = ContentScale.Fit,
+                            )
+                            GalleryCaption(item)
+                        }
+                    }
+                    GalleryIconButton(
+                        icon = PhoebeIcon.Previous,
+                        contentDescription = "Previous artwork",
+                        enabled = currentPage > 0,
+                        modifier = Modifier.align(Alignment.CenterStart),
+                    ) {
+                        scope.launch { pagerState.animateScrollToPage((currentPage - 1).coerceAtLeast(0)) }
+                    }
+                    GalleryIconButton(
+                        icon = PhoebeIcon.Next,
+                        contentDescription = "Next artwork",
+                        enabled = currentPage < galleryItems.lastIndex,
+                        modifier = Modifier.align(Alignment.CenterEnd),
+                    ) {
+                        scope.launch { pagerState.animateScrollToPage((currentPage + 1).coerceAtMost(galleryItems.lastIndex)) }
+                    }
+                }
+                if (galleryItems.size == 1 && !loading) {
+                    Text(
+                        "No additional artwork found.",
+                        color = PhoebeUi.mutedText,
+                        fontSize = 12.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    itemsIndexed(galleryItems, key = { _, item -> item.id }, contentType = { _, _ -> "artwork-thumb" }) { index, item ->
+                        val selected = index == currentPage
+                        Box(
+                            Modifier
+                                .size(58.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(
+                                    BorderStroke(
+                                        if (selected) 2.dp else 1.dp,
+                                        if (selected) PhoebeUi.accentLight else Color.White.copy(alpha = 0.16f),
+                                    ),
+                                    RoundedCornerShape(8.dp),
+                                )
+                                .clickable { scope.launch { pagerState.animateScrollToPage(index) } }
+                                .semantics {
+                                    role = Role.Button
+                                    contentDescription = "Show artwork ${index + 1}"
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            ArtworkImage(
+                                seed = item.seed,
+                                thumbUrl = item.thumbnailUrl ?: item.imageUrl,
+                                modifier = Modifier.fillMaxSize(),
+                                radius = 8.dp,
+                                elevated = false,
+                                maxDecodeDimension = ThumbnailArtworkMaxDecodeDimension,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun GalleryIconButton(
+    icon: PhoebeIcon,
+    contentDescription: String,
+    enabled: Boolean = true,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    Box(
+        modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(Color.White.copy(alpha = if (enabled) 0.12f else 0.05f))
+            .clickable(enabled = enabled, onClick = onClick)
+            .semantics {
+                role = Role.Button
+                this.contentDescription = contentDescription
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        PhoebeIconView(
+            icon = icon,
+            tint = if (enabled) PhoebeUi.primaryText else PhoebeUi.mutedText,
+            modifier = Modifier.size(20.dp),
+        )
+    }
+}
+
+@Composable
+private fun GalleryCaption(item: ArtworkGalleryItem) {
+    val lines = listOfNotNull(
+        item.title?.takeIf { it.isNotBlank() },
+        item.source?.takeIf { it.isNotBlank() },
+        item.comment?.takeIf { it.isNotBlank() },
+    )
+    Column(
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        lines.ifEmpty { listOf("Artwork") }.forEachIndexed { index, line ->
+            Text(
+                line,
+                color = if (index == 0) PhoebeUi.primaryText else PhoebeUi.secondaryText,
+                fontSize = if (index == 0) 14.sp else 12.sp,
+                fontWeight = if (index == 0) FontWeight.SemiBold else FontWeight.Normal,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+            )
+        }
+    }
+}
+
+private data class ArtworkGalleryItem(
+    val seed: String,
+    val id: String,
+    val imageUrl: String?,
+    val thumbnailUrl: String?,
+    val title: String? = null,
+    val source: String? = null,
+    val comment: String? = null,
+) {
+    fun accessibilityLabel(index: Int, total: Int): String =
+        "Artwork ${index + 1} of $total${title?.let { ": $it" }.orEmpty()}"
+}
+
+private fun artworkGalleryItems(
+    seed: String,
+    primaryUrl: String?,
+    primaryTitle: String,
+    remoteArtwork: List<MusicBrainzArtwork>,
+): List<ArtworkGalleryItem> {
+    val primary = ArtworkGalleryItem(
+        seed = seed,
+        id = "current:${primaryUrl ?: seed}",
+        imageUrl = primaryUrl,
+        thumbnailUrl = primaryUrl,
+        title = primaryTitle,
+    )
+    val remote = remoteArtwork.mapNotNull { artwork ->
+        val imageUrl = artwork.thumbnailUrl
+            ?: artwork.largeThumbnailUrl
+            ?: artwork.imageUrl.takeIf { it.isNotBlank() }
+            ?: return@mapNotNull null
+        ArtworkGalleryItem(
+            seed = seed,
+            id = "musicbrainz:${artwork.id}:${artwork.imageUrl}",
+            imageUrl = imageUrl,
+            thumbnailUrl = artwork.thumbnailUrl ?: imageUrl,
+            title = artwork.title ?: artwork.types.joinToString(", ").takeIf { it.isNotBlank() },
+            source = artwork.source,
+            comment = artwork.comment,
+        )
+    }
+    return (listOf(primary) + remote)
+        .distinctBy { it.imageUrl ?: it.id }
 }
 
 private fun aboutTagItems(value: String): List<String> =
@@ -3333,6 +3729,7 @@ fun AlbumDetailPanel(
     libraryUi: LibraryUiPreferences,
     catalogRefreshing: Boolean = false,
     fullBleedArtwork: Boolean = true,
+    musicBrainzMetadata: MusicBrainzAlbumMetadataLoadState = MusicBrainzAlbumMetadataLoadState.Idle,
     modifier: Modifier = Modifier,
     searchQuery: String = "",
     onSearchQuery: (String) -> Unit = {},
@@ -3354,8 +3751,17 @@ fun AlbumDetailPanel(
     val artist = remember(catalog.artists, resolvedAlbum.id, resolvedAlbum.artist) {
         catalogArtistForAlbum(catalog, resolvedAlbum)
     }
+    val albumGalleryItems = remember(resolvedAlbum.id, resolvedAlbum.title, resolvedAlbum.thumbUrl, musicBrainzMetadata.metadata) {
+        artworkGalleryItems(
+            seed = resolvedAlbum.title,
+            primaryUrl = resolvedAlbum.thumbUrl,
+            primaryTitle = "Current album artwork",
+            remoteArtwork = musicBrainzMetadata.metadata?.artwork.orEmpty(),
+        )
+    }
 
     var sortBy by remember(resolvedAlbum.id) { mutableStateOf(LibrarySortBy.AlbumOrder) }
+    var showArtworkGallery by remember(resolvedAlbum.id) { mutableStateOf(false) }
 
     val sortedTracks = remember(tracks, sortBy) {
         sortTracksForLibrary(tracks, sortBy, ascending = true)
@@ -3415,6 +3821,7 @@ fun AlbumDetailPanel(
                 thumbUrl = resolvedAlbum.thumbUrl,
                 sharedKey = "album:${resolvedAlbum.id}",
                 height = mobileArtworkHeight,
+                onLongClick = { showArtworkGallery = true },
             )
         }
     LazyColumn(
@@ -3441,6 +3848,7 @@ fun AlbumDetailPanel(
                         onPlayTracks = onPlayTracks,
                         onDownloadAlbum = onDownloadAlbum,
                         onArtist = onArtist,
+                        onArtworkClick = { showArtworkGallery = true },
                         searchQuery = searchQuery,
                         onSearchQuery = onSearchQuery,
                         immersive = immersiveDesktopHeader,
@@ -3477,6 +3885,7 @@ fun AlbumDetailPanel(
                         onPlayTracks = onPlayTracks,
                         onDownloadAlbum = onDownloadAlbum,
                         onArtist = onArtist,
+                        onArtworkLongClick = { showArtworkGallery = true },
                         contentPadding = PaddingValues(horizontal = startPadding),
                         topBarTopPadding = mobileContentTopPadding(topPadding),
                         artworkHeight = mobileArtworkHeight,
@@ -3557,11 +3966,12 @@ fun AlbumDetailPanel(
                 )
             }
         }
-        if (resolvedAlbum.rating != null || !resolvedAlbum.genre.isNullOrBlank() || !resolvedAlbum.mood.isNullOrBlank() || !resolvedAlbum.style.isNullOrBlank() || !resolvedAlbum.description.isNullOrBlank() || !resolvedAlbum.recordLabel.isNullOrBlank()) {
+        if (resolvedAlbum.rating != null || !resolvedAlbum.genre.isNullOrBlank() || !resolvedAlbum.mood.isNullOrBlank() || !resolvedAlbum.style.isNullOrBlank() || !resolvedAlbum.description.isNullOrBlank() || !resolvedAlbum.recordLabel.isNullOrBlank() || musicBrainzMetadata.loading || musicBrainzMetadata.hasCredits) {
             item(contentType = "album-about") {
                 Box(contentPaddingModifier) {
                     AboutAlbumPanel(
                         album = resolvedAlbum,
+                        musicBrainzMetadata = musicBrainzMetadata,
                         onCollectionItems = onCollectionItems,
                     )
                 }
@@ -3569,17 +3979,34 @@ fun AlbumDetailPanel(
         }
     }
     }
+        if (showArtworkGallery) {
+            ArtworkGalleryDialog(
+                title = resolvedAlbum.title,
+                loading = musicBrainzMetadata.loading,
+                error = musicBrainzMetadata.error,
+                items = albumGalleryItems,
+                onDismiss = { showArtworkGallery = false },
+            )
+        }
     }
 }
 
 @Composable
 private fun AboutAlbumPanel(
     album: Album,
+    musicBrainzMetadata: MusicBrainzAlbumMetadataLoadState = MusicBrainzAlbumMetadataLoadState.Idle,
     onCollectionItems: (CollectionEntry, String) -> Unit,
 ) {
     val ratingActions = LocalRatingActions.current
     Column(Modifier.fillMaxWidth().padding(vertical = 24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("About", color = PhoebeUi.primaryText, fontSize = 22.sp, fontWeight = FontWeight.Normal)
+        if (musicBrainzMetadata.loading && !musicBrainzMetadata.hasCredits) {
+            AboutSectionItem("Credits") {
+                AboutPlainValue("Loading MusicBrainz credits...")
+            }
+        } else if (musicBrainzMetadata.hasCredits) {
+            AlbumCreditsSection(musicBrainzMetadata.metadata?.credits.orEmpty())
+        }
         
         if (ratingActions.ratingsEnabled && (album.id.startsWith("plex:") || album.id.startsWith("jellyfin:"))) {
             AboutSectionItem("Rating") {

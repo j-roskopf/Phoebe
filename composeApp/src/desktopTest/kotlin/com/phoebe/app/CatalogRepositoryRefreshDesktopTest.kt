@@ -1087,6 +1087,78 @@ class CatalogRepositoryRefreshDesktopTest {
     }
 
     @Test
+    fun refreshPrunesPlexTracksMissingFromPagedIndex() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        db.transaction {
+            db.catalogQueries.upsertArtist("plex:artist1", "Artist One", null, 1, 1, 0, null, null, null, null, null, 0)
+            db.catalogQueries.upsertAlbum("plex:a1", "Album One", "Artist One", null, null, 0, null, null, null, null, null, 0)
+            db.catalogQueries.upsertTrack(
+                id = "plex:deleted",
+                title = "Deleted Song",
+                artist = "Artist One",
+                album = "Album One",
+                durationMs = 1000,
+                streamUrl = "https://plex.example/deleted?X-Plex-Token=token",
+                downloadUrl = "https://plex.example/deleted?X-Plex-Token=token&download=1",
+                thumbUrl = null,
+                localArtworkUri = null,
+                localUri = null,
+                year = null,
+                genre = null,
+                mood = null,
+                style = null,
+                filepath = null,
+                audioCodec = null,
+                bitrateKbps = null,
+                dateAddedMs = null,
+                rating = null,
+                parentAlbumId = "a1",
+            )
+            db.catalogQueries.upsertTrackParent("plex:a1", "plex:deleted", 0, null)
+        }
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/library/sections/1/all" -> if (request.url.parameters["type"] == "10") {
+                    respondJson(trackPageJson())
+                } else {
+                    respondJson(artistsJson())
+                }
+                "/library/sections/1/albums" -> respondJson(albumsJson())
+                "/playlists" -> respondJson(playlistsJson(trackCount = 0))
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val http = testHttpClient(engine)
+        val media = MediaSourcesRepository(db, PlatformStorage())
+        val repo = testCatalogRepository(
+            plexClient = PlexClient(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+        repo.restoreCachedCatalog()
+        assertEquals(listOf("plex:deleted"), repo.catalog.value.tracksByParent["plex:a1"].orEmpty().map { it.id })
+
+        repo.refreshAggregated(testSession())
+
+        assertEquals(listOf("plex:t1"), repo.catalog.value.tracksByParent["plex:a1"].orEmpty().map { it.id })
+        assertEquals(listOf("plex:t1"), db.catalogQueries.selectAllTrackIds().executeAsList())
+
+        val restored = testCatalogRepository(
+            plexClient = PlexClient(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+        restored.restoreCachedCatalog()
+
+        assertEquals(listOf("plex:t1"), restored.catalog.value.tracksByParent["plex:a1"].orEmpty().map { it.id })
+    }
+
+    @Test
     fun tracksForAlbumRefetchesCachedPlexTracksWhenTokenChanged() = runTest {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d

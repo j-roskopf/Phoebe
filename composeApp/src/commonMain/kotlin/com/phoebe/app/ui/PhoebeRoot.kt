@@ -405,6 +405,8 @@ private fun PhoebeRootStateHolder(
     val internetRadioStartingIds by state.internetRadioStartingIds.collectAsState()
     val artistRadioAvailability by state.artistRadioAvailability.collectAsState()
     val artistEvents by state.artistEvents.collectAsState()
+    val albumMusicBrainzMetadata by state.albumMusicBrainzMetadata.collectAsState()
+    val artistMusicBrainzArtwork by state.artistMusicBrainzArtwork.collectAsState()
     val eventsBackendHealth by state.eventsBackendHealth.collectAsState()
     val downloadDirectory by state.downloadDirectory.collectAsState()
     val pin by state.pin.collectAsState()
@@ -1522,6 +1524,8 @@ private fun PhoebeRootStateHolder(
                                 artistRadioAvailability = artistRadioAvailability[scr.artist.id],
                                 artistRadioStarting = scr.artist.id in radioStartingIds,
                                 artistEventsAvailable = artistEvents[scr.artist.id]?.hasEvents == true,
+                                musicBrainzArtwork = artistMusicBrainzArtwork[scr.artist.id]
+                                    ?: com.phoebe.app.domain.MusicBrainzArtistArtworkLoadState.Idle,
                                 fullBleedArtwork = appSettings.fullBleedDetailArtwork,
                             ),
                             actions = ArtistDetailRouteActions(
@@ -1534,6 +1538,7 @@ private fun PhoebeRootStateHolder(
                                 onDownload = state::download,
                                 onDownloadArtist = state::download,
                                 onProbeArtistRadio = state::probeArtistRadio,
+                                onLoadMusicBrainzArtwork = state::loadArtistMusicBrainzArtwork,
                                 onPlayArtistRadio = state::playArtistRadio,
                                 onArtistEvents = { navigator.open(PhoebeRoute.ArtistEvents(it.id)) },
                                 onArtist = { navigator.open(it.route()) },
@@ -1560,27 +1565,46 @@ private fun PhoebeRootStateHolder(
                             modifier = Modifier.fillMaxSize(),
                         )
                     }
-                    is AppScreen.AlbumDetail -> AlbumDetailRoute(
-                        state = AlbumDetailRouteState(
-                            album = scr.album,
-                            catalog = catalog,
-                            libraryUi = libraryUi,
-                            catalogRefreshing = catalogRefreshing,
-                            searchQuery = searchQuery,
-                            fullBleedArtwork = appSettings.fullBleedDetailArtwork,
-                        ),
-                        actions = AlbumDetailRouteActions(
-                            onBack = { navigator.pop() },
-                            onPlayTracks = playTracksFromMobile,
-                            onAddToUpNext = state::addToUpNext,
-                            onDownload = state::download,
-                            onDownloadAlbum = state::download,
-                            onArtist = { navigator.open(it.route()) },
-                            onLibraryColumns = state::setLibraryColumns,
-                            onCollectionItems = openCollectionValue,
-                        ),
-                        modifier = Modifier.fillMaxSize(),
-                    )
+                    is AppScreen.AlbumDetail -> {
+                        val albumForMetadata = catalog.albums.firstOrNull { it.id == scr.album.id } ?: scr.album
+                        val albumTracks = catalog.tracksByParent[albumForMetadata.id].orEmpty()
+                        val albumMusicBrainzTrackKey = albumTracks
+                            .mapNotNull { it.musicBrainzReleaseId }
+                            .distinct()
+                            .joinToString("|")
+                        LaunchedEffect(
+                            albumForMetadata.id,
+                            albumForMetadata.title,
+                            albumForMetadata.artist,
+                            albumForMetadata.year,
+                            albumMusicBrainzTrackKey,
+                        ) {
+                            state.loadAlbumMusicBrainzMetadata(albumForMetadata, albumTracks)
+                        }
+                        AlbumDetailRoute(
+                            state = AlbumDetailRouteState(
+                                album = scr.album,
+                                catalog = catalog,
+                                libraryUi = libraryUi,
+                                catalogRefreshing = catalogRefreshing,
+                                searchQuery = searchQuery,
+                                musicBrainzMetadata = albumMusicBrainzMetadata[albumForMetadata.id]
+                                    ?: com.phoebe.app.domain.MusicBrainzAlbumMetadataLoadState.Idle,
+                                fullBleedArtwork = appSettings.fullBleedDetailArtwork,
+                            ),
+                            actions = AlbumDetailRouteActions(
+                                onBack = { navigator.pop() },
+                                onPlayTracks = playTracksFromMobile,
+                                onAddToUpNext = state::addToUpNext,
+                                onDownload = state::download,
+                                onDownloadAlbum = state::download,
+                                onArtist = { navigator.open(it.route()) },
+                                onLibraryColumns = state::setLibraryColumns,
+                                onCollectionItems = openCollectionValue,
+                            ),
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
                     is AppScreen.SongDetail -> SongDetailRoute(
                         state = SongDetailRouteState(track = scr.track),
                         actions = SongDetailRouteActions(
@@ -1814,6 +1838,9 @@ private fun PhoebeRootStateHolder(
                         onLyrics = {
                             if (currentTrack != null) navigator.open(PhoebeRoute.Lyrics())
                         },
+                        onUltimateGuitar = { track ->
+                            ultimateGuitarSearchUrl(track)?.let(::openExternalUrl)
+                        },
                         onBack = collapseMobilePlayer,
                         onSwipeDismiss = collapseMobilePlayer,
                         handleSystemBack = navigator.routes.size > 1,
@@ -1960,6 +1987,7 @@ private fun PhoebeRootStateHolder(
                         onPersistEqualizerSettings = state::setPersistEqualizerSettings,
                         onAudioProcessingSettings = state::setAudioProcessingSettings,
                         onVisualizerPreset = state::setNowPlayingVisualizerPreset,
+                        onShowUltimateGuitarButton = state::setShowUltimateGuitarButton,
                         onBlurredArtworkAppearance = state::setBlurredArtworkAppearance,
                         onTintedBackgroundGradient = state::setTintedBackgroundGradient,
                         downloadDirectory = downloadDirectory,
@@ -2166,6 +2194,9 @@ private fun PhoebeRootStateHolder(
                             onLyrics = {
                                 navigator.open(PhoebeRoute.Lyrics())
                             },
+                            onUltimateGuitar = { track ->
+                                ultimateGuitarSearchUrl(track)?.let(::openExternalUrl)
+                            },
                             onBack = collapseMobilePlayer,
                             onSwipeDismiss = collapseMobilePlayer,
                             onClick = { openMobilePlayer() },
@@ -2222,6 +2253,7 @@ private fun PhoebeRootStateHolder(
                         equalizerRemoteUnavailable = equalizerRemoteUnavailable,
                         visualizerPreset = appSettings.nowPlayingVisualizerPreset,
                         showVisualizerInTvFrame = appSettings.nowPlayingVisualizerInTvFrame,
+                        showUltimateGuitarButton = appSettings.showUltimateGuitarButton,
                         audioAnalysis = audioAnalysis,
                     ),
                     playbackActions = PlaybackActions(
@@ -2258,6 +2290,9 @@ private fun PhoebeRootStateHolder(
                                 if (browseSection == BrowseSection.Lyrics) BrowseSection.Home else BrowseSection.Lyrics,
                             )
                         },
+                        onUltimateGuitar = { track ->
+                            ultimateGuitarSearchUrl(track)?.let(::openExternalUrl)
+                        },
                         onPlayQueue = state::playUpNext,
                         onClearQueue = state::clearQueue,
                         onMoveUpNext = state::moveUpNext,
@@ -2280,6 +2315,8 @@ private fun PhoebeRootStateHolder(
                         radioRouteMode = radioRouteMode,
                         artistRadioAvailability = artistRadioAvailability,
                         artistEvents = artistEvents,
+                        albumMusicBrainzMetadata = albumMusicBrainzMetadata,
+                        artistMusicBrainzArtwork = artistMusicBrainzArtwork,
                         radioStartingIds = radioStartingIds,
                         internetRadioStartingIds = effectiveInternetRadioStartingIds,
                     ),
@@ -2383,6 +2420,8 @@ private fun PhoebeRootStateHolder(
                         onPlayArtistRadio = state::playArtistRadio,
                         onLoadArtistEventAvailability = state::loadArtistEventAvailability,
                         onLoadArtistEvents = { artist -> state.loadArtistEvents(artist, force = true) },
+                        onLoadAlbumMusicBrainzMetadata = state::loadAlbumMusicBrainzMetadata,
+                        onLoadArtistMusicBrainzArtwork = state::loadArtistMusicBrainzArtwork,
                         onArtistEvents = { artist -> navigator.open(PhoebeRoute.ArtistEvents(artist.id)) },
                         onDownloadAlbum = state::download,
                         onDownloadPlaylist = state::download,
@@ -2465,6 +2504,7 @@ private fun PhoebeRootStateHolder(
                         audioProcessingCapabilities = state.audioProcessingCapabilities,
                         onVisualizerPreset = state::setNowPlayingVisualizerPreset,
                         onShowVisualizerInTvFrame = state::setNowPlayingVisualizerInTvFrame,
+                        onShowUltimateGuitarButton = state::setShowUltimateGuitarButton,
                         onBlurredArtworkAppearance = state::setBlurredArtworkAppearance,
                         onFullBleedDetailArtwork = state::setFullBleedDetailArtwork,
                         onTintedBackgroundGradient = state::setTintedBackgroundGradient,
@@ -2882,6 +2922,7 @@ private fun MobilePlayerHost(
     onOpenSongDetail: (Track) -> Unit,
     onCast: () -> Unit,
     onLyrics: () -> Unit,
+    onUltimateGuitar: (Track) -> Unit,
     onBack: () -> Unit,
     onSwipeDismiss: () -> Unit,
     onClick: () -> Unit = {},
@@ -2929,6 +2970,7 @@ private fun MobilePlayerHost(
             equalizerRemoteUnavailable = equalizerRemoteUnavailable,
             visualizerPreset = appSettings.nowPlayingVisualizerPreset,
             showVisualizerInTvFrame = appSettings.nowPlayingVisualizerInTvFrame,
+            showUltimateGuitarButton = appSettings.showUltimateGuitarButton,
             blurredArtworkAppearance = appSettings.blurredArtworkAppearance,
             tintedBackgroundGradient = appSettings.tintedBackgroundGradient,
             audioAnalysis = audioAnalysis,
@@ -2950,6 +2992,7 @@ private fun MobilePlayerHost(
             onOpenSongDetail = onOpenSongDetail,
             onCast = onCast,
             onLyrics = onLyrics,
+            onUltimateGuitar = onUltimateGuitar,
             onEqualizerEnabled = appState::setEqualizerEnabled,
             onEqualizerBandCount = appState::setEqualizerBandCount,
             onEqualizerGain = appState::setEqualizerGain,

@@ -12,13 +12,14 @@ CREATE TABLE AppSettingsRow (
     equalizerProfile TEXT NOT NULL DEFAULT '{"enabled":false,"bandCount":10,"gainsDb":[]}',
     nowPlayingVisualizerPreset TEXT NOT NULL DEFAULT 'Artwork',
     nowPlayingVisualizerInTvFrame INTEGER NOT NULL DEFAULT 0,
+    showUltimateGuitarButton INTEGER NOT NULL DEFAULT 1,
     blurredArtworkAppearance INTEGER NOT NULL DEFAULT 1,
     fullBleedDetailArtwork INTEGER NOT NULL DEFAULT 1,
     tintedBackgroundGradient INTEGER NOT NULL DEFAULT 1,
     listenBrainzSettings TEXT NOT NULL DEFAULT '{"enabled":false,"username":null,"submitNowPlaying":true,"submitListens":true,"submitCurrentTrackFeedback":true,"storageStatus":"Unknown","connectedAtMs":null,"lastValidatedAtMs":null,"lastSubmittedAtMs":null,"lastNowPlayingSubmittedAtMs":null,"lastListenSubmittedAtMs":null,"lastListenError":null,"lastError":null}',
     lastFmSettings TEXT NOT NULL DEFAULT '{"enabled":false,"username":null,"apiKey":null,"submitNowPlaying":true,"submitScrobbles":true,"storageStatus":"Unknown","connectedAtMs":null,"lastValidatedAtMs":null,"lastSubmittedAtMs":null,"lastNowPlayingSubmittedAtMs":null,"lastScrobbleSubmittedAtMs":null,"lastScrobbleError":null,"lastError":null}',
     downloadPolicySettings TEXT NOT NULL DEFAULT '{"quality":"Original","maxConcurrentDownloads":3,"autoRetryFailedDownloads":true,"wifiOnly":false,"wifiOnlyConfigured":false,"notifyOnCompletion":true}',
-    audioProcessingSettings TEXT NOT NULL DEFAULT '{"gaplessEnabled":true,"crossfeedEnabled":false,"crossfeedAmount":0.35,"selectedOutputDeviceId":null,"exclusiveMode":false,"bitPerfectPreference":false}',
+    audioProcessingSettings TEXT NOT NULL DEFAULT '{"gaplessEnabled":false,"crossfeedEnabled":false,"crossfeedAmount":0.35,"selectedOutputDeviceId":null,"exclusiveMode":false,"bitPerfectPreference":false}',
     eventSettings TEXT NOT NULL DEFAULT '{"provider":"Ticketmaster","backendTarget":"Production","localBackendUrl":null}'
 );
 
@@ -38,6 +39,7 @@ INSERT OR REPLACE INTO AppSettingsRow(
     equalizerProfile,
     nowPlayingVisualizerPreset,
     nowPlayingVisualizerInTvFrame,
+    showUltimateGuitarButton,
     blurredArtworkAppearance,
     fullBleedDetailArtwork,
     tintedBackgroundGradient,
@@ -46,7 +48,7 @@ INSERT OR REPLACE INTO AppSettingsRow(
     downloadPolicySettings,
     audioProcessingSettings,
     eventSettings
-) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 clear:
 DELETE FROM AppSettingsRow;

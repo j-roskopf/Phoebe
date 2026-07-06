@@ -146,6 +146,8 @@ private fun MobileExpandedUtilityControls(
     onCast: () -> Unit,
     onEqualizer: () -> Unit,
     onLyrics: () -> Unit,
+    onUltimateGuitar: (Track) -> Unit,
+    ultimateGuitarTrack: Track?,
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit,
     onShowVisualizerInTvFrame: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -168,6 +170,15 @@ private fun MobileExpandedUtilityControls(
         }
         MobileUtilityControl {
             TransportIcon(PhoebeIcon.Lyrics, "Lyrics", onLyrics)
+        }
+        if (ultimateGuitarTrack != null) {
+            MobileUtilityControl {
+                TransportIcon(
+                    PhoebeIcon.Guitar,
+                    "Open Ultimate Guitar",
+                    { onUltimateGuitar(ultimateGuitarTrack) },
+                )
+            }
         }
         MobileUtilityControl {
             VisualizerPresetButton(
@@ -215,6 +226,7 @@ fun MobilePlayer(
     equalizerRemoteUnavailable: Boolean = false,
     visualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
     showVisualizerInTvFrame: Boolean = false,
+    showUltimateGuitarButton: Boolean = true,
     blurredArtworkAppearance: Boolean = true,
     tintedBackgroundGradient: Boolean = false,
     audioAnalysis: AudioAnalysisFrame = AudioAnalysisFrame.Empty,
@@ -233,6 +245,7 @@ fun MobilePlayer(
     onOpenSongDetail: (Track) -> Unit = {},
     onCast: () -> Unit = {},
     onLyrics: () -> Unit = {},
+    onUltimateGuitar: (Track) -> Unit = {},
     onEqualizerEnabled: (Boolean) -> Unit = {},
     onEqualizerBandCount: (Int) -> Unit = {},
     onEqualizerGain: (Int, Float) -> Unit = { _, _ -> },
@@ -694,6 +707,8 @@ fun MobilePlayer(
                     onCast = onCast,
                     onEqualizer = { equalizerOpen = true },
                     onLyrics = onLyrics,
+                    onUltimateGuitar = onUltimateGuitar,
+                    ultimateGuitarTrack = track?.takeIf { showUltimateGuitarButton && it.title.isNotBlank() },
                     onVisualizerPreset = onVisualizerPreset,
                     onShowVisualizerInTvFrame = onShowVisualizerInTvFrame,
                     modifier = Modifier

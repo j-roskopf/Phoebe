@@ -33,6 +33,7 @@ data class PhoebeBackendConfig(
     val ticketmasterApiKey: String?,
     val seatGeekClientId: String?,
     val geniusAccessToken: String?,
+    val musicBrainzUserAgent: String,
     val allowedOrigins: List<String>,
     val cacheTtlMinutes: Long,
 ) {
@@ -42,6 +43,10 @@ data class PhoebeBackendConfig(
                 ticketmasterApiKey = System.getenv("TICKETMASTER_API_KEY")?.takeIf { it.isNotBlank() },
                 seatGeekClientId = System.getenv("SEATGEEK_CLIENT_ID")?.takeIf { it.isNotBlank() },
                 geniusAccessToken = System.getenv("GENIUS_ACCESS_TOKEN")?.takeIf { it.isNotBlank() },
+                musicBrainzUserAgent = System.getenv("MUSICBRAINZ_USER_AGENT")
+                    ?.trim()
+                    ?.takeIf { it.isNotBlank() }
+                    ?: DefaultMusicBrainzUserAgent,
                 allowedOrigins = System.getenv("ALLOWED_ORIGINS")
                     .orEmpty()
                     .split(',')
@@ -55,6 +60,8 @@ data class PhoebeBackendConfig(
             )
     }
 }
+
+const val DefaultMusicBrainzUserAgent = "Phoebe/0.1.0 (https://github.com/j-roskopf/Phoebe)"
 
 fun createPhoebeBackendHttpClient(): HttpClient = HttpClient(CIO) {
     install(HttpTimeout) {

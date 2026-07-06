@@ -1,6 +1,7 @@
 package com.phoebe.app.feature.settings
 
 import androidx.lifecycle.ViewModel
+import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.HomeSection
 import com.phoebe.app.domain.LibraryColumnVisibility
 import com.phoebe.app.domain.MobileBottomTab
@@ -35,7 +36,30 @@ class SettingsViewModel : ViewModel() {
     }
 
     fun onCrossfadeSeconds(seconds: Int) {
-        mutableState.update { it?.copy(appSettings = it.appSettings.copy(crossfadeSeconds = seconds)) }
+        mutableState.update { state ->
+            state?.copy(
+                appSettings = state.appSettings.copy(
+                    crossfadeSeconds = seconds,
+                    audioProcessing = if (seconds > 0) {
+                        state.appSettings.audioProcessing.copy(gaplessEnabled = false)
+                    } else {
+                        state.appSettings.audioProcessing
+                    },
+                ),
+            )
+        }
+    }
+
+    fun onAudioProcessingSettings(settings: AudioProcessingSettings) {
+        val normalized = settings.normalized()
+        mutableState.update { state ->
+            state?.copy(
+                appSettings = state.appSettings.copy(
+                    crossfadeSeconds = if (normalized.gaplessEnabled) 0 else state.appSettings.crossfadeSeconds,
+                    audioProcessing = normalized,
+                ),
+            )
+        }
     }
 
     fun onScanLibraryOnLaunch(enabled: Boolean) {
@@ -64,6 +88,10 @@ class SettingsViewModel : ViewModel() {
 
     fun onShowVisualizerInTvFrame(enabled: Boolean) {
         mutableState.update { it?.copy(appSettings = it.appSettings.copy(nowPlayingVisualizerInTvFrame = enabled)) }
+    }
+
+    fun onShowUltimateGuitarButton(enabled: Boolean) {
+        mutableState.update { it?.copy(appSettings = it.appSettings.copy(showUltimateGuitarButton = enabled)) }
     }
 
     fun onBlurredArtworkAppearance(enabled: Boolean) {

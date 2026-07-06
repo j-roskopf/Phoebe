@@ -84,6 +84,8 @@ fun DesktopTransport(
     onVolume: (Float) -> Unit,
     onSeek: (Long) -> Unit,
     onLyrics: () -> Unit,
+    onUltimateGuitar: (Track) -> Unit = {},
+    showUltimateGuitarButton: Boolean = true,
     onEqualizerEnabled: (Boolean) -> Unit = {},
     onEqualizerBandCount: (Int) -> Unit = {},
     onEqualizerGain: (Int, Float) -> Unit = { _, _ -> },
@@ -128,6 +130,7 @@ fun DesktopTransport(
         )
     }
     BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val ultimateGuitarTrack = track?.takeIf { showUltimateGuitarButton && it.title.isNotBlank() }
         val overflowSecondaryControls = maxWidth < 960.dp
         val denseTransport = maxWidth < 760.dp
         val horizontalPadding = when {
@@ -307,6 +310,13 @@ fun DesktopTransport(
                 }
             }
             if (overflowSecondaryControls) {
+                if (ultimateGuitarTrack != null) {
+                    TransportIcon(
+                        PhoebeIcon.Guitar,
+                        "Open Ultimate Guitar",
+                        { onUltimateGuitar(ultimateGuitarTrack) },
+                    )
+                }
                 Box {
                     TransportIcon(
                         PhoebeIcon.More,
@@ -331,6 +341,7 @@ fun DesktopTransport(
                         lyricsVisible = lyricsVisible,
                         upNextVisible = upNextVisible,
                         upNextToggleEnabled = upNextToggleEnabled,
+                        ultimateGuitarTrack = ultimateGuitarTrack,
                         onDismiss = { transportOptionsOpen = false },
                         onVolume = onVolume,
                         onCast = onCast,
@@ -338,6 +349,7 @@ fun DesktopTransport(
                         onVisualizerPreset = onVisualizerPreset,
                         onShowVisualizerInTvFrame = onShowVisualizerInTvFrame,
                         onLyrics = onLyrics,
+                        onUltimateGuitar = onUltimateGuitar,
                         onToggleUpNext = onToggleUpNext,
                     )
                 }
@@ -368,6 +380,13 @@ fun DesktopTransport(
                     onLyrics,
                     active = lyricsVisible,
                 )
+                if (ultimateGuitarTrack != null) {
+                    TransportIcon(
+                        PhoebeIcon.Guitar,
+                        "Open Ultimate Guitar",
+                        { onUltimateGuitar(ultimateGuitarTrack) },
+                    )
+                }
                 UpNextToggleIcon(
                     visible = upNextVisible,
                     enabled = upNextToggleEnabled,
@@ -631,6 +650,7 @@ private fun PlaybackOptionsMenu(
     lyricsVisible: Boolean,
     upNextVisible: Boolean,
     upNextToggleEnabled: Boolean,
+    ultimateGuitarTrack: Track?,
     onDismiss: () -> Unit,
     onVolume: (Float) -> Unit,
     onCast: () -> Unit,
@@ -638,6 +658,7 @@ private fun PlaybackOptionsMenu(
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit,
     onShowVisualizerInTvFrame: (Boolean) -> Unit,
     onLyrics: () -> Unit,
+    onUltimateGuitar: (Track) -> Unit,
     onToggleUpNext: () -> Unit,
 ) {
     DropdownMenu(expanded = expanded, onDismissRequest = onDismiss) {
@@ -708,6 +729,17 @@ private fun PlaybackOptionsMenu(
                 onDismiss()
             },
         )
+        if (ultimateGuitarTrack != null) {
+            PlaybackOptionsMenuItem(
+                icon = PhoebeIcon.Guitar,
+                text = "Open Ultimate Guitar",
+                active = false,
+                onClick = {
+                    onUltimateGuitar(ultimateGuitarTrack)
+                    onDismiss()
+                },
+            )
+        }
         PlaybackOptionsMenuItem(
             icon = PhoebeIcon.Queue,
             text = if (upNextVisible) "Hide Up Next" else "Show Up Next",

@@ -89,6 +89,18 @@ class DesktopAudioPlayer(
     private var remoteSampledFile: File? = null
     private var prefetchedCrossfade: PrefetchedCrossfade? = null
     private var crossfadePrefetchFuture: CompletableFuture<PrefetchedCrossfade?>? = null
+    private var gaplessPlayer: MediaPlayer? = null
+    private var gaplessPlayerPrerolled = false
+    private var gaplessPlayerHotStartRequested = false
+    private var gaplessPlayerHotStarted = false
+    private var gaplessSampledClip: Clip? = null
+    private var gaplessSampledStream: StreamingSampledPlayback? = null
+    private var gaplessSampledStreamSource: SampledStreamSource? = null
+    private var gaplessSampledStreamBufferSize = StreamingPcmBufferBytes
+    private var gaplessSampledStreamFirstBuffer: ByteArray? = null
+    private var gaplessSampledStreamFirstBufferLength = 0
+    private var gaplessGeneration = -1
+    private var gaplessTrackId: String? = null
     private var fullyBufferedPlayback = false
     private var pendingManualSeekGeneration = -1
     private var pendingManualSeekPositionMs = 0L
@@ -125,6 +137,14 @@ class DesktopAudioPlayer(
         FfmpegPcm,
     }
 
+    private data class PreparedGaplessSampledStream(
+        val playback: StreamingSampledPlayback,
+        val source: SampledStreamSource,
+        val bufferSize: Int,
+        val pendingFirstBuffer: ByteArray? = null,
+        val pendingFirstBufferLength: Int = 0,
+    )
+
     private class StreamingSampledPlayback(
         val line: SourceDataLine,
         val stream: AudioInputStream,
@@ -132,6 +152,7 @@ class DesktopAudioPlayer(
         val fullyBufferedDurationMs: Long?,
         val startPositionMs: Long,
         val onStop: (() -> Unit)? = null,
+        val closeLineOnStop: Boolean = true,
     ) {
         val stopped = AtomicBoolean(false)
         @Volatile
@@ -144,11 +165,14 @@ class DesktopAudioPlayer(
         var reportedEnergy = false
         @Volatile
         var reportedOutput = false
-        private val startedAtNs = System.nanoTime()
+        @Volatile
+        private var startedAtNs = System.nanoTime()
         @Volatile
         private var pausedAtNs: Long? = null
         @Volatile
         private var pausedDurationNs: Long = 0L
+        @Volatile
+        private var lineTransferred = false
 
         fun playbackPositionMs(nowNs: Long = System.nanoTime()): Long {
             val effectiveNowNs = pausedAtNs ?: nowNs
@@ -156,12 +180,28 @@ class DesktopAudioPlayer(
             return startPositionMs + elapsedNs / 1_000_000L
         }
 
+        fun markAudibleStart() {
+            startedAtNs = System.nanoTime()
+            pausedAtNs = null
+            pausedDurationNs = 0L
+        }
+
+        fun releaseLineForGaplessHandoff() {
+            lineTransferred = true
+            stopped.set(true)
+            paused = false
+            runCatching { stream.close() }
+            runCatching { onStop?.invoke() }
+        }
+
         fun stop() {
             stopped.set(true)
             paused = false
-            runCatching { line.stop() }
-            runCatching { line.flush() }
-            runCatching { line.close() }
+            if (closeLineOnStop && !lineTransferred) {
+                runCatching { line.stop() }
+                runCatching { line.flush() }
+                runCatching { line.close() }
+            }
             runCatching { stream.close() }
             runCatching { onStop?.invoke() }
         }
@@ -258,6 +298,7 @@ class DesktopAudioPlayer(
         JavaFxRuntime.runLater {
             runCatching { player?.pause() }
             runCatching { fadingOutPlayer?.pause() }
+            disposeGaplessPlayer()
         }
     }
 
@@ -293,6 +334,17 @@ class DesktopAudioPlayer(
                         PhoebeLog.d("DesktopAudioPlayer") { "resolved playlist stream $activeUri -> $resolved" }
                         activeUri = resolved
                     }
+                }
+                if (shouldRouteRemoteGaplessThroughPcm(
+                        activeUri = activeUri,
+                        isKnownLiveStream = isKnownLiveStream,
+                    )
+                ) {
+                    PhoebeLog.d("DesktopAudioPlayer") { "gapless ffmpeg pcm route requested for $activeUri" }
+                    if (tryStartFfmpegPcmStream(activeUri, generation)) {
+                        return@execute
+                    }
+                    PhoebeLog.d("DesktopAudioPlayer") { "gapless ffmpeg pcm route unavailable; falling back to JavaFX" }
                 }
                 val routePcmBeforeJavaFx = file == null &&
                     !DesktopSandboxPlayback.isFlatpakSandbox() &&
@@ -557,6 +609,7 @@ class DesktopAudioPlayer(
         val v = volume.coerceIn(0f, 1f)
         playbackExecutor.execute {
             JavaFxRuntime.runLater { player?.volume = v.toDouble() }
+            JavaFxRuntime.runLater { gaplessPlayer?.volume = v.toDouble() }
             applySampledVolume(v)
         }
     }
@@ -566,10 +619,352 @@ class DesktopAudioPlayer(
         playbackExecutor.execute {
             JavaFxRuntime.runLater {
                 applyJavaFxEqualizer(player, normalized)
+                applyJavaFxEqualizer(gaplessPlayer, normalized)
                 applyJavaFxEqualizer(fadingOutPlayer, normalized)
             }
         }
     }
+
+    override fun startGaplessPrepareOnPlatform(
+        queue: List<Track>,
+        targetIndex: Int,
+        track: Track,
+        generation: Int,
+    ): Boolean {
+        val uri = desktopPlaybackUriForTrack(track)
+        if (targetIndex !in queue.indices || uri.isBlank()) return false
+        val activeSampledStream = sampledStream
+        if (activeSampledStream != null) {
+            gaplessGeneration = generation
+            gaplessTrackId = track.id
+            resetGaplessJavaFxHotStartState()
+            playbackExecutor.execute {
+                if (!isGaplessPrepareCurrent(generation, track.id) || sampledStream !== activeSampledStream) {
+                    return@execute
+                }
+                disposeGaplessSampledStream()
+                val prepared = if (sampledStreamSource?.decoder == SampledStreamDecoder.FfmpegPcm) {
+                    prepareGaplessFfmpegPcmStream(uri, track, activeSampledStream)
+                } else {
+                    prepareGaplessSampledStream(uri, track, activeSampledStream)
+                }
+                if (!isGaplessPrepareCurrent(generation, track.id) || sampledStream !== activeSampledStream) {
+                    prepared?.playback?.stop()
+                    return@execute
+                }
+                if (prepared == null) {
+                    PhoebeLog.d("DesktopAudioPlayer") { "gapless sampled stream prepare failed for ${track.id}" }
+                    clearGaplessPrepareState()
+                    gaplessGeneration = -1
+                    gaplessTrackId = null
+                    return@execute
+                }
+                PhoebeLog.d("DesktopAudioPlayer") { "gapless sampled stream prepared for ${track.id}" }
+                gaplessSampledStream = prepared.playback
+                gaplessSampledStreamSource = prepared.source
+                gaplessSampledStreamBufferSize = prepared.bufferSize
+                gaplessSampledStreamFirstBuffer = prepared.pendingFirstBuffer
+                gaplessSampledStreamFirstBufferLength = prepared.pendingFirstBufferLength
+            }
+            return true
+        }
+        val activeSampledClip = sampledClip
+        if (activeSampledClip != null && sampledStream == null) {
+            val file = uriToLocalFile(uri)
+            if (file == null || !preferSampledPlayback(file)) {
+                gaplessGeneration = generation
+                gaplessTrackId = track.id
+                resetGaplessJavaFxHotStartState()
+                playbackExecutor.execute {
+                    if (!isGaplessPrepareCurrent(generation, track.id) || sampledClip !== activeSampledClip) {
+                        return@execute
+                    }
+                    disposeGaplessSampledStream()
+                    val prepared = prepareGaplessSampledStream(uri, track)
+                    if (!isGaplessPrepareCurrent(generation, track.id) || sampledClip !== activeSampledClip) {
+                        prepared?.playback?.stop()
+                        return@execute
+                    }
+                    if (prepared == null) {
+                        PhoebeLog.d("DesktopAudioPlayer") { "gapless sampled stream prepare failed for ${track.id}" }
+                        clearGaplessPrepareState()
+                        gaplessGeneration = -1
+                        gaplessTrackId = null
+                        return@execute
+                    }
+                    PhoebeLog.d("DesktopAudioPlayer") { "gapless sampled stream prepared for ${track.id}" }
+                    gaplessSampledStream = prepared.playback
+                    gaplessSampledStreamSource = prepared.source
+                    gaplessSampledStreamBufferSize = prepared.bufferSize
+                    gaplessSampledStreamFirstBuffer = prepared.pendingFirstBuffer
+                    gaplessSampledStreamFirstBufferLength = prepared.pendingFirstBufferLength
+                }
+                return true
+            }
+            gaplessGeneration = generation
+            gaplessTrackId = track.id
+            resetGaplessJavaFxHotStartState()
+            playbackExecutor.execute {
+                if (!isGaplessPrepareCurrent(generation, track.id) || sampledClip !== activeSampledClip) return@execute
+                disposeGaplessSampledClip()
+                val prepared = openPreparedSampledClip(file)
+                if (!isGaplessPrepareCurrent(generation, track.id) || sampledClip !== activeSampledClip) {
+                    runCatching {
+                        prepared?.stop()
+                        prepared?.close()
+                    }
+                    return@execute
+                }
+                gaplessSampledClip = prepared ?: run {
+                    PhoebeLog.d("DesktopAudioPlayer") { "gapless sampled clip prepare failed for ${track.id}" }
+                    clearGaplessPrepareState()
+                    gaplessGeneration = -1
+                    gaplessTrackId = null
+                    return@execute
+                }
+                PhoebeLog.d("DesktopAudioPlayer") { "gapless sampled clip prepared for ${track.id}" }
+            }
+            return true
+        }
+        if (player == null || sampledStream != null || javaFxPlaybackExtensionFromTrack(track, uri) == null) return false
+        gaplessGeneration = generation
+        gaplessTrackId = track.id
+        resetGaplessJavaFxHotStartState()
+        JavaFxRuntime.runLater {
+            if (!isGaplessPrepareCurrent(generation, track.id)) {
+                return@runLater
+            }
+            disposeGaplessPlayer()
+            gaplessGeneration = generation
+            gaplessTrackId = track.id
+            resetGaplessJavaFxHotStartState()
+            runCatching {
+                val media = Media(uri)
+                val prepared = MediaPlayer(media)
+                gaplessPlayer = prepared
+                prepared.setMute(true)
+                prepared.volume = 0.0
+                applyJavaFxEqualizer(prepared, equalizerProfile)
+                fun discardIfStale() {
+                    if (gaplessPlayer === prepared && !isGaplessPrepareCurrent(generation, track.id)) {
+                        disposeGaplessPlayer()
+                    }
+                }
+                prepared.setOnError {
+                    diagnostics.playbackError(PlaybackEnginePath.JavaFxMediaPlayer, prepared.error?.message)
+                    if (gaplessPlayer === prepared) disposeGaplessPlayer()
+                }
+                prepared.setOnReady {
+                    discardIfStale()
+                }
+                prepared.setOnPlaying {
+                    if (!isGaplessPrepareCurrent(generation, track.id) || gaplessPlayer !== prepared) {
+                        discardIfStale()
+                        return@setOnPlaying
+                    }
+                    if (gaplessPlayerHotStartRequested) {
+                        gaplessPlayerHotStarted = true
+                        PhoebeLog.d("DesktopAudioPlayer") { "gapless JavaFX hot-started for ${track.id}" }
+                        return@setOnPlaying
+                    }
+                    if (gaplessPlayerPrerolled) return@setOnPlaying
+                    prepared.pause()
+                    prepared.seek(javafx.util.Duration.ZERO)
+                    prepared.setMute(false)
+                    prepared.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+                    gaplessPlayerPrerolled = true
+                    scheduleJavaFxGaplessHotStart(generation, track.id)
+                    scheduleJavaFxGaplessBoundaryCommit(generation, track.id)
+                    PhoebeLog.d("DesktopAudioPlayer") { "gapless JavaFX prerolled for ${track.id}" }
+                }
+                media.setOnError {
+                    diagnostics.playbackError(PlaybackEnginePath.JavaFxMediaPlayer, media.error?.message)
+                    if (gaplessPlayer === prepared) disposeGaplessPlayer()
+                }
+                prepared.play()
+            }.onFailure { error ->
+                diagnostics.playbackError(PlaybackEnginePath.JavaFxMediaPlayer, error.message)
+                disposeGaplessPlayer()
+            }
+        }
+        return true
+    }
+
+    override fun commitGaplessPreparedOnPlatform(
+        queue: List<Track>,
+        targetIndex: Int,
+        track: Track,
+        generation: Int,
+    ): Boolean {
+        if (gaplessGeneration != generation || gaplessTrackId != track.id) return false
+        gaplessSampledStream?.let { incoming ->
+            val incomingSource = gaplessSampledStreamSource
+            val incomingBufferSize = gaplessSampledStreamBufferSize
+            val firstBuffer = gaplessSampledStreamFirstBuffer
+            val firstBufferLength = gaplessSampledStreamFirstBufferLength
+            val outgoingStream = sampledStream
+            val outgoingClip = sampledClip
+            val sameLineHandoff = outgoingStream != null &&
+                !incoming.closeLineOnStop &&
+                outgoingStream.line === incoming.line
+            gaplessSampledStream = null
+            gaplessSampledStreamSource = null
+            gaplessSampledStreamBufferSize = StreamingPcmBufferBytes
+            gaplessSampledStreamFirstBuffer = null
+            gaplessSampledStreamFirstBufferLength = 0
+            gaplessGeneration = -1
+            gaplessTrackId = null
+            runCatching {
+                outgoingClip?.stop()
+                outgoingClip?.close()
+            }
+            if (sameLineHandoff) {
+                outgoingStream.releaseLineForGaplessHandoff()
+            } else {
+                runCatching { outgoingStream?.stop() }
+            }
+            sampledClip = null
+            sampledStream = incoming
+            sampledStreamSource = incomingSource
+            applyVolumeToLine(incoming.line, effectiveOutputVolume())
+            runCatching {
+                incoming.markAudibleStart()
+                if (!incoming.line.isRunning) {
+                    incoming.line.start()
+                }
+                if (firstBuffer != null && firstBufferLength > 0) {
+                    writeSampledStreamBuffer(incoming, firstBuffer, firstBufferLength, generation)
+                }
+            }.onFailure { error ->
+                logPlaybackFailure(error)
+                diagnostics.playbackError(PlaybackEnginePath.SampledStream, error.message)
+                incoming.stop()
+                if (sampledStream === incoming) {
+                    sampledStream = null
+                    sampledStreamSource = null
+                }
+                return false
+            }
+            PhoebeLog.d("DesktopAudioPlayer") {
+                if (sameLineHandoff) {
+                    "gapless sampled stream committed on shared line for ${track.id}"
+                } else {
+                    "gapless sampled stream committed for ${track.id}"
+                }
+            }
+            diagnostics.engineSelected(PlaybackEnginePath.SampledStream)
+            syncSampledStreamPlayback(incoming, generation)
+            startSampledStreamPump(incoming, incomingBufferSize, generation)
+            return true
+        }
+        gaplessSampledClip?.let { incoming ->
+            val outgoing = sampledClip
+            gaplessSampledClip = null
+            gaplessGeneration = -1
+            gaplessTrackId = null
+            runCatching {
+                outgoing?.stop()
+                outgoing?.close()
+            }
+            sampledClip = incoming
+            sampledStream = null
+            sampledStreamSource = null
+            applyVolumeToClip(incoming, effectiveOutputVolume())
+            runCatching {
+                incoming.microsecondPosition = 0L
+                incoming.start()
+            }.onFailure { error ->
+                logPlaybackFailure(error)
+                diagnostics.playbackError(PlaybackEnginePath.SampledClip, error.message)
+                runCatching {
+                    incoming.stop()
+                    incoming.close()
+                }
+                sampledClip = null
+                return false
+            }
+            diagnostics.engineSelected(PlaybackEnginePath.SampledClip)
+            PhoebeLog.d("DesktopAudioPlayer") { "gapless sampled clip committed for ${track.id}" }
+            startSampledProgressProbe(incoming, generation)
+            return true
+        }
+        var committed = false
+        val latch = CountDownLatch(1)
+        val action = {
+            try {
+                val incoming = gaplessPlayer
+                if (incoming == null || !isPlayRequestCurrent(generation)) {
+                    disposeGaplessPlayer()
+                } else {
+                    val outgoing = player
+                    val hotStarted = gaplessPlayerHotStarted && incoming.status == MediaPlayer.Status.PLAYING
+                    player = incoming
+                    gaplessPlayer = null
+                    gaplessGeneration = -1
+                    gaplessTrackId = null
+                    incoming.setOnReady(null)
+                    incoming.setOnPlaying(null)
+                    incoming.setMute(false)
+                    incoming.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+                    incoming.setOnEndOfMedia {
+                        if (isPlayRequestCurrent(generation) && player === incoming) {
+                            advanceAfterPlatformTrackEnded(generation)
+                        }
+                    }
+                    incoming.bufferProgressTimeProperty().addListener { _, _, _ ->
+                        if (player === incoming) syncJavaFxPlayback(incoming, generation, isBuffering = false)
+                    }
+                    incoming.currentTimeProperty().addListener { _, _, _ ->
+                        if (player === incoming) syncJavaFxPlayback(incoming, generation, isBuffering = false)
+                    }
+                    if (!hotStarted) {
+                        incoming.seek(javafx.util.Duration.ZERO)
+                        incoming.play()
+                    }
+                    resetGaplessJavaFxHotStartState()
+                    PhoebeLog.d("DesktopAudioPlayer") { "gapless JavaFX committed for ${track.id}" }
+                    startJavaFxProgressProbe(incoming, generation)
+                    runCatching {
+                        outgoing?.stop()
+                        outgoing?.dispose()
+                    }
+                    committed = true
+                }
+            } finally {
+                latch.countDown()
+            }
+        }
+        if (Platform.isFxApplicationThread()) {
+            action()
+        } else {
+            JavaFxRuntime.runLater(action)
+            latch.await(1, TimeUnit.SECONDS)
+        }
+        return committed
+    }
+
+    override fun cancelGaplessPrepareOnPlatform(generation: Int) {
+        if (gaplessGeneration != generation) return
+        gaplessGeneration = -1
+        gaplessTrackId = null
+        resetGaplessJavaFxHotStartState()
+        playbackExecutor.execute {
+            disposeGaplessSampledClip()
+            disposeGaplessSampledStream()
+        }
+        JavaFxRuntime.runLater { disposeGaplessPlayer() }
+    }
+
+    private fun resetGaplessJavaFxHotStartState() {
+        gaplessPlayerPrerolled = false
+        gaplessPlayerHotStartRequested = false
+        gaplessPlayerHotStarted = false
+    }
+
+    private fun isGaplessPrepareCurrent(generation: Int, trackId: String): Boolean =
+        isPlayRequestCurrent(generation) &&
+            gaplessGeneration == generation &&
+            gaplessTrackId == trackId
 
     override fun startCrossfadeOnPlatform(
         queue: List<Track>,
@@ -874,7 +1269,9 @@ class DesktopAudioPlayer(
                     }
                     incoming.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
                     incoming.setOnEndOfMedia {
-                        if (isPlayRequestCurrent(generation)) next()
+                        if (isPlayRequestCurrent(generation) && player === incoming) {
+                            advanceAfterPlatformTrackEnded(generation)
+                        }
                     }
                     incoming.bufferProgressTimeProperty().addListener { _, _, _ ->
                         if (player === incoming) syncJavaFxPlayback(incoming, generation, isBuffering = false)
@@ -907,6 +1304,7 @@ class DesktopAudioPlayer(
     private fun applyVolumesFromState() {
         val v = effectiveOutputVolume()
         JavaFxRuntime.runLater { player?.volume = v.toDouble() }
+        JavaFxRuntime.runLater { gaplessPlayer?.volume = v.toDouble() }
         applySampledVolume(v)
     }
 
@@ -1007,6 +1405,12 @@ class DesktopAudioPlayer(
         sampledClip?.let { clip ->
             applyVolumeToClip(clip, volume)
         }
+        gaplessSampledClip?.let { clip ->
+            applyVolumeToClip(clip, volume)
+        }
+        gaplessSampledStream?.let { stream ->
+            applyVolumeToLine(stream.line, volume)
+        }
         sampledStream?.let { stream ->
             applyVolumeToLine(stream.line, volume)
         }
@@ -1081,6 +1485,16 @@ class DesktopAudioPlayer(
         }
         return true
     }
+
+    private fun shouldRouteRemoteGaplessThroughPcm(
+        activeUri: String,
+        isKnownLiveStream: Boolean,
+    ): Boolean =
+        isGaplessConfigured &&
+            !isKnownLiveStream &&
+            isRemoteUri(activeUri) &&
+            state.value.durationMs > 0L &&
+            findFfmpegExecutable() != null
 
     private fun finishPlaybackReady(isPlaying: Boolean = true, generation: Int = activePlayGeneration) {
         DesktopInlineRadioMapCoordinator.endLiveRadioStartup()
@@ -1257,8 +1671,8 @@ class DesktopAudioPlayer(
                         failStartup()
                     }
                     mediaPlayer.setOnEndOfMedia {
-                        if (isPlayRequestCurrent(generation)) {
-                            next()
+                        if (isPlayRequestCurrent(generation) && player === mediaPlayer) {
+                            advanceAfterPlatformTrackEnded(generation)
                         }
                     }
                     media.setOnError {
@@ -1453,68 +1867,13 @@ class DesktopAudioPlayer(
         fullyBufferedDurationMs: Long? = state.value.durationMs.takeIf { it > 0L },
     ): Boolean {
         if (!isRemoteUri(uri) || !isPlayRequestCurrent(generation)) return false
-        val ffmpeg = findFfmpegExecutable() ?: return false
         val startPositionMs = initialPositionMs.coerceAtLeast(0L).let { position ->
             fullyBufferedDurationMs?.takeIf { it > 0L }?.let { duration -> position.coerceAtMost(duration) }
                 ?: position
         }
-        val command = mutableListOf(
-            ffmpeg,
-            "-nostdin",
-            "-hide_banner",
-            "-loglevel",
-            "error",
-            "-reconnect",
-            "1",
-            "-reconnect_streamed",
-            "1",
-            "-reconnect_delay_max",
-            "5",
-            "-user_agent",
-            "Phoebe/0.1.0 (https://github.com/phoebe)",
-        )
-        if (startPositionMs > 0L) {
-            command += "-ss"
-            command += (startPositionMs.toDouble() / 1_000.0).toString()
-        }
-        command += listOf(
-            "-i",
-            uri,
-            "-vn",
-            "-f",
-            "s16le",
-            "-acodec",
-            "pcm_s16le",
-            "-ar",
-            FfmpegPcmSampleRateHz.toString(),
-            "-ac",
-            FfmpegPcmChannels.toString(),
-            "-flush_packets",
-            "1",
-            "pipe:1",
-        )
-        val process = runCatching {
-            ProcessBuilder(command)
-                .redirectError(ProcessBuilder.Redirect.DISCARD)
-                .start()
-        }.getOrElse { error ->
-            PhoebeLog.d("DesktopAudioPlayer") { "ffmpeg fallback unavailable: ${error.message}" }
-            return false
-        }
-        val format = AudioFormat(
-            AudioFormat.Encoding.PCM_SIGNED,
-            FfmpegPcmSampleRateHz.toFloat(),
-            16,
-            FfmpegPcmChannels,
-            FfmpegPcmChannels * 2,
-            FfmpegPcmSampleRateHz.toFloat(),
-            false,
-        )
-        val stream = AudioInputStream(
-            BufferedInputStream(process.inputStream, RemoteAudioProbeBufferBytes),
-            format,
-            AudioSystem.NOT_SPECIFIED.toLong(),
-        )
+        val ffmpegPcm = openFfmpegPcmStream(uri, startPositionMs) ?: return false
+        val process = ffmpegPcm.process
+        val stream = ffmpegPcm.stream
         val started = tryStartPcmSampledStream(
             pcmStream = stream,
             generation = generation,
@@ -1540,6 +1899,79 @@ class DesktopAudioPlayer(
         }
         return started
     }
+
+    private data class FfmpegPcmStream(
+        val process: Process,
+        val stream: AudioInputStream,
+    )
+
+    private fun openFfmpegPcmStream(uri: String, startPositionMs: Long = 0L): FfmpegPcmStream? {
+        val ffmpeg = findFfmpegExecutable() ?: return null
+        val command = ffmpegPcmCommand(ffmpeg, uri, startPositionMs)
+        val process = runCatching {
+            ProcessBuilder(command)
+                .redirectError(ProcessBuilder.Redirect.DISCARD)
+                .start()
+        }.getOrElse { error ->
+            PhoebeLog.d("DesktopAudioPlayer") { "ffmpeg fallback unavailable: ${error.message}" }
+            return null
+        }
+        val stream = AudioInputStream(
+            BufferedInputStream(process.inputStream, RemoteAudioProbeBufferBytes),
+            ffmpegPcmAudioFormat(),
+            AudioSystem.NOT_SPECIFIED.toLong(),
+        )
+        return FfmpegPcmStream(process, stream)
+    }
+
+    private fun ffmpegPcmCommand(
+        ffmpeg: String,
+        uri: String,
+        startPositionMs: Long,
+    ): List<String> = buildList {
+        add(ffmpeg)
+        add("-nostdin")
+        add("-hide_banner")
+        add("-loglevel")
+        add("error")
+        add("-reconnect")
+        add("1")
+        add("-reconnect_streamed")
+        add("1")
+        add("-reconnect_delay_max")
+        add("5")
+        add("-user_agent")
+        add("Phoebe/0.1.0 (https://github.com/phoebe)")
+        if (startPositionMs > 0L) {
+            add("-ss")
+            add((startPositionMs.toDouble() / 1_000.0).toString())
+        }
+        add("-i")
+        add(uri)
+        add("-vn")
+        add("-f")
+        add("s16le")
+        add("-acodec")
+        add("pcm_s16le")
+        add("-ar")
+        add(FfmpegPcmSampleRateHz.toString())
+        add("-ac")
+        add(FfmpegPcmChannels.toString())
+        add("-flush_packets")
+        add("1")
+        add("pipe:1")
+    }
+
+    private fun ffmpegPcmAudioFormat(): AudioFormat =
+        AudioFormat(
+            AudioFormat.Encoding.PCM_SIGNED,
+            FfmpegPcmSampleRateHz.toFloat(),
+            16,
+            FfmpegPcmChannels,
+            FfmpegPcmChannels * 2,
+            FfmpegPcmSampleRateHz.toFloat(),
+            false,
+        )
 
     private fun findFfmpegExecutable(): String? {
         val isWindows = System.getProperty("os.name").orEmpty().lowercase().contains("windows")
@@ -1675,6 +2107,196 @@ class DesktopAudioPlayer(
         syncSampledStreamPlayback(playback, generation)
         startSampledStreamPump(playback, bufferSize, generation)
         return true
+    }
+
+    private fun prepareGaplessSampledStream(
+        uri: String,
+        track: Track,
+        sharedPlayback: StreamingSampledPlayback? = null,
+    ): PreparedGaplessSampledStream? {
+        val localFile = uriToLocalFile(uri)
+        val inputStream: InputStream
+        val extension: String
+        val source: SampledStreamSource
+        if (localFile != null) {
+            extension = streamingSampledExtensionFromTrack(track, localFile.toURI().toString())
+                ?: sampledPlaybackExtensionFromTrack(track, localFile.toURI().toString())
+                ?: return null
+            inputStream = runCatching { localFile.inputStream() }
+                .getOrElse { error ->
+                    logPlaybackFailure(error)
+                    diagnostics.playbackError(PlaybackEnginePath.SampledStream, error.message)
+                    return null
+                }
+            source = SampledStreamSource(
+                uri = null,
+                file = localFile,
+                extension = extension,
+                fullyBufferedDurationMs = track.durationMs.takeIf { it > 0L },
+                diagnosticLabel = "gapless-file-$extension",
+            )
+        } else {
+            if (!isRemoteUri(uri)) return null
+            val response = runCatching { openRemoteAudioStream(uri) }
+                .getOrElse { error ->
+                    logPlaybackFailure(error)
+                    diagnostics.playbackError(PlaybackEnginePath.SampledStream, error.message)
+                    return null
+                }
+            extension = streamingSampledExtensionFromTrack(track, uri)
+                ?: sampledPlaybackExtensionFromTrack(track, uri)
+                ?: sampledStreamingExtensionFromContentType(response.contentType)
+                ?: run {
+                    runCatching { response.inputStream.close() }
+                    return null
+                }
+            inputStream = response.inputStream
+            source = SampledStreamSource(
+                uri = uri,
+                file = null,
+                extension = extension,
+                fullyBufferedDurationMs = track.durationMs.takeIf { it > 0L },
+                diagnosticLabel = "gapless-remote-$extension",
+            )
+        }
+        return prepareGaplessSampledStreamFromInput(inputStream, extension, source, sharedPlayback)
+    }
+
+    private fun prepareGaplessFfmpegPcmStream(
+        uri: String,
+        track: Track,
+        sharedPlayback: StreamingSampledPlayback,
+    ): PreparedGaplessSampledStream? {
+        if (!isRemoteUri(uri)) return null
+        val ffmpegPcm = openFfmpegPcmStream(uri) ?: return null
+        val pcmStream = ffmpegPcm.stream
+        val format = pcmStream.format
+        if (!format.isCompatibleForGaplessHandoff(sharedPlayback.stream.format)) {
+            runCatching { pcmStream.close() }
+            runCatching { ffmpegPcm.process.destroyForcibly() }
+            return null
+        }
+        val firstBuffer = ByteArray(StreamingPcmBufferBytes)
+        val firstRead = runCatching { pcmStream.read(firstBuffer, 0, firstBuffer.size) }
+            .getOrElse { error ->
+                runCatching { pcmStream.close() }
+                runCatching { ffmpegPcm.process.destroyForcibly() }
+                logPlaybackFailure(error)
+                diagnostics.playbackError(PlaybackEnginePath.SampledStream, error.message)
+                return null
+            }
+        if (firstRead < 0) {
+            runCatching { pcmStream.close() }
+            runCatching { ffmpegPcm.process.destroyForcibly() }
+            return null
+        }
+        val source = SampledStreamSource(
+            uri = uri,
+            file = null,
+            extension = FfmpegPcmStreamExtension,
+            fullyBufferedDurationMs = track.durationMs.takeIf { it > 0L },
+            diagnosticLabel = "gapless-ffmpeg-pcm",
+            decoder = SampledStreamDecoder.FfmpegPcm,
+        )
+        val playback = StreamingSampledPlayback(
+            line = sharedPlayback.line,
+            stream = pcmStream,
+            equalizerProcessor = streamingEqualizerProcessor(format),
+            fullyBufferedDurationMs = source.fullyBufferedDurationMs,
+            startPositionMs = 0L,
+            onStop = { ffmpegPcm.process.destroyForcibly() },
+            closeLineOnStop = false,
+        )
+        return PreparedGaplessSampledStream(
+            playback = playback,
+            source = source,
+            bufferSize = sourceLineBufferSize(format),
+            pendingFirstBuffer = firstBuffer.copyOf(firstRead),
+            pendingFirstBufferLength = firstRead,
+        )
+    }
+
+    private fun prepareGaplessSampledStreamFromInput(
+        inputStream: InputStream,
+        extension: String,
+        source: SampledStreamSource,
+        sharedPlayback: StreamingSampledPlayback? = null,
+    ): PreparedGaplessSampledStream? {
+        val pcmStream = runCatching {
+            val raw = openStreamingRawAudioInputStream(inputStream, extension)
+            preparePcmForSourceLine(raw)
+        }.getOrElse { error ->
+            runCatching { inputStream.close() }
+            logPlaybackFailure(error)
+            diagnostics.playbackError(PlaybackEnginePath.SampledStream, error.message)
+            return null
+        }
+        val format = pcmStream.format
+        val sharedLine = sharedPlayback?.line
+        if (sharedPlayback != null &&
+            (sharedLine == null || !format.isCompatibleForGaplessHandoff(sharedPlayback.stream.format))
+        ) {
+            runCatching { pcmStream.close() }
+            return null
+        }
+        val bufferSize = sourceLineBufferSize(format)
+        val line = sharedLine ?: runCatching {
+            val info = DataLine.Info(SourceDataLine::class.java, format)
+            (AudioSystem.getLine(info) as SourceDataLine).also { it.open(format, bufferSize) }
+        }.getOrElse { error ->
+            runCatching { pcmStream.close() }
+            logPlaybackFailure(error)
+            diagnostics.playbackError(PlaybackEnginePath.SampledStream, error.message)
+            return null
+        }
+        val firstBuffer = ByteArray(StreamingPcmBufferBytes)
+        val firstRead = runCatching { pcmStream.read(firstBuffer, 0, firstBuffer.size) }
+            .getOrElse { error ->
+                if (sharedLine == null) runCatching { line.close() }
+                runCatching { pcmStream.close() }
+                logPlaybackFailure(error)
+                diagnostics.playbackError(PlaybackEnginePath.SampledStream, error.message)
+                return null
+            }
+        if (firstRead < 0) {
+            if (sharedLine == null) runCatching { line.close() }
+            runCatching { pcmStream.close() }
+            return null
+        }
+        val playback = StreamingSampledPlayback(
+            line = line,
+            stream = pcmStream,
+            equalizerProcessor = streamingEqualizerProcessor(format),
+            fullyBufferedDurationMs = source.fullyBufferedDurationMs,
+            startPositionMs = 0L,
+            closeLineOnStop = sharedLine == null,
+        )
+        if (sharedLine == null) {
+            applyVolumeToLine(line, effectiveOutputVolume())
+        }
+        val pendingFirstBuffer = if (sharedLine != null && firstRead > 0) {
+            firstBuffer.copyOf(firstRead)
+        } else {
+            null
+        }
+        if (sharedLine == null && firstRead > 0) {
+            applyEqualizerToPcmBuffer(
+                buffer = firstBuffer,
+                length = firstRead,
+                format = format,
+                processor = playback.equalizerProcessor,
+            )
+            val written = line.write(firstBuffer, 0, firstRead).coerceAtLeast(0)
+            playback.lastWriteAtNs = System.nanoTime()
+            playback.writtenPcmBytes += written.toLong()
+        }
+        return PreparedGaplessSampledStream(
+            playback = playback,
+            source = source,
+            bufferSize = bufferSize,
+            pendingFirstBuffer = pendingFirstBuffer,
+            pendingFirstBufferLength = pendingFirstBuffer?.size ?: 0,
+        )
     }
 
     private fun restartSampledStreamAt(
@@ -1827,6 +2449,15 @@ class DesktopAudioPlayer(
             .coerceAtMost(MaxStreamingLineBufferBytes)
     }
 
+    private fun AudioFormat.isCompatibleForGaplessHandoff(other: AudioFormat): Boolean =
+        encoding == other.encoding &&
+            channels == other.channels &&
+            sampleSizeInBits == other.sampleSizeInBits &&
+            frameSize == other.frameSize &&
+            isBigEndian == other.isBigEndian &&
+            sampleRate == other.sampleRate &&
+            frameRate == other.frameRate
+
     private fun startSampledStreamPump(
         playback: StreamingSampledPlayback,
         bufferSize: Int,
@@ -1844,8 +2475,10 @@ class DesktopAudioPlayer(
                     syncSampledStreamPlayback(playback, generation)
                 }
                 if (isPlayRequestCurrent(generation) && sampledStream === playback && !playback.stopped.get()) {
-                    runCatching { playback.line.drain() }
-                    next()
+                    if (!commitPreparedGapless(generation)) {
+                        runCatching { playback.line.drain() }
+                        advanceAfterPlatformTrackEnded(generation)
+                    }
                 }
             } catch (error: Throwable) {
                 if (isPlayRequestCurrent(generation) && sampledStream === playback && !playback.stopped.get()) {
@@ -2219,7 +2852,7 @@ class DesktopAudioPlayer(
         error("Clip playback needs 16-bit PCM; unsupported format: $fmt")
     }
 
-    private fun openAndStartSampledClip(file: File, initialVolume: Float = effectiveOutputVolume()): Clip? {
+    private fun openPreparedSampledClip(file: File, initialVolume: Float = effectiveOutputVolume()): Clip? {
         val pcmStream = try {
             decodeToPcmStream(file)
         } catch (e: Throwable) {
@@ -2244,7 +2877,6 @@ class DesktopAudioPlayer(
                 throw e
             }
             applyVolumeToClip(clip, initialVolume)
-            clip.start()
             clip
         }.getOrElse { e ->
             logPlaybackFailure(e)
@@ -2252,6 +2884,11 @@ class DesktopAudioPlayer(
             null
         }
     }
+
+    private fun openAndStartSampledClip(file: File, initialVolume: Float = effectiveOutputVolume()): Clip? =
+        openPreparedSampledClip(file, initialVolume)?.also { clip ->
+            clip.start()
+        }
 
     private fun applyEqualizerToPcmStream(stream: AudioInputStream): AudioInputStream {
         val profile = equalizerProfile.normalized()
@@ -2341,10 +2978,49 @@ class DesktopAudioPlayer(
         }
         remoteSampledFile = null
         fullyBufferedPlayback = false
+        disposeGaplessSampledClip()
+        disposeGaplessSampledStream()
+    }
+
+    private fun disposeGaplessSampledClip() {
+        runCatching {
+            gaplessSampledClip?.stop()
+            gaplessSampledClip?.close()
+        }
+        gaplessSampledClip = null
+    }
+
+    private fun disposeGaplessSampledStream() {
+        runCatching { gaplessSampledStream?.stop() }
+        gaplessSampledStream = null
+        gaplessSampledStreamSource = null
+        gaplessSampledStreamBufferSize = StreamingPcmBufferBytes
+        gaplessSampledStreamFirstBuffer = null
+        gaplessSampledStreamFirstBufferLength = 0
+    }
+
+    private fun disposeGaplessPlayer() {
+        runCatching {
+            gaplessPlayer?.stop()
+            gaplessPlayer?.dispose()
+        }
+        gaplessPlayer = null
+        disposeGaplessSampledClip()
+        disposeGaplessSampledStream()
+        resetGaplessJavaFxHotStartState()
+        gaplessGeneration = -1
+        gaplessTrackId = null
     }
 
     private fun disposeJavaFxBlocking() {
-        if (player == null && fadingOutPlayer == null) return
+        if (player == null &&
+            fadingOutPlayer == null &&
+            gaplessPlayer == null &&
+            gaplessSampledClip == null &&
+            gaplessSampledStream == null
+        ) {
+            return
+        }
         stopJavaFxProgressProbe()
         val latch = CountDownLatch(1)
         JavaFxRuntime.runLater {
@@ -2358,6 +3034,7 @@ class DesktopAudioPlayer(
                 fadingOutPlayer?.dispose()
             }
             fadingOutPlayer = null
+            disposeGaplessPlayer()
             latch.countDown()
         }
         if (latch.await(30, TimeUnit.SECONDS)) {
@@ -2447,6 +3124,7 @@ class DesktopAudioPlayer(
         val platformBufferedMs = javafxDurationMs(mediaPlayer.bufferProgressTime).coerceAtLeast(positionMs)
         val bufferedMs = if (fullyBufferedPlayback && durationMs > 0L) durationMs else platformBufferedMs
         val playing = mediaPlayer.status == MediaPlayer.Status.PLAYING
+        maybeHotStartGaplessJavaFx(mediaPlayer, generation, positionMs, durationMs)
         val current = state.value
         val nowMs = System.currentTimeMillis()
         val playbackFlagsChanged = playing != current.isPlaying || isBuffering != current.isBuffering
@@ -2473,6 +3151,105 @@ class DesktopAudioPlayer(
             generation = generation,
             forceBuffering = waitingForPlayback || isBuffering,
         )
+    }
+
+    private fun scheduleJavaFxGaplessHotStart(generation: Int, trackId: String) {
+        val outgoing = player ?: return
+        val durationMs = javafxDurationMs(outgoing.media.duration)
+        val positionMs = javafxDurationMs(outgoing.currentTime)
+        if (durationMs <= 0L || positionMs < 0L) return
+        val delayMs = (durationMs - positionMs - JavaFxGaplessHotStartLeadMs).coerceAtLeast(0L)
+        CompletableFuture.delayedExecutor(delayMs, TimeUnit.MILLISECONDS).execute {
+            JavaFxRuntime.runLater {
+                if (!isGaplessPrepareCurrent(generation, trackId) || player !== outgoing) return@runLater
+                maybeHotStartGaplessJavaFxNow(outgoing, generation)
+            }
+        }
+    }
+
+    private fun scheduleJavaFxGaplessBoundaryCommit(generation: Int, trackId: String) {
+        val outgoing = player ?: return
+        val durationMs = javafxDurationMs(outgoing.media.duration)
+        val positionMs = javafxDurationMs(outgoing.currentTime)
+        if (durationMs <= 0L || positionMs < 0L) return
+        val delayMs = (durationMs - positionMs - JavaFxGaplessBoundaryCommitLeadMs).coerceAtLeast(0L)
+        CompletableFuture.delayedExecutor(delayMs, TimeUnit.MILLISECONDS).execute {
+            JavaFxRuntime.runLater {
+                if (!isGaplessPrepareCurrent(generation, trackId) || player !== outgoing) return@runLater
+                PhoebeLog.d("DesktopAudioPlayer") {
+                    "gapless JavaFX boundary commit requested for $trackId"
+                }
+                commitPreparedGapless(generation)
+            }
+        }
+    }
+
+    private fun maybeHotStartGaplessJavaFxNow(mediaPlayer: MediaPlayer, generation: Int) {
+        maybeHotStartGaplessJavaFx(
+            mediaPlayer = mediaPlayer,
+            generation = generation,
+            positionMs = javafxDurationMs(mediaPlayer.currentTime),
+            durationMs = javafxDurationMs(mediaPlayer.media.duration),
+        )
+    }
+
+    private fun maybeHotStartGaplessJavaFx(
+        mediaPlayer: MediaPlayer,
+        generation: Int,
+        positionMs: Long,
+        durationMs: Long,
+    ) {
+        if (!Platform.isFxApplicationThread()) {
+            JavaFxRuntime.runLater {
+                maybeHotStartGaplessJavaFx(mediaPlayer, generation, positionMs, durationMs)
+            }
+            return
+        }
+        if (durationMs <= 0L || positionMs < 0L) return
+        val remainingMs = durationMs - positionMs
+        if (remainingMs !in 0L..JavaFxGaplessHotStartLeadMs) return
+        val incoming = gaplessPlayer ?: return
+        val targetTrackId = gaplessTrackId ?: return
+        if (gaplessGeneration != generation ||
+            gaplessPlayerHotStartRequested ||
+            !gaplessPlayerPrerolled ||
+            player !== mediaPlayer ||
+            mediaPlayer.status != MediaPlayer.Status.PLAYING
+        ) {
+            return
+        }
+        gaplessPlayerHotStartRequested = true
+        incoming.setMute(true)
+        incoming.volume = 0.0
+        incoming.seek(javafx.util.Duration.ZERO)
+        incoming.play()
+        scheduleJavaFxGaplessBoundaryCommitFromHotStart(
+            generation = generation,
+            trackId = targetTrackId,
+            outgoing = mediaPlayer,
+            remainingMs = remainingMs,
+        )
+        PhoebeLog.d("DesktopAudioPlayer") {
+            "gapless JavaFX hot-start requested for $targetTrackId with ${remainingMs}ms remaining"
+        }
+    }
+
+    private fun scheduleJavaFxGaplessBoundaryCommitFromHotStart(
+        generation: Int,
+        trackId: String,
+        outgoing: MediaPlayer,
+        remainingMs: Long,
+    ) {
+        val delayMs = (remainingMs - JavaFxGaplessBoundaryCommitLeadMs).coerceAtLeast(0L)
+        CompletableFuture.delayedExecutor(delayMs, TimeUnit.MILLISECONDS).execute {
+            JavaFxRuntime.runLater {
+                if (!isGaplessPrepareCurrent(generation, trackId) || player !== outgoing) return@runLater
+                PhoebeLog.d("DesktopAudioPlayer") {
+                    "gapless JavaFX boundary commit requested for $trackId after hot-start"
+                }
+                commitPreparedGapless(generation)
+            }
+        }
     }
 
     private fun stabilizedPlatformPositionMs(platformPositionMs: Long, generation: Int): Long {
@@ -2541,7 +3318,7 @@ class DesktopAudioPlayer(
                 )
                 if ((reachedEnd || completed) && !endDispatched) {
                     endDispatched = true
-                    next()
+                    advanceAfterPlatformTrackEnded(generation)
                     break
                 }
                 Thread.sleep(250L)
@@ -2604,6 +3381,8 @@ class DesktopAudioPlayer(
         const val JavaFxMediaReadyTimeoutMs = DesktopPlaybackStartupPolicy.JavaFxFailureFallbackDelayMs
         const val JavaFxMediaPlayingTimeoutMs = 8_000L
         const val JavaFxCrossfadeReadyTimeoutMs = 3_000L
+        const val JavaFxGaplessHotStartLeadMs = 180L
+        const val JavaFxGaplessBoundaryCommitLeadMs = 20L
         const val JavaFxDisposeSettleMs = 250L
         const val PlaybackUiSyncIntervalMs = 250L
         const val SampledClipEndToleranceMs = 20L

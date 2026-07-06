@@ -146,6 +146,7 @@ fun SettingsDesktopView(
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
     onShowVisualizerInTvFrame: (Boolean) -> Unit = {},
+    onShowUltimateGuitarButton: (Boolean) -> Unit = {},
     onBlurredArtworkAppearance: (Boolean) -> Unit = {},
     onFullBleedDetailArtwork: (Boolean) -> Unit = {},
     onTintedBackgroundGradient: (Boolean) -> Unit = {},
@@ -247,6 +248,7 @@ fun SettingsDesktopView(
                         onPersistEqualizerSettings = onPersistEqualizerSettings,
                         onPersistVolumeSettings = onPersistVolumeSettings,
                         onAudioProcessingSettings = onAudioProcessingSettings,
+                        onShowUltimateGuitarButton = onShowUltimateGuitarButton,
                     )
                     SettingsCategory.Account -> AccountSettingsCard(
                         session = session,
@@ -350,6 +352,7 @@ fun SettingsMobileView(
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
     onShowVisualizerInTvFrame: (Boolean) -> Unit = {},
+    onShowUltimateGuitarButton: (Boolean) -> Unit = {},
     onBlurredArtworkAppearance: (Boolean) -> Unit = {},
     onTintedBackgroundGradient: (Boolean) -> Unit = {},
     onHomeSections: (List<HomeSection>) -> Unit,
@@ -454,6 +457,7 @@ fun SettingsMobileView(
             onPersistEqualizerSettings = onPersistEqualizerSettings,
             onPersistVolumeSettings = onPersistVolumeSettings,
             onAudioProcessingSettings = onAudioProcessingSettings,
+            onShowUltimateGuitarButton = onShowUltimateGuitarButton,
             compact = true,
         )
         SectionLabel("DOWNLOADS", PhoebeUi.accentLight)
@@ -768,12 +772,14 @@ private fun AudioPlaybackSettingsCard(
     onPersistEqualizerSettings: (Boolean) -> Unit,
     onPersistVolumeSettings: (Boolean) -> Unit = {},
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit,
+    onShowUltimateGuitarButton: (Boolean) -> Unit = {},
     compact: Boolean = false,
 ) {
     var localCrossfade by remember(settings.crossfadeSeconds) { mutableIntStateOf(settings.crossfadeSeconds) }
-        val audio = settings.audioProcessing.normalized()
-        SettingsCard {
-            Text("Audio Playback", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+    var localAudio by remember(settings.audioProcessing) { mutableStateOf(settings.audioProcessing.normalized()) }
+    val audio = localAudio.normalized()
+    SettingsCard {
+        Text("Audio Playback", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Text("Transitions and library scan", color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
         Text("Crossfade", color = PhoebeUi.secondaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         Slider(
@@ -781,11 +787,23 @@ private fun AudioPlaybackSettingsCard(
             onValueChange = {
                 val seconds = it.roundToInt().coerceIn(AppSettings.MinCrossfadeSeconds, AppSettings.MaxCrossfadeSeconds)
                 localCrossfade = seconds
+                if (seconds > 0 && audio.gaplessEnabled) {
+                    val nextAudio = audio.copy(gaplessEnabled = false).normalized()
+                    localAudio = nextAudio
+                    onAudioProcessingSettings(nextAudio)
+                }
                 if (seconds != settings.crossfadeSeconds) {
                     onCrossfadeSeconds(seconds)
                 }
             },
-            onValueChangeFinished = { onCrossfadeSeconds(localCrossfade) },
+            onValueChangeFinished = {
+                if (localCrossfade > 0 && audio.gaplessEnabled) {
+                    val nextAudio = audio.copy(gaplessEnabled = false).normalized()
+                    localAudio = nextAudio
+                    onAudioProcessingSettings(nextAudio)
+                }
+                onCrossfadeSeconds(localCrossfade)
+            },
             valueRange = AppSettings.MinCrossfadeSeconds.toFloat()..AppSettings.MaxCrossfadeSeconds.toFloat(),
             steps = AppSettings.MaxCrossfadeSeconds - AppSettings.MinCrossfadeSeconds - 1,
             modifier = Modifier.padding(vertical = 4.dp),
@@ -805,13 +823,29 @@ private fun AudioPlaybackSettingsCard(
             subtitle = capabilitySubtitle(capabilities.gapless, "Keep album playback continuous when the engine supports it"),
             checked = audio.gaplessEnabled && capabilities.gapless.isSupported,
             enabled = capabilities.gapless.isSupported,
-            onCheckedChange = { checked -> onAudioProcessingSettings(audio.copy(gaplessEnabled = checked)) },
+            onCheckedChange = { checked ->
+                if (checked) {
+                    localCrossfade = 0
+                    if (settings.crossfadeSeconds != 0) {
+                        onCrossfadeSeconds(0)
+                    }
+                }
+                val nextAudio = audio.copy(gaplessEnabled = checked).normalized()
+                localAudio = nextAudio
+                onAudioProcessingSettings(nextAudio)
+            },
         )
         SettingsSwitchRow(
             title = "Keep Playing",
             subtitle = "Add related songs before the queue ends",
             checked = settings.keepPlayingEnabled,
             onCheckedChange = onKeepPlayingEnabled,
+        )
+        SettingsSwitchRow(
+            title = "Ultimate Guitar",
+            subtitle = "Show the current-track guitar lookup in the player",
+            checked = settings.showUltimateGuitarButton,
+            onCheckedChange = onShowUltimateGuitarButton,
         )
         Spacer(Modifier.height(12.dp))
         SettingsSwitchRow(

@@ -10,6 +10,8 @@ import com.phoebe.app.domain.ArtistRadioAvailability
 import com.phoebe.app.domain.CatalogSnapshot
 import com.phoebe.app.domain.LibraryColumnVisibility
 import com.phoebe.app.domain.LibraryUiPreferences
+import com.phoebe.app.domain.MusicBrainzAlbumMetadataLoadState
+import com.phoebe.app.domain.MusicBrainzArtistArtworkLoadState
 import com.phoebe.app.domain.Playlist
 import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.CollectionEntry
@@ -24,6 +26,7 @@ data class ArtistDetailRouteState(
     val artistRadioAvailability: ArtistRadioAvailability? = null,
     val artistRadioStarting: Boolean = false,
     val artistEventsAvailable: Boolean = false,
+    val musicBrainzArtwork: MusicBrainzArtistArtworkLoadState = MusicBrainzArtistArtworkLoadState.Idle,
     val fullBleedArtwork: Boolean = true,
 )
 
@@ -41,6 +44,7 @@ class ArtistDetailRouteActions(
     val onPlayAllTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks, 0) },
     val onShuffleAllTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks.shuffled(), 0) },
     val onProbeArtistRadio: (Artist) -> Unit = {},
+    val onLoadMusicBrainzArtwork: (Artist) -> Unit = {},
     val onCollectionItems: (CollectionEntry, String) -> Unit = { _, _ -> },
     val onSearchQuery: (String) -> Unit = {},
 )
@@ -64,6 +68,7 @@ data class AlbumDetailRouteState(
     val libraryUi: LibraryUiPreferences,
     val catalogRefreshing: Boolean = false,
     val searchQuery: String = "",
+    val musicBrainzMetadata: MusicBrainzAlbumMetadataLoadState = MusicBrainzAlbumMetadataLoadState.Idle,
     val fullBleedArtwork: Boolean = true,
 )
 
@@ -139,7 +144,9 @@ fun ArtistDetailRoute(
         artistRadioAvailability = state.artistRadioAvailability,
         artistRadioStarting = state.artistRadioStarting,
         artistEventsAvailable = state.artistEventsAvailable,
+        musicBrainzArtwork = state.musicBrainzArtwork,
         onProbeArtistRadio = actions.onProbeArtistRadio,
+        onLoadMusicBrainzArtwork = actions.onLoadMusicBrainzArtwork,
         onPlayArtistRadio = actions.onPlayArtistRadio,
         onArtistEvents = actions.onArtistEvents,
         onArtist = actions.onArtist,
@@ -177,6 +184,7 @@ fun AlbumDetailRoute(
         libraryUi = state.libraryUi,
         catalogRefreshing = state.catalogRefreshing,
         fullBleedArtwork = state.fullBleedArtwork,
+        musicBrainzMetadata = state.musicBrainzMetadata,
         modifier = modifier,
         searchQuery = state.searchQuery,
         onBack = actions.onBack,

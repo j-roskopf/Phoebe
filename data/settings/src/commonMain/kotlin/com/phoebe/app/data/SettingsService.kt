@@ -54,6 +54,10 @@ class SettingsService(
         appSettingsRepository.setNowPlayingVisualizerInTvFrame(enabled)
     }
 
+    suspend fun setShowUltimateGuitarButton(enabled: Boolean) {
+        appSettingsRepository.setShowUltimateGuitarButton(enabled)
+    }
+
     suspend fun setBlurredArtworkAppearance(enabled: Boolean) {
         appSettingsRepository.setBlurredArtworkAppearance(enabled)
     }

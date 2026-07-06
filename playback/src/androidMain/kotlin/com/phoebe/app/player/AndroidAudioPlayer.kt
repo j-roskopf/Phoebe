@@ -127,6 +127,7 @@ class AndroidAudioPlayer(
     private var pendingControllerTarget: PendingControllerTarget? = null
     private var pendingPlatformSeek: PendingPlatformSeek? = null
     private var pendingPlatformQueueRebase: PendingPlatformQueueRebase? = null
+    private var androidGaplessPrepareGeneration = -1
 
     private val controllerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -271,6 +272,7 @@ class AndroidAudioPlayer(
         loadedPlatformQueue = null
         pendingPlatformSeek = null
         pendingPlatformQueueRebase = null
+        androidGaplessPrepareGeneration = -1
         clearPendingAutoplay()
         clearLocalMediaSessionState()
         platformStopJob?.cancel()
@@ -514,6 +516,94 @@ class AndroidAudioPlayer(
         return true
     }
 
+    override fun startGaplessPrepareOnPlatform(
+        queue: List<Track>,
+        targetIndex: Int,
+        track: Track,
+        generation: Int,
+    ): Boolean {
+        if (targetIndex !in queue.indices) return false
+        val sourceIndex = state.value.currentIndex
+        if (sourceIndex !in queue.indices) return false
+        if (targetIndex <= sourceIndex) return false
+        val queueIds = queue.map { it.id }
+        androidGaplessPrepareGeneration = generation
+        scope.launch {
+            controllerMutex.withLock {
+                if (!isPlayRequestCurrent(generation) || androidGaplessPrepareGeneration != generation) return@withLock
+                val player = activeLocalPlayer() ?: return@withLock
+                val current = state.value
+                if (current.currentIndex != sourceIndex || current.queue.map { it.id } != queueIds) return@withLock
+                val loaded = loadedPlatformQueue?.takeIf { it.queueIds == queueIds }
+                val platformCurrentIndex = loaded?.platformIndexFor(sourceIndex)
+                    ?: player.currentMediaItemIndex.takeIf { it >= 0 }
+                    ?: return@withLock
+                val platformTrackId = player.currentMediaItem?.mediaId
+                if (platformTrackId != null && platformTrackId != current.currentTrack?.id) return@withLock
+                appControllerMutationInProgress = true
+                try {
+                    repeat(platformCurrentIndex.coerceAtLeast(0)) {
+                        if (player.mediaItemCount > 0) {
+                            player.removeMediaItem(0)
+                        }
+                    }
+                    val compactedCount = player.mediaItemCount.coerceAtLeast(1)
+                    loadedPlatformQueue = LoadedPlatformQueue(
+                        queueIds = queueIds,
+                        firstAppIndex = sourceIndex,
+                        itemCount = compactedCount,
+                    )
+                    val targetPlatformIndex = targetIndex - sourceIndex
+                    if (targetPlatformIndex < 0) return@withLock
+                    while (player.mediaItemCount > targetPlatformIndex + 1) {
+                        player.removeMediaItem(player.mediaItemCount - 1)
+                    }
+                    if (player.mediaItemCount <= targetPlatformIndex) {
+                        player.addMediaItem(playbackMediaItem(track, inAppPlayback = true))
+                    }
+                    loadedPlatformQueue = LoadedPlatformQueue(
+                        queueIds = queueIds,
+                        firstAppIndex = sourceIndex,
+                        itemCount = player.mediaItemCount,
+                    )
+                } finally {
+                    appControllerMutationInProgress = false
+                }
+            }
+        }
+        return true
+    }
+
+    override fun cancelGaplessPrepareOnPlatform(generation: Int) {
+        if (androidGaplessPrepareGeneration == generation) {
+            androidGaplessPrepareGeneration = -1
+        }
+        scope.launch {
+            controllerMutex.withLock {
+                val player = activeLocalPlayer() ?: return@withLock
+                val current = state.value
+                val loaded = loadedPlatformQueue ?: return@withLock
+                val platformCurrentIndex = loaded.platformIndexFor(current.currentIndex) ?: return@withLock
+                if (platformCurrentIndex < 0 || platformCurrentIndex >= player.mediaItemCount) {
+                    return@withLock
+                }
+                appControllerMutationInProgress = true
+                try {
+                    while (player.mediaItemCount > platformCurrentIndex + 1) {
+                        player.removeMediaItem(player.mediaItemCount - 1)
+                    }
+                    loadedPlatformQueue = LoadedPlatformQueue(
+                        queueIds = loaded.queueIds,
+                        firstAppIndex = current.currentIndex,
+                        itemCount = player.mediaItemCount - platformCurrentIndex,
+                    )
+                } finally {
+                    appControllerMutationInProgress = false
+                }
+            }
+        }
+    }
+
     override fun playUri(uri: String) {
         if (uri.isBlank()) return
         val generation = activePlayGeneration
@@ -598,7 +688,7 @@ class AndroidAudioPlayer(
                 )
             }
         }
-        next()
+        advanceAfterPlatformTrackEnded()
     }
 
     private fun endedPlatformAppIndex(player: Player): Int? {
@@ -822,7 +912,7 @@ class AndroidAudioPlayer(
                     generation = generation,
                 )
                 if (player.playbackState == Player.STATE_ENDED) {
-                    next()
+                    advanceAfterPlatformTrackEnded(generation)
                     break
                 }
                 delay(FinePositionSyncIntervalMs)
@@ -862,6 +952,7 @@ class AndroidAudioPlayer(
         seekJob?.cancel()
         stopBufferingTimeout()
         stopRetry()
+        androidGaplessPrepareGeneration = -1
         resetRetries(generation)
         diagnostics.engineSelected(PlaybackEnginePath.Media3)
         stopPositionSyncLoop()
@@ -933,10 +1024,7 @@ class AndroidAudioPlayer(
         shouldPlay: Boolean = playWhenReady,
     ) {
         val windowStartIndex = targetIndex
-        val windowTracks = queue.subList(
-            windowStartIndex,
-            (windowStartIndex + MaxPlatformQueueItems).coerceAtMost(queue.size),
-        )
+        val windowTracks = queue.subList(windowStartIndex, (windowStartIndex + 1).coerceAtMost(queue.size))
         expectControllerTarget(queueIds, platformIndex = 0, generation)
         releasePlatformDecoderBeforeLoad(player)
         player.volume = effectiveOutputVolume()
@@ -1030,6 +1118,8 @@ class AndroidAudioPlayer(
             val queueIds = appState.queue.map { it.id }
             if (loaded?.queueIds == queueIds && appControllerIndex in appState.queue.indices) {
                 adoptQueueState(appState.queue, appControllerIndex, player.isPlaying)
+                clearGaplessPrepareState()
+                androidGaplessPrepareGeneration = -1
                 appState = state.value
             } else {
                 val platformTrackId = player.currentMediaItem?.mediaId

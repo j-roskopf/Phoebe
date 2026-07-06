@@ -8,6 +8,7 @@ enum class PhoebeIcon {
     Person,
     Calendar,
     Book,
+    Guitar,
     Knife,
     InterwovenArrows,
     MoodFace,

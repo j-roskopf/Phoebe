@@ -1083,6 +1083,7 @@ data class AppSettings(
     val equalizerProfile: EqualizerProfile = EqualizerProfile.Default,
     val nowPlayingVisualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
     val nowPlayingVisualizerInTvFrame: Boolean = false,
+    val showUltimateGuitarButton: Boolean = true,
     val blurredArtworkAppearance: Boolean = true,
     val fullBleedDetailArtwork: Boolean = true,
     val tintedBackgroundGradient: Boolean = true,
@@ -1092,17 +1093,22 @@ data class AppSettings(
     val audioProcessing: AudioProcessingSettings = AudioProcessingSettings(),
     val events: EventSettings = EventSettings(),
 ) {
-    fun normalized(): AppSettings =
-        copy(
-            crossfadeSeconds = crossfadeSeconds.coerceIn(MinCrossfadeSeconds, MaxCrossfadeSeconds),
+    fun normalized(): AppSettings {
+        val normalizedCrossfadeSeconds = crossfadeSeconds.coerceIn(MinCrossfadeSeconds, MaxCrossfadeSeconds)
+        val normalizedAudioProcessing = audioProcessing.normalized().let { audio ->
+            if (normalizedCrossfadeSeconds > 0) audio.copy(gaplessEnabled = false) else audio
+        }
+        return copy(
+            crossfadeSeconds = normalizedCrossfadeSeconds,
             savedVolume = savedVolume.coerceIn(MinSavedVolume, MaxSavedVolume),
             equalizerProfile = equalizerProfile.normalized(),
             listenBrainz = listenBrainz.normalized(),
             lastFm = lastFm.normalized(),
             downloadPolicy = downloadPolicy.normalized(),
-            audioProcessing = audioProcessing.normalized(),
+            audioProcessing = normalizedAudioProcessing,
             events = events.normalized(),
         )
+    }
 
     companion object {
         val Default = AppSettings()
@@ -1192,6 +1198,89 @@ data class ArtistEventsLoadState(
     }
 }
 
+data class MusicBrainzAlbumMetadataLoadState(
+    val loading: Boolean = false,
+    val metadata: MusicBrainzAlbumMetadataResponse? = null,
+    val error: String? = null,
+) {
+    val hasCredits: Boolean
+        get() = metadata?.credits.orEmpty().isNotEmpty()
+
+    val hasArtwork: Boolean
+        get() = metadata?.artwork.orEmpty().isNotEmpty()
+
+    companion object {
+        val Idle = MusicBrainzAlbumMetadataLoadState()
+    }
+}
+
+data class MusicBrainzArtistArtworkLoadState(
+    val loading: Boolean = false,
+    val response: MusicBrainzArtistArtworkResponse? = null,
+    val error: String? = null,
+) {
+    val hasArtwork: Boolean
+        get() = response?.artwork.orEmpty().isNotEmpty()
+
+    companion object {
+        val Idle = MusicBrainzArtistArtworkLoadState()
+    }
+}
+
+@Serializable
+data class MusicBrainzAlbumMetadataResponse(
+    val query: MusicBrainzAlbumMetadataQuery,
+    val match: MusicBrainzMetadataMatch? = null,
+    val credits: List<MusicBrainzCreditSection> = emptyList(),
+    val artwork: List<MusicBrainzArtwork> = emptyList(),
+)
+
+@Serializable
+data class MusicBrainzArtistArtworkResponse(
+    val artist: String,
+    val match: MusicBrainzMetadataMatch? = null,
+    val artwork: List<MusicBrainzArtwork> = emptyList(),
+)
+
+@Serializable
+data class MusicBrainzAlbumMetadataQuery(
+    val album: String,
+    val artist: String,
+    val year: Int? = null,
+    val releaseMbids: List<String> = emptyList(),
+)
+
+@Serializable
+data class MusicBrainzMetadataMatch(
+    val musicBrainzId: String,
+    val releaseGroupId: String? = null,
+    val title: String,
+    val artist: String? = null,
+    val year: Int? = null,
+    val score: Int? = null,
+)
+
+@Serializable
+data class MusicBrainzCreditSection(
+    val role: String,
+    val names: List<String>,
+)
+
+@Serializable
+data class MusicBrainzArtwork(
+    val id: String,
+    val imageUrl: String,
+    val thumbnailUrl: String? = null,
+    val largeThumbnailUrl: String? = null,
+    val title: String? = null,
+    val comment: String? = null,
+    val types: List<String> = emptyList(),
+    val front: Boolean = false,
+    val back: Boolean = false,
+    val approved: Boolean = true,
+    val source: String? = null,
+)
+
 @Serializable
 data class ArtistEvent(
     val id: String,
@@ -1271,7 +1360,7 @@ enum class DownloadQuality {
 
 @Serializable
 data class AudioProcessingSettings(
-    val gaplessEnabled: Boolean = true,
+    val gaplessEnabled: Boolean = false,
     val crossfeedEnabled: Boolean = false,
     val crossfeedAmount: Float = 0.35f,
     val selectedOutputDeviceId: String? = null,

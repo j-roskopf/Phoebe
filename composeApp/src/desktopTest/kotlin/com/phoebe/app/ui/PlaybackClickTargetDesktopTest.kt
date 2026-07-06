@@ -7,14 +7,22 @@ import com.phoebe.app.feature.details.SongDetailPanel
 import com.phoebe.app.feature.library.LibraryDesktopView
 import com.phoebe.app.feature.library.LibraryFilterTab
 import com.phoebe.app.feature.library.TrackList
+import com.phoebe.app.feature.playback.DesktopTransport
+import com.phoebe.app.feature.playback.MobilePlayer
 import com.phoebe.app.feature.playback.UpNextList
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithContentDescription
@@ -28,6 +36,11 @@ import com.phoebe.app.domain.Album
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.CatalogSnapshot
 import com.phoebe.app.domain.LibraryUiPreferences
+import com.phoebe.app.domain.MusicBrainzAlbumMetadataLoadState
+import com.phoebe.app.domain.MusicBrainzAlbumMetadataQuery
+import com.phoebe.app.domain.MusicBrainzAlbumMetadataResponse
+import com.phoebe.app.domain.MusicBrainzArtwork
+import com.phoebe.app.domain.MusicBrainzCreditSection
 import com.phoebe.app.domain.Playlist
 import com.phoebe.app.domain.RepeatMode
 import com.phoebe.app.domain.Track
@@ -37,6 +50,248 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class PlaybackClickTargetDesktopTest {
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopTransportUltimateGuitarButtonInvokesRequestForCurrentTrack() = runDesktopComposeUiTest(width = 1120, height = 160) {
+        val track = playbackTracks().first()
+        var requestedTrack: Track? = null
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(1120.dp, 160.dp)) {
+                    DesktopTransport(
+                        track = track,
+                        isPlaying = true,
+                        positionMs = 0L,
+                        bufferedPositionMs = 0L,
+                        shuffle = false,
+                        repeat = RepeatMode.Off,
+                        volume = 0.7f,
+                        compact = false,
+                        upNextVisible = false,
+                        upNextToggleEnabled = true,
+                        onToggle = {},
+                        onPrevious = {},
+                        onNext = {},
+                        onShuffle = {},
+                        onRepeat = {},
+                        onVolume = {},
+                        onSeek = {},
+                        onLyrics = {},
+                        onUltimateGuitar = { requestedTrack = it },
+                        onToggleUpNext = {},
+                        onCast = {},
+                    )
+                }
+            }
+        }
+
+        onNodeWithContentDescription("Open Ultimate Guitar").performClick()
+
+        assertEquals(track.id, assertNotNull(requestedTrack).id)
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopTransportOverflowUltimateGuitarItemIsDisplayedForCurrentTrack() = runDesktopComposeUiTest(width = 860, height = 520) {
+        val track = playbackTracks().first()
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(860.dp, 520.dp)) {
+                    DesktopTransport(
+                        track = track,
+                        isPlaying = true,
+                        positionMs = 0L,
+                        bufferedPositionMs = 0L,
+                        shuffle = false,
+                        repeat = RepeatMode.Off,
+                        volume = 0.7f,
+                        compact = false,
+                        upNextVisible = false,
+                        upNextToggleEnabled = true,
+                        onToggle = {},
+                        onPrevious = {},
+                        onNext = {},
+                        onShuffle = {},
+                        onRepeat = {},
+                        onVolume = {},
+                        onSeek = {},
+                        onLyrics = {},
+                        onUltimateGuitar = {},
+                        onToggleUpNext = {},
+                        onCast = {},
+                    )
+                }
+            }
+        }
+
+        onNodeWithContentDescription("More playback options").performClick()
+        waitForIdle()
+
+        onNodeWithText("Open Ultimate Guitar").assertExists()
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopTransportOverflowUltimateGuitarButtonStaysVisibleForCurrentTrack() = runDesktopComposeUiTest(width = 860, height = 160) {
+        val track = playbackTracks().first()
+        var requestedTrack: Track? = null
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(860.dp, 160.dp)) {
+                    DesktopTransport(
+                        track = track,
+                        isPlaying = true,
+                        positionMs = 0L,
+                        bufferedPositionMs = 0L,
+                        shuffle = false,
+                        repeat = RepeatMode.Off,
+                        volume = 0.7f,
+                        compact = false,
+                        upNextVisible = false,
+                        upNextToggleEnabled = true,
+                        onToggle = {},
+                        onPrevious = {},
+                        onNext = {},
+                        onShuffle = {},
+                        onRepeat = {},
+                        onVolume = {},
+                        onSeek = {},
+                        onLyrics = {},
+                        onUltimateGuitar = { requestedTrack = it },
+                        onToggleUpNext = {},
+                        onCast = {},
+                    )
+                }
+            }
+        }
+
+        onNodeWithContentDescription("Open Ultimate Guitar").assertIsDisplayed().performClick()
+
+        assertEquals(track.id, assertNotNull(requestedTrack).id)
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopTransportUltimateGuitarButtonCanBeHiddenBySetting() = runDesktopComposeUiTest(width = 1120, height = 160) {
+        val track = playbackTracks().first()
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(1120.dp, 160.dp)) {
+                    DesktopTransport(
+                        track = track,
+                        isPlaying = true,
+                        positionMs = 0L,
+                        bufferedPositionMs = 0L,
+                        shuffle = false,
+                        repeat = RepeatMode.Off,
+                        volume = 0.7f,
+                        compact = false,
+                        upNextVisible = false,
+                        upNextToggleEnabled = true,
+                        showUltimateGuitarButton = false,
+                        onToggle = {},
+                        onPrevious = {},
+                        onNext = {},
+                        onShuffle = {},
+                        onRepeat = {},
+                        onVolume = {},
+                        onSeek = {},
+                        onLyrics = {},
+                        onUltimateGuitar = {},
+                        onToggleUpNext = {},
+                        onCast = {},
+                    )
+                }
+            }
+        }
+
+        onAllNodesWithContentDescription("Open Ultimate Guitar").assertCountEquals(0)
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun mobilePlayerUltimateGuitarButtonInvokesRequestForCurrentTrack() = runDesktopComposeUiTest(width = 430, height = 932) {
+        val track = playbackTracks().first()
+        var requestedTrack: Track? = null
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(430.dp, 932.dp)) {
+                    MobilePlayer(
+                        track = track,
+                        upNext = emptyList(),
+                        isPlaying = true,
+                        shuffle = false,
+                        repeat = RepeatMode.Off,
+                        positionMs = 0L,
+                        bufferedPositionMs = 0L,
+                        currentIndex = 0,
+                        onToggle = {},
+                        onPrevious = {},
+                        onNext = {},
+                        onShuffle = {},
+                        onRepeat = {},
+                        onSeek = {},
+                        onPlayQueue = {},
+                        onMoveUpNext = { _, _ -> },
+                        onRemoveUpNext = {},
+                        onUltimateGuitar = { requestedTrack = it },
+                        onBack = {},
+                        onSwipeDismiss = {},
+                        expansionFraction = 1f,
+                    )
+                }
+            }
+        }
+
+        onNodeWithContentDescription("Open Ultimate Guitar").performClick()
+
+        assertEquals(track.id, assertNotNull(requestedTrack).id)
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun mobilePlayerUltimateGuitarButtonCanBeHiddenBySetting() = runDesktopComposeUiTest(width = 430, height = 932) {
+        val track = playbackTracks().first()
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(430.dp, 932.dp)) {
+                    MobilePlayer(
+                        track = track,
+                        upNext = emptyList(),
+                        isPlaying = true,
+                        shuffle = false,
+                        repeat = RepeatMode.Off,
+                        positionMs = 0L,
+                        bufferedPositionMs = 0L,
+                        currentIndex = 0,
+                        showUltimateGuitarButton = false,
+                        onToggle = {},
+                        onPrevious = {},
+                        onNext = {},
+                        onShuffle = {},
+                        onRepeat = {},
+                        onSeek = {},
+                        onPlayQueue = {},
+                        onMoveUpNext = { _, _ -> },
+                        onRemoveUpNext = {},
+                        onUltimateGuitar = {},
+                        onBack = {},
+                        onSwipeDismiss = {},
+                        expansionFraction = 1f,
+                    )
+                }
+            }
+        }
+
+        onAllNodesWithContentDescription("Open Ultimate Guitar").assertCountEquals(0)
+    }
+
     @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
     @Test
     fun trackListSongRowInvokesPlaybackRequestForTappedTrack() = runDesktopComposeUiTest(width = 800, height = 520) {
@@ -174,6 +429,105 @@ class PlaybackClickTargetDesktopTest {
 
     @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
     @Test
+    fun albumDetailRendersMusicBrainzCreditsInAboutSection() = runDesktopComposeUiTest(width = 800, height = 900) {
+        val album = Album(id = "album-credits", title = "Credits Album", artist = "Fixture Artist")
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(800.dp, 900.dp)) {
+                    AlbumDetailPanel(
+                        album = album,
+                        catalog = CatalogSnapshot(albums = listOf(album), tracksByParent = emptyMap()),
+                        libraryUi = LibraryUiPreferences(),
+                        musicBrainzMetadata = albumMusicBrainzMetadata(album),
+                        onBack = {},
+                        onPlayTracks = { _, _ -> },
+                        onAddToUpNext = {},
+                        onDownload = {},
+                        onDownloadAlbum = {},
+                        onArtist = {},
+                        onLibraryColumns = {},
+                    )
+                }
+            }
+        }
+
+        onNodeWithText("Credits").assertIsDisplayed()
+        onNodeWithText("Dead Oceans").assertIsDisplayed()
+        onNodeWithText("Tony Berg, Ethan Gruska").assertIsDisplayed()
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopAlbumArtworkClickOpensGallery() = runDesktopComposeUiTest(width = 800, height = 900) {
+        val album = Album(id = "album-gallery", title = "Gallery Album", artist = "Fixture Artist")
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(800.dp, 900.dp)) {
+                    AlbumDetailPanel(
+                        album = album,
+                        catalog = CatalogSnapshot(albums = listOf(album), tracksByParent = emptyMap()),
+                        libraryUi = LibraryUiPreferences(),
+                        musicBrainzMetadata = albumMusicBrainzMetadata(album),
+                        onBack = {},
+                        onPlayTracks = { _, _ -> },
+                        onAddToUpNext = {},
+                        onDownload = {},
+                        onDownloadAlbum = {},
+                        onArtist = {},
+                        onLibraryColumns = {},
+                    )
+                }
+            }
+        }
+
+        onNodeWithContentDescription("Open Gallery Album artwork", useUnmergedTree = true).performClick()
+        onNodeWithContentDescription("Close artwork gallery").assertIsDisplayed()
+        onNodeWithContentDescription("Show artwork 2").performClick()
+        onNodeWithText("MusicBrainz front").assertIsDisplayed()
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun artworkGalleryClampsCurrentPageWhenItemsShrink() = runDesktopComposeUiTest(width = 800, height = 900) {
+        val album = Album(id = "album-gallery-shrink", title = "Gallery Album", artist = "Fixture Artist")
+        var metadata by mutableStateOf(albumMusicBrainzMetadata(album))
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(800.dp, 900.dp)) {
+                    AlbumDetailPanel(
+                        album = album,
+                        catalog = CatalogSnapshot(albums = listOf(album), tracksByParent = emptyMap()),
+                        libraryUi = LibraryUiPreferences(),
+                        musicBrainzMetadata = metadata,
+                        onBack = {},
+                        onPlayTracks = { _, _ -> },
+                        onAddToUpNext = {},
+                        onDownload = {},
+                        onDownloadAlbum = {},
+                        onArtist = {},
+                        onLibraryColumns = {},
+                    )
+                }
+            }
+        }
+
+        onNodeWithContentDescription("Open Gallery Album artwork", useUnmergedTree = true).performClick()
+        onNodeWithContentDescription("Show artwork 2").performClick()
+        onNodeWithText("MusicBrainz front").assertIsDisplayed()
+
+        runOnIdle {
+            metadata = MusicBrainzAlbumMetadataLoadState(loading = true)
+        }
+
+        onNodeWithText("1 of 1").assertIsDisplayed()
+        onNodeWithContentDescription("Close artwork gallery").assertIsDisplayed()
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
     fun artistPlayAllClickAndLongClickUseSeparatePlaybackRequests() = runDesktopComposeUiTest(width = 800, height = 620) {
         val artist = Artist(id = "artist-1", title = "Fixture Artist")
         val album = Album(id = "album-1", title = "Regression Album", artist = artist.title)
@@ -217,6 +571,41 @@ class PlaybackClickTargetDesktopTest {
 
         onNodeWithTag(PlaybackTestTags.PlayAll).performTouchInput { longClick() }
         assertEquals(tracks, shuffleAllRequest)
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopArtistStatsActionKeepsStatsReachable() = runDesktopComposeUiTest(width = 800, height = 620) {
+        val artist = Artist(id = "artist-stats", title = "Fixture Artist")
+        val album = Album(id = "album-stats", title = "Regression Album", artist = artist.title)
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(800.dp, 620.dp)) {
+                    ArtistDetailPanel(
+                        artist = artist,
+                        catalog = CatalogSnapshot(
+                            artists = listOf(artist),
+                            albums = listOf(album),
+                            tracksByParent = mapOf(album.id to playbackTracks()),
+                        ),
+                        libraryUi = LibraryUiPreferences(),
+                        onBack = {},
+                        onAlbum = {},
+                        onPlayTracks = { _, _ -> },
+                        onAddToUpNext = {},
+                        onDownload = {},
+                        onDownloadArtist = {},
+                        onPlayArtistRadio = {},
+                        onArtist = {},
+                        onLibraryColumns = {},
+                    )
+                }
+            }
+        }
+
+        onNodeWithText("Stats").performClick()
+        onNodeWithText("Last Played").assertIsDisplayed()
     }
 
     @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
@@ -353,4 +742,28 @@ private fun playbackTrack(id: String, title: String): Track =
         durationMs = 60_000L,
         streamUrl = "https://stream.example/$id.mp3",
         downloadUrl = "",
+    )
+
+private fun albumMusicBrainzMetadata(album: Album): MusicBrainzAlbumMetadataLoadState =
+    MusicBrainzAlbumMetadataLoadState(
+        metadata = MusicBrainzAlbumMetadataResponse(
+            query = MusicBrainzAlbumMetadataQuery(
+                album = album.title,
+                artist = album.artist,
+                year = album.year,
+            ),
+            credits = listOf(
+                MusicBrainzCreditSection("Label", listOf("Dead Oceans")),
+                MusicBrainzCreditSection("Production", listOf("Tony Berg", "Ethan Gruska")),
+            ),
+            artwork = listOf(
+                MusicBrainzArtwork(
+                    id = "musicbrainz-front",
+                    imageUrl = "https://img.example/front.jpg",
+                    title = "MusicBrainz front",
+                    types = listOf("Front"),
+                    front = true,
+                ),
+            ),
+        ),
     )
