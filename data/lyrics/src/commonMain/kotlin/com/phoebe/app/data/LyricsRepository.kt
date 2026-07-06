@@ -23,10 +23,11 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
@@ -248,6 +249,7 @@ class LyricsRepository(
             val song = response.song ?: return@runCatching null
             response.referents.toLyricsAnnotations(song, document)
         }.onFailure { error ->
+            if (error is CancellationException) throw error
             PhoebeLog.d("LyricsRepository") { "Genius annotation enrichment failed: ${error.message}" }
         }.getOrNull() ?: return document.copy(annotations = cached)
 
