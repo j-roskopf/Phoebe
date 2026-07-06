@@ -557,14 +557,17 @@ class AppState(
     }
 
     private fun bindAppSettingsToPlayback() {
+        var lastEventSettings = appSettings.value.events.normalized()
         scope.launch {
             appSettings.collect { settings ->
                 mutablePersistEqualizerSettings.value = settings.persistEqualizerSettings
                 dependencies.audioPlayer.setCrossfadeDurationMs(settings.crossfadeSeconds * 1_000L)
                 dependencies.audioPlayer.setAudioProcessing(settings.audioProcessing)
-                mutableArtistEvents.value = emptyMap()
-                mutableAlbumMusicBrainzMetadata.value = emptyMap()
-                mutableArtistMusicBrainzArtwork.value = emptyMap()
+                val eventSettings = settings.events.normalized()
+                if (eventSettings != lastEventSettings) {
+                    lastEventSettings = eventSettings
+                    clearBackendContentCaches()
+                }
                 if (settings.persistEqualizerSettings) {
                     val profile = settings.equalizerProfile.normalized()
                     if (mutableEqualizerProfile.value != profile) {
@@ -574,6 +577,18 @@ class AppState(
                 }
             }
         }
+    }
+
+    private fun clearBackendContentCaches() {
+        artistEventJobs.values.toList().forEach { it.cancel() }
+        albumMusicBrainzJobs.values.toList().forEach { it.cancel() }
+        artistMusicBrainzArtworkJobs.values.toList().forEach { it.cancel() }
+        artistEventJobs.clear()
+        albumMusicBrainzJobs.clear()
+        artistMusicBrainzArtworkJobs.clear()
+        mutableArtistEvents.value = emptyMap()
+        mutableAlbumMusicBrainzMetadata.value = emptyMap()
+        mutableArtistMusicBrainzArtwork.value = emptyMap()
     }
 
     private fun surfacePlaybackFailures() {
