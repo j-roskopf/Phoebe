@@ -262,8 +262,14 @@ In the Vercel project, add these Production environment variables:
 - `TICKETMASTER_API_KEY`
 - `SEATGEEK_CLIENT_ID`
 - `GENIUS_ACCESS_TOKEN`: Genius client access token used only by the backend
-- `ALLOWED_ORIGINS`, optional comma-separated allowed origins
+- `ALLOWED_ORIGINS`: comma-separated browser origins allowed to call the backend, required in Production unless `BACKEND_ALLOW_ANY_ORIGIN=true`
+- `BACKEND_ALLOW_ANY_ORIGIN`, optional explicit escape hatch for permissive browser CORS
+- `BACKEND_RATE_LIMIT_MAX_REQUESTS`, optional route/IP limit, default `60`
+- `BACKEND_RATE_LIMIT_WINDOW_SECONDS`, optional rate-limit window, default `60`
+- `BACKEND_TRUST_PROXY_HEADERS`, optional forwarded-IP support, default enabled on Vercel and disabled locally
 - `BACKEND_CACHE_TTL_MINUTES`, optional cache TTL override, default `240`; `EVENTS_CACHE_TTL_MINUTES` still works as a fallback
+
+`ALLOWED_ORIGINS` only controls browser CORS. Native apps, smoke-test `curl` calls, and other non-browser clients can still reach the public backend, so abuse protection also relies on backend rate limits, request validation, provider-result caching, and in-flight de-duplication. Rate-limited requests return `429` with a `Retry-After` header.
 
 Deploy manually using the backend-only context script, or use the VS Code/Codex `Publish Phoebe Backend` action:
 

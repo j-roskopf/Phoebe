@@ -23,11 +23,17 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.testing.testApplication
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.serialization.json.Json
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class PhoebeBackendApplicationTest {
@@ -324,6 +330,253 @@ class PhoebeBackendApplicationTest {
 
         assertEquals(HttpStatusCode.OK, response.status)
         assertEquals("http://localhost:3000", response.headers[HttpHeaders.AccessControlAllowOrigin])
+    }
+
+    @Test
+    fun corsDoesNotAllowUnconfiguredOrigin() = testApplication {
+        application {
+            phoebeBackendModule(
+                config = testConfig(allowedOrigins = listOf("https://phoebe.example")),
+                httpClient = mockProviderClient("{}"),
+                features = testFeatures,
+            )
+        }
+
+        val response = client.get("/health") {
+            header(HttpHeaders.Origin, "https://evil.example")
+        }
+
+        assertEquals(HttpStatusCode.Forbidden, response.status)
+        assertNull(response.headers[HttpHeaders.AccessControlAllowOrigin])
+    }
+
+    @Test
+    fun corsRequiresAllowedOriginsInProduction() {
+        val error = assertFailsWith<IllegalStateException> {
+            testApplication {
+                application {
+                    phoebeBackendModule(
+                        config = testConfig(isProduction = true),
+                        httpClient = mockProviderClient("{}"),
+                        features = testFeatures,
+                    )
+                }
+
+                client.get("/health")
+            }
+        }
+
+        assertTrue(error.message.orEmpty().contains("ALLOWED_ORIGINS"))
+    }
+
+    @Test
+    fun corsAllowsExplicitAnyOriginEscapeHatchInProduction() = testApplication {
+        application {
+            phoebeBackendModule(
+                config = testConfig(isProduction = true, allowAnyOrigin = true),
+                httpClient = mockProviderClient("{}"),
+                features = testFeatures,
+            )
+        }
+
+        val response = client.get("/health") {
+            header(HttpHeaders.Origin, "https://evil.example")
+        }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertNotNull(response.headers[HttpHeaders.AccessControlAllowOrigin])
+    }
+
+    @Test
+    fun artistEventsRateLimitReturnsRetryAfter() = testApplication {
+        application {
+            phoebeBackendModule(
+                config = testConfig(rateLimitMaxRequests = 2, rateLimitWindowMs = 60_000L),
+                httpClient = mockProviderClient(ticketmasterPayload()),
+                clockMs = { 0L },
+                features = testFeatures,
+            )
+        }
+
+        val path = "/v1/artist-events?provider=ticketmaster&artist=Phoebe&limit=1"
+
+        assertEquals(HttpStatusCode.OK, client.get(path).status)
+        assertEquals(HttpStatusCode.OK, client.get(path).status)
+        val limited = client.get(path)
+
+        assertEquals(HttpStatusCode.TooManyRequests, limited.status)
+        assertEquals("60", limited.headers["Retry-After"])
+        assertTrue(limited.bodyAsText().contains("Too many requests"))
+    }
+
+    @Test
+    fun healthIsNotRateLimited() = testApplication {
+        application {
+            phoebeBackendModule(
+                config = testConfig(rateLimitMaxRequests = 1, rateLimitWindowMs = 60_000L),
+                httpClient = mockProviderClient("{}"),
+                clockMs = { 0L },
+                features = testFeatures,
+            )
+        }
+
+        repeat(3) {
+            assertEquals(HttpStatusCode.OK, client.get("/health").status)
+        }
+    }
+
+    @Test
+    fun rateLimitTrustsForwardedHeadersWhenConfigured() = testApplication {
+        application {
+            phoebeBackendModule(
+                config = testConfig(rateLimitMaxRequests = 1, rateLimitWindowMs = 60_000L, trustProxyHeaders = true),
+                httpClient = mockProviderClient(ticketmasterPayload()),
+                clockMs = { 0L },
+                features = testFeatures,
+            )
+        }
+
+        val path = "/v1/artist-events?provider=ticketmaster&artist=Phoebe&limit=1"
+
+        assertEquals(
+            HttpStatusCode.OK,
+            client.get(path) {
+                header("X-Forwarded-For", "203.0.113.10, 10.0.0.1")
+            }.status,
+        )
+        assertEquals(
+            HttpStatusCode.TooManyRequests,
+            client.get(path) {
+                header("X-Forwarded-For", "203.0.113.10, 10.0.0.1")
+            }.status,
+        )
+        assertEquals(
+            HttpStatusCode.OK,
+            client.get(path) {
+                header("X-Forwarded-For", "203.0.113.11, 10.0.0.1")
+            }.status,
+        )
+    }
+
+    @Test
+    fun rateLimitIgnoresForwardedHeadersWhenNotTrusted() = testApplication {
+        application {
+            phoebeBackendModule(
+                config = testConfig(rateLimitMaxRequests = 1, rateLimitWindowMs = 60_000L, trustProxyHeaders = false),
+                httpClient = mockProviderClient(ticketmasterPayload()),
+                clockMs = { 0L },
+                features = testFeatures,
+            )
+        }
+
+        val path = "/v1/artist-events?provider=ticketmaster&artist=Phoebe&limit=1"
+
+        assertEquals(
+            HttpStatusCode.OK,
+            client.get(path) {
+                header("X-Forwarded-For", "203.0.113.10")
+            }.status,
+        )
+        assertEquals(
+            HttpStatusCode.TooManyRequests,
+            client.get(path) {
+                header("X-Forwarded-For", "203.0.113.11")
+            }.status,
+        )
+    }
+
+    @Test
+    fun queryValidationRejectsTooLongArtist() = testApplication {
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = mockProviderClient("{}"), features = testFeatures)
+        }
+
+        val tooLongArtist = "a".repeat(MaxBackendQueryParameterLength + 1)
+        val response = client.get("/v1/artist-events?provider=ticketmaster&artist=$tooLongArtist&limit=1")
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(response.bodyAsText().contains("artist must be $MaxBackendQueryParameterLength characters or fewer"))
+    }
+
+    @Test
+    fun queryValidationRejectsControlCharacters() = testApplication {
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = mockProviderClient("{}"), features = testFeatures)
+        }
+
+        val response = client.get("/v1/genius/referents?artist=Test&title=Bad%0ATitle")
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(response.bodyAsText().contains("title must not contain control characters"))
+    }
+
+    @Test
+    fun queryValidationRejectsInvalidDuration() = testApplication {
+        application {
+            phoebeBackendModule(config = testConfig(), httpClient = mockProviderClient("{}"), features = testFeatures)
+        }
+
+        val response = client.get("/v1/genius/referents?artist=Test&title=Song&durationMs=${MaxBackendDurationMs + 1}")
+
+        assertEquals(HttpStatusCode.BadRequest, response.status)
+        assertTrue(response.bodyAsText().contains("durationMs must be a positive integer"))
+    }
+
+    @Test
+    fun queryValidationAcceptsBoundaryLengthArtist() = testApplication {
+        application {
+            phoebeBackendModule(
+                config = testConfig(ticketmasterApiKey = "tm-key"),
+                httpClient = mockProviderClient(ticketmasterPayload()),
+                features = testFeatures,
+            )
+        }
+
+        val boundaryArtist = "a".repeat(MaxBackendQueryParameterLength)
+        val response = client.get("/v1/artist-events?provider=ticketmaster&artist=$boundaryArtist&limit=1")
+
+        assertEquals(HttpStatusCode.OK, response.status)
+    }
+
+    @Test
+    fun artistEventsConcurrentCacheMissesShareProviderRequest() = testApplication {
+        val providerCalls = AtomicInteger(0)
+        val providerClient = HttpClient(
+            MockEngine {
+                providerCalls.incrementAndGet()
+                delay(100)
+                respondJson(ticketmasterPayload())
+            },
+        ) {
+            install(ClientContentNegotiation) {
+                json(json)
+            }
+        }
+        application {
+            phoebeBackendModule(
+                config = testConfig(ticketmasterApiKey = "tm-key"),
+                httpClient = providerClient,
+                features = testFeatures,
+            )
+        }
+        val routeClient = createClient {
+            install(ClientContentNegotiation) {
+                json(json)
+            }
+        }
+
+        val responses = coroutineScope {
+            (1..5).map {
+                async {
+                    routeClient.get("/v1/artist-events?provider=ticketmaster&artist=Phoebe&limit=1")
+                }
+            }.awaitAll()
+        }
+
+        responses.forEach { response ->
+            assertEquals(HttpStatusCode.OK, response.status)
+        }
+        assertEquals(1, providerCalls.get())
     }
 
     @Test
@@ -767,6 +1020,11 @@ class PhoebeBackendApplicationTest {
         seatGeekClientId: String? = "sg-id",
         geniusAccessToken: String? = "genius-token",
         allowedOrigins: List<String> = emptyList(),
+        allowAnyOrigin: Boolean = false,
+        isProduction: Boolean = false,
+        rateLimitMaxRequests: Int = DefaultBackendRateLimitMaxRequests,
+        rateLimitWindowMs: Long = DefaultBackendRateLimitWindowSeconds * 1_000L,
+        trustProxyHeaders: Boolean = false,
         musicBrainzUserAgent: String = DefaultMusicBrainzUserAgent,
     ): PhoebeBackendConfig =
         PhoebeBackendConfig(
@@ -775,6 +1033,11 @@ class PhoebeBackendApplicationTest {
             geniusAccessToken = geniusAccessToken,
             musicBrainzUserAgent = musicBrainzUserAgent,
             allowedOrigins = allowedOrigins,
+            allowAnyOrigin = allowAnyOrigin,
+            isProduction = isProduction,
+            rateLimitMaxRequests = rateLimitMaxRequests,
+            rateLimitWindowMs = rateLimitWindowMs,
+            trustProxyHeaders = trustProxyHeaders,
             cacheTtlMinutes = 240,
         )
 

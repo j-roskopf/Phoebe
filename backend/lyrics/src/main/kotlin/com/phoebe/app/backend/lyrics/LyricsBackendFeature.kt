@@ -1,11 +1,15 @@
 package com.phoebe.app.backend.lyrics
 
 import com.phoebe.app.backend.MissingProviderCredentialException
+import com.phoebe.app.backend.BackendSingleFlight
 import com.phoebe.app.backend.PhoebeBackendEnvironment
 import com.phoebe.app.backend.PhoebeBackendFeature
 import com.phoebe.app.backend.ProviderApiException
 import com.phoebe.app.backend.normalizedBackendCacheKey
+import com.phoebe.app.backend.optionalBackendQueryParameter
+import com.phoebe.app.backend.positiveDurationMsQueryParameter
 import com.phoebe.app.backend.requireProviderSuccess
+import com.phoebe.app.backend.requiredBackendQueryParameter
 import com.phoebe.app.backend.tryAcquire
 import com.phoebe.app.domain.GeniusReferent
 import com.phoebe.app.domain.GeniusReferentAnnotation
@@ -21,9 +25,7 @@ import io.ktor.client.statement.HttpResponse
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.Application
-import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
-import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -42,15 +44,11 @@ class LyricsBackendFeature : PhoebeBackendFeature {
 
         application.routing {
             get("/v1/genius/referents") {
-                if (!call.tryAcquire(environment.rateLimiter)) return@get
-                val artist = call.requiredQueryParameter("artist")
-                val title = call.requiredQueryParameter("title")
-                val album = call.request.queryParameters["album"]
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-                val rawDurationMs = call.request.queryParameters["durationMs"]?.trim()?.takeIf { it.isNotBlank() }
-                val durationMs = rawDurationMs?.toLongOrNull()?.takeIf { it > 0L }
-                    ?: if (rawDurationMs == null) null else throw BadRequestException("durationMs must be a positive integer.")
+                if (!call.tryAcquire(environment, "genius-referents")) return@get
+                val artist = call.requiredBackendQueryParameter("artist")
+                val title = call.requiredBackendQueryParameter("title")
+                val album = call.optionalBackendQueryParameter("album")
+                val durationMs = call.positiveDurationMsQueryParameter("durationMs")
                 call.respond(
                     service.referents(
                         artist = artist,
@@ -64,15 +62,10 @@ class LyricsBackendFeature : PhoebeBackendFeature {
     }
 }
 
-private fun ApplicationCall.requiredQueryParameter(name: String): String =
-    request.queryParameters[name]
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-        ?: throw BadRequestException("$name is required.")
-
 class GeniusReferentsService(
     private val adapter: GeniusReferentsAdapter,
     private val cache: GeniusReferentsCache,
+    private val singleFlight: BackendSingleFlight = BackendSingleFlight(),
 ) {
     suspend fun referents(
         artist: String,
@@ -87,9 +80,12 @@ class GeniusReferentsService(
             durationMs?.toString().orEmpty(),
         ).joinToString("|")
         cache.get(key)?.let { return it }
-        val response = adapter.referents(artist = artist, title = title, album = album, durationMs = durationMs)
-        cache.put(key, response)
-        return response
+        return singleFlight.run(key) {
+            cache.get(key)?.let { return@run it }
+            val response = adapter.referents(artist = artist, title = title, album = album, durationMs = durationMs)
+            cache.put(key, response)
+            response
+        }
     }
 }
 

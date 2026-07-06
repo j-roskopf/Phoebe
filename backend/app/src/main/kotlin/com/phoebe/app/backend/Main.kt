@@ -30,7 +30,12 @@ fun Application.phoebeBackendModule(
     clockMs: () -> Long = System::currentTimeMillis,
     features: List<PhoebeBackendFeature> = loadPhoebeBackendFeatures(),
 ) {
-    val limiter = IpRateLimiter(clockMs = clockMs)
+    config.validateForStartup()
+    val limiter = IpRateLimiter(
+        maxRequests = config.rateLimitMaxRequests,
+        windowMs = config.rateLimitWindowMs,
+        clockMs = clockMs,
+    )
 
     install(ContentNegotiation) {
         json(phoebeBackendJson)
@@ -39,7 +44,7 @@ fun Application.phoebeBackendModule(
         allowHeader(HttpHeaders.ContentType)
         allowHeader(HttpHeaders.Accept)
         allowMethod(io.ktor.http.HttpMethod.Get)
-        if (config.allowedOrigins.isEmpty()) {
+        if (config.allowAnyOrigin || config.allowedOrigins.isEmpty()) {
             anyHost()
         } else {
             val allowedOrigins = config.allowedOrigins.mapNotNull(AllowedCorsOrigin::parse)

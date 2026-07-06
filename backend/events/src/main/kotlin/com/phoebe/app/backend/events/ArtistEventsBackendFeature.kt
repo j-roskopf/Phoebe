@@ -1,11 +1,14 @@
 package com.phoebe.app.backend.events
 
 import com.phoebe.app.backend.MissingProviderCredentialException
+import com.phoebe.app.backend.BackendSingleFlight
 import com.phoebe.app.backend.PhoebeBackendEnvironment
 import com.phoebe.app.backend.PhoebeBackendFeature
 import com.phoebe.app.backend.normalizedBackendCacheKey
 import com.phoebe.app.backend.phoebeBackendJson
 import com.phoebe.app.backend.requireProviderSuccess
+import com.phoebe.app.backend.optionalBackendQueryParameter
+import com.phoebe.app.backend.requiredBackendQueryParameter
 import com.phoebe.app.backend.tryAcquire
 import com.phoebe.app.domain.ArtistEvent
 import com.phoebe.app.domain.ArtistEventDate
@@ -56,12 +59,9 @@ class ArtistEventsBackendFeature : PhoebeBackendFeature {
 
         application.routing {
             get("/v1/artist-events") {
-                if (!call.tryAcquire(environment.rateLimiter)) return@get
+                if (!call.tryAcquire(environment, "artist-events")) return@get
                 val provider = call.providerParameter()
-                val artist = call.request.queryParameters["artist"]
-                    ?.trim()
-                    ?.takeIf { it.isNotBlank() }
-                    ?: throw BadRequestException("artist is required.")
+                val artist = call.requiredBackendQueryParameter("artist")
                 val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 50) ?: 50
                 call.respond(service.artistEvents(provider, artist, limit))
             }
@@ -70,7 +70,7 @@ class ArtistEventsBackendFeature : PhoebeBackendFeature {
 }
 
 private fun ApplicationCall.providerParameter(): EventDataProvider =
-    when (request.queryParameters["provider"]?.trim()?.lowercase(Locale.US)) {
+    when (optionalBackendQueryParameter("provider")?.lowercase(Locale.US)) {
         "ticketmaster" -> EventDataProvider.Ticketmaster
         "seatgeek" -> EventDataProvider.SeatGeek
         else -> throw BadRequestException("provider must be ticketmaster or seatgeek.")
@@ -79,18 +79,22 @@ private fun ApplicationCall.providerParameter(): EventDataProvider =
 class ArtistEventsService(
     private val adapters: Map<EventDataProvider, ArtistEventsAdapter>,
     private val cache: ArtistEventsCache,
+    private val singleFlight: BackendSingleFlight = BackendSingleFlight(),
 ) {
     suspend fun artistEvents(provider: EventDataProvider, artist: String, limit: Int): ArtistEventsResponse {
         val key = "${provider.name}:${artist.normalizedBackendCacheKey()}:$limit"
         cache.get(key)?.let { return it }
-        val adapter = adapters[provider] ?: error("Unsupported provider.")
-        val response = ArtistEventsResponse(
-            provider = provider,
-            artist = artist,
-            events = adapter.searchArtistEvents(artist, limit),
-        )
-        cache.put(key, response)
-        return response
+        return singleFlight.run(key) {
+            cache.get(key)?.let { return@run it }
+            val adapter = adapters[provider] ?: error("Unsupported provider.")
+            val response = ArtistEventsResponse(
+                provider = provider,
+                artist = artist,
+                events = adapter.searchArtistEvents(artist, limit),
+            )
+            cache.put(key, response)
+            response
+        }
     }
 }
 

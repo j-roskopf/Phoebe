@@ -151,8 +151,14 @@ Configure these environment variables in the Vercel production project:
 - `TICKETMASTER_API_KEY`
 - `SEATGEEK_CLIENT_ID`
 - `GENIUS_ACCESS_TOKEN`: Genius client access token used only by the backend
-- `ALLOWED_ORIGINS`, optional comma-separated allowlist
+- `ALLOWED_ORIGINS`: comma-separated browser origin allowlist, required in Production unless `BACKEND_ALLOW_ANY_ORIGIN=true`
+- `BACKEND_ALLOW_ANY_ORIGIN`, optional explicit escape hatch for permissive browser CORS
+- `BACKEND_RATE_LIMIT_MAX_REQUESTS`, optional route/IP limit, default `60`
+- `BACKEND_RATE_LIMIT_WINDOW_SECONDS`, optional rate-limit window, default `60`
+- `BACKEND_TRUST_PROXY_HEADERS`, optional forwarded-IP support, default enabled on Vercel and disabled locally
 - `BACKEND_CACHE_TTL_MINUTES`, optional cache TTL override; `EVENTS_CACHE_TTL_MINUTES` still works as a fallback
+
+`ALLOWED_ORIGINS` is a browser CORS allowlist, not app-origin authentication. The backend remains public for native clients and CI smoke tests, with abuse resistance handled by backend rate limits, query validation, caching, and provider-request de-duplication.
 
 Preview deploys need two repository secrets in this repository:
 

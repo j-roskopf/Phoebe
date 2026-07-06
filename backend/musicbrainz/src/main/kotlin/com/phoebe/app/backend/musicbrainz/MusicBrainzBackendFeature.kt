@@ -1,10 +1,12 @@
 package com.phoebe.app.backend.musicbrainz
 
+import com.phoebe.app.backend.BackendSingleFlight
 import com.phoebe.app.backend.PhoebeBackendEnvironment
 import com.phoebe.app.backend.PhoebeBackendFeature
 import com.phoebe.app.backend.ProviderApiException
 import com.phoebe.app.backend.normalizedBackendCacheKey
 import com.phoebe.app.backend.requireProviderSuccess
+import com.phoebe.app.backend.requiredBackendQueryParameter
 import com.phoebe.app.backend.tryAcquire
 import com.phoebe.app.domain.MusicBrainzAlbumMetadataQuery
 import com.phoebe.app.domain.MusicBrainzAlbumMetadataResponse
@@ -23,9 +25,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.isSuccess
 import io.ktor.server.application.Application
-import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
-import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.response.respond
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
@@ -64,9 +64,9 @@ class MusicBrainzBackendFeature(
 
         application.routing {
             get("/v1/musicbrainz/album") {
-                if (!call.tryAcquire(environment.rateLimiter)) return@get
-                val album = call.requiredQueryParameter("album")
-                val artist = call.requiredQueryParameter("artist")
+                if (!call.tryAcquire(environment, "musicbrainz-album")) return@get
+                val album = call.requiredBackendQueryParameter("album")
+                val artist = call.requiredBackendQueryParameter("artist")
                 val year = call.request.queryParameters["year"]?.toIntOrNull()
                 val releaseMbids = call.request.queryParameters.getAll("releaseMbid")
                     .orEmpty()
@@ -84,8 +84,8 @@ class MusicBrainzBackendFeature(
                 )
             }
             get("/v1/musicbrainz/artist-artwork") {
-                if (!call.tryAcquire(environment.rateLimiter)) return@get
-                val artist = call.requiredQueryParameter("artist")
+                if (!call.tryAcquire(environment, "musicbrainz-artist-artwork")) return@get
+                val artist = call.requiredBackendQueryParameter("artist")
                 val hasLimit = call.request.queryParameters.contains("limit")
                 val limit = call.request.queryParameters["limit"]?.toIntOrNull()?.coerceIn(1, 24) ?: DefaultArtistArtworkLimit
                 val fast = call.request.queryParameters["fast"]?.toBooleanStrictOrNull() ?: !hasLimit
@@ -108,16 +108,11 @@ class MusicBrainzBackendFeature(
     }
 }
 
-private fun ApplicationCall.requiredQueryParameter(name: String): String =
-    request.queryParameters[name]
-        ?.trim()
-        ?.takeIf { it.isNotBlank() }
-        ?: throw BadRequestException("$name is required.")
-
 class MusicBrainzService(
     private val adapter: MusicBrainzAdapter,
     private val albumCache: MusicBrainzCache<MusicBrainzAlbumMetadataResponse>,
     private val artistCache: MusicBrainzCache<MusicBrainzArtistArtworkResponse>,
+    private val singleFlight: BackendSingleFlight = BackendSingleFlight(),
 ) {
     suspend fun albumMetadata(
         album: String,
@@ -138,9 +133,12 @@ class MusicBrainzService(
             releaseMbids.joinToString(","),
         ).joinToString("|")
         albumCache.get(key)?.let { return it }
-        val response = adapter.albumMetadata(query)
-        albumCache.put(key, response)
-        return response
+        return singleFlight.run("album:$key") {
+            albumCache.get(key)?.let { return@run it }
+            val response = adapter.albumMetadata(query)
+            albumCache.put(key, response)
+            response
+        }
     }
 
     suspend fun artistArtwork(
@@ -155,9 +153,12 @@ class MusicBrainzService(
             .joinToString(",")
         val key = "${artist.normalizedBackendCacheKey()}:$limit:${if (fast) "fast" else "full"}:$excludedKey"
         artistCache.get(key)?.let { return it }
-        val response = adapter.artistArtwork(artist, limit, fast, excludedArtworkUrls)
-        artistCache.put(key, response)
-        return response
+        return singleFlight.run("artist:$key") {
+            artistCache.get(key)?.let { return@run it }
+            val response = adapter.artistArtwork(artist, limit, fast, excludedArtworkUrls)
+            artistCache.put(key, response)
+            response
+        }
     }
 }
 
