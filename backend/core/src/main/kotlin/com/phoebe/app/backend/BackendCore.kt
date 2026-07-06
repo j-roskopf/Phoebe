@@ -13,8 +13,7 @@ import io.ktor.server.application.ApplicationCall
 import io.ktor.server.plugins.BadRequestException
 import io.ktor.server.plugins.origin
 import io.ktor.server.response.respond
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import org.slf4j.LoggerFactory
@@ -183,14 +182,22 @@ data class RateLimitDecision(
 )
 
 class BackendSingleFlight {
-    private val locks = ConcurrentHashMap<String, Mutex>()
+    private val active = ConcurrentHashMap<String, CompletableDeferred<Any?>>()
 
+    @Suppress("UNCHECKED_CAST")
     suspend fun <T> run(key: String, block: suspend () -> T): T {
-        val lock = locks.getOrPut(key) { Mutex() }
-        return try {
-            lock.withLock { block() }
+        val pending = CompletableDeferred<Any?>()
+        val existing = active.putIfAbsent(key, pending)
+        if (existing != null) return existing.await() as T
+        try {
+            val result = block()
+            pending.complete(result)
+            return result
+        } catch (error: Throwable) {
+            pending.completeExceptionally(error)
+            throw error
         } finally {
-            locks.remove(key, lock)
+            active.remove(key, pending)
         }
     }
 }
@@ -246,13 +253,13 @@ private fun String?.backendBoolean(default: Boolean): Boolean =
 
 private fun ApplicationCall.rateLimitClientKey(config: PhoebeBackendConfig): String {
     if (config.trustProxyHeaders) {
-        request.headers["X-Forwarded-For"]
-            ?.split(',')
-            ?.firstNotNullOfOrNull { value -> value.trim().takeIf { it.isNotBlank() } }
-            ?.let { return it.take(200) }
         request.headers["X-Real-IP"]
             ?.trim()
             ?.takeIf { it.isNotBlank() }
+            ?.let { return it.take(200) }
+        request.headers["X-Forwarded-For"]
+            ?.split(',')
+            ?.firstNotNullOfOrNull { value -> value.trim().takeIf { it.isNotBlank() } }
             ?.let { return it.take(200) }
     }
     return request.origin.remoteHost.ifBlank { "unknown" }.take(200)

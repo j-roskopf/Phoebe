@@ -459,6 +459,42 @@ class PhoebeBackendApplicationTest {
     }
 
     @Test
+    fun rateLimitPrefersRealIpOverForwardedForWhenTrusted() = testApplication {
+        application {
+            phoebeBackendModule(
+                config = testConfig(rateLimitMaxRequests = 1, rateLimitWindowMs = 60_000L, trustProxyHeaders = true),
+                httpClient = mockProviderClient(ticketmasterPayload()),
+                clockMs = { 0L },
+                features = testFeatures,
+            )
+        }
+
+        val path = "/v1/artist-events?provider=ticketmaster&artist=Phoebe&limit=1"
+
+        assertEquals(
+            HttpStatusCode.OK,
+            client.get(path) {
+                header("X-Real-IP", "198.51.100.20")
+                header("X-Forwarded-For", "203.0.113.10, 10.0.0.1")
+            }.status,
+        )
+        assertEquals(
+            HttpStatusCode.TooManyRequests,
+            client.get(path) {
+                header("X-Real-IP", "198.51.100.20")
+                header("X-Forwarded-For", "203.0.113.11, 10.0.0.1")
+            }.status,
+        )
+        assertEquals(
+            HttpStatusCode.OK,
+            client.get(path) {
+                header("X-Real-IP", "198.51.100.21")
+                header("X-Forwarded-For", "203.0.113.11, 10.0.0.1")
+            }.status,
+        )
+    }
+
+    @Test
     fun rateLimitIgnoresForwardedHeadersWhenNotTrusted() = testApplication {
         application {
             phoebeBackendModule(

@@ -21,6 +21,7 @@ import io.ktor.client.request.head
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.client.statement.HttpResponse
+import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.isSuccess
@@ -381,13 +382,19 @@ class MusicBrainzApiAdapter(
 
     private suspend fun coverArtRelease(releaseId: String, title: String, maxItems: Int): List<MusicBrainzArtwork> {
         val response = coverArtGet("https://coverartarchive.org/release/$releaseId", allowNotFound = true)
-        if (response.status == HttpStatusCode.NotFound) return emptyList()
+        if (response.status == HttpStatusCode.NotFound) {
+            response.discardBody()
+            return emptyList()
+        }
         return response.body<CoverArtArchiveResponse>().toArtwork(source = title, maxItems = maxItems)
     }
 
     private suspend fun coverArtReleaseGroup(releaseGroupId: String, title: String, maxItems: Int): List<MusicBrainzArtwork> {
         val response = coverArtGet("https://coverartarchive.org/release-group/$releaseGroupId", allowNotFound = true)
-        if (response.status == HttpStatusCode.NotFound) return emptyList()
+        if (response.status == HttpStatusCode.NotFound) {
+            response.discardBody()
+            return emptyList()
+        }
         return response.body<CoverArtArchiveResponse>().toArtwork(source = title, maxItems = maxItems)
     }
 
@@ -433,10 +440,14 @@ class MusicBrainzApiAdapter(
         }
         if (response.status.value in 300..399) {
             if (redirectDepth >= MaxCoverArtRedirects) {
+                response.discardBody()
                 throw ProviderApiException("Cover Art Archive API redirected too many times.")
             }
-            val location = response.headers[HttpHeaders.Location]
-                ?: throw ProviderApiException("Cover Art Archive API returned HTTP ${response.status.value} without a redirect location.")
+            val location = response.headers[HttpHeaders.Location] ?: run {
+                response.discardBody()
+                throw ProviderApiException("Cover Art Archive API returned HTTP ${response.status.value} without a redirect location.")
+            }
+            response.discardBody()
             return coverArtGet(
                 url = location.coverArtRedirectUrl(),
                 allowNotFound = allowNotFound,
@@ -457,17 +468,25 @@ class MusicBrainzApiAdapter(
         val response = noRedirectHttpClient.head(url) {
             header(HttpHeaders.UserAgent, userAgent)
         }
-        if (response.status.value in 300..399) {
-            val location = response.headers[HttpHeaders.Location]
-                ?: throw ProviderApiException("Cover Art Archive API returned HTTP ${response.status.value} without a redirect location.")
-            return location.coverArtRedirectUrl().normalizedRemoteArtworkUrl()
+        try {
+            if (response.status.value in 300..399) {
+                val location = response.headers[HttpHeaders.Location]
+                    ?: throw ProviderApiException("Cover Art Archive API returned HTTP ${response.status.value} without a redirect location.")
+                return location.coverArtRedirectUrl().normalizedRemoteArtworkUrl()
+            }
+            if (allowNotFound && response.status == HttpStatusCode.NotFound) return null
+            if (!response.status.isSuccess()) {
+                throw ProviderApiException("Cover Art Archive API returned HTTP ${response.status.value}.")
+            }
+            return url.normalizedRemoteArtworkUrl()
+        } finally {
+            response.discardBody()
         }
-        if (allowNotFound && response.status == HttpStatusCode.NotFound) return null
-        if (!response.status.isSuccess()) {
-            throw ProviderApiException("Cover Art Archive API returned HTTP ${response.status.value}.")
-        }
-        return url.normalizedRemoteArtworkUrl()
     }
+}
+
+private suspend fun HttpResponse.discardBody() {
+    runCatching { bodyAsText() }
 }
 
 interface MusicBrainzRequestGate {

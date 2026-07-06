@@ -1916,12 +1916,17 @@ class DesktopAudioPlayer(
             PhoebeLog.d("DesktopAudioPlayer") { "ffmpeg fallback unavailable: ${error.message}" }
             return null
         }
-        val stream = AudioInputStream(
-            BufferedInputStream(process.inputStream, RemoteAudioProbeBufferBytes),
-            ffmpegPcmAudioFormat(),
-            AudioSystem.NOT_SPECIFIED.toLong(),
-        )
-        return FfmpegPcmStream(process, stream)
+        return try {
+            val stream = AudioInputStream(
+                BufferedInputStream(process.inputStream, RemoteAudioProbeBufferBytes),
+                ffmpegPcmAudioFormat(),
+                AudioSystem.NOT_SPECIFIED.toLong(),
+            )
+            FfmpegPcmStream(process, stream)
+        } catch (error: Throwable) {
+            runCatching { process.destroyForcibly() }
+            throw error
+        }
     }
 
     private fun ffmpegPcmCommand(
