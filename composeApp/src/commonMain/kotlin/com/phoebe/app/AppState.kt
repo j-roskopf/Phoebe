@@ -2807,11 +2807,13 @@ class AppState(
         track: Track,
         forceRefresh: Boolean = false,
         includeRemoteAnnotations: Boolean = true,
+        forceRemoteAnnotationsRefresh: Boolean = forceRefresh,
     ): LyricsLoadState =
         dependencies.lyricsRepository.lyricsFor(
             track = track,
             forceRefresh = forceRefresh,
             includeRemoteAnnotations = includeRemoteAnnotations,
+            forceRemoteAnnotationsRefresh = forceRemoteAnnotationsRefresh,
         )
 
     fun toggleShuffle() = dependencies.playbackTransportService.toggleShuffle(player.value.shuffle)

@@ -82,12 +82,22 @@ class IpRateLimiter(
     fun tryAcquire(key: String): Boolean {
         val now = clockMs()
         cleanupExpiredBucketsIfNeeded(now)
-        val bucket = hits.getOrPut(key) { mutableListOf() }
-        synchronized(bucket) {
-            bucket.removeAll { now - it > windowMs }
-            if (bucket.size >= maxRequests) return false
-            bucket += now
-            return true
+        while (true) {
+            val bucket = hits.getOrPut(key) { mutableListOf() }
+            val acquired = synchronized(bucket) {
+                if (hits[key] !== bucket) {
+                    null
+                } else {
+                    bucket.removeAll { now - it > windowMs }
+                    if (bucket.size >= maxRequests) {
+                        false
+                    } else {
+                        bucket += now
+                        true
+                    }
+                }
+            }
+            if (acquired != null) return acquired
         }
     }
 

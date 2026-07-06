@@ -724,8 +724,9 @@ private fun PhoebeRootStateHolder(
             if (value is LyricsLoadState.Loaded) {
                 value = state.loadLyrics(
                     target,
-                    forceRefresh = forceRefresh,
+                    forceRefresh = false,
                     includeRemoteAnnotations = true,
+                    forceRemoteAnnotationsRefresh = forceRefresh,
                 )
             }
         }

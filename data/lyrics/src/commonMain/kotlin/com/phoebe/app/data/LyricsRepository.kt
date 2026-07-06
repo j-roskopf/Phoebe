@@ -54,13 +54,14 @@ class LyricsRepository(
         track: Track,
         forceRefresh: Boolean = false,
         includeRemoteAnnotations: Boolean = true,
+        forceRemoteAnnotationsRefresh: Boolean = forceRefresh,
     ): LyricsLoadState = withContext(Dispatchers.Default) {
         val fingerprint = track.lyricsFingerprint()
         lookupMutex.withLock {
             if (!forceRefresh) {
                 memoryCache[fingerprint]?.let { cached ->
                     val state = if (includeRemoteAnnotations) {
-                        enrichCachedLyricsState(track, cached)
+                        enrichCachedLyricsState(track, cached, forceRemoteAnnotationsRefresh)
                     } else {
                         cachedLyricsStateWithFreshCachedAnnotations(cached)
                     }
@@ -68,7 +69,13 @@ class LyricsRepository(
                     return@withLock state
                 }
             }
-            val loaded = loadLyrics(track, fingerprint, forceRefresh, includeRemoteAnnotations)
+            val loaded = loadLyrics(
+                track = track,
+                fingerprint = fingerprint,
+                forceRefresh = forceRefresh,
+                includeRemoteAnnotations = includeRemoteAnnotations,
+                forceRemoteAnnotationsRefresh = forceRemoteAnnotationsRefresh,
+            )
             memoryCache[fingerprint] = loaded
             loaded
         }
@@ -79,21 +86,26 @@ class LyricsRepository(
         fingerprint: String,
         forceRefresh: Boolean,
         includeRemoteAnnotations: Boolean,
+        forceRemoteAnnotationsRefresh: Boolean,
     ): LyricsLoadState {
         val document = loadBaseLyrics(track, fingerprint, forceRefresh) ?: return LyricsLoadState.NotFound
         return LyricsLoadState.Loaded(
             if (includeRemoteAnnotations) {
-                enrichWithGeniusAnnotations(track, document, forceRefresh)
+                enrichWithGeniusAnnotations(track, document, forceRemoteAnnotationsRefresh)
             } else {
                 document.withFreshCachedGeniusAnnotations(forceRefresh)
             },
         )
     }
 
-    private suspend fun enrichCachedLyricsState(track: Track, state: LyricsLoadState): LyricsLoadState =
+    private suspend fun enrichCachedLyricsState(
+        track: Track,
+        state: LyricsLoadState,
+        forceRemoteAnnotationsRefresh: Boolean,
+    ): LyricsLoadState =
         when (state) {
             is LyricsLoadState.Loaded -> LyricsLoadState.Loaded(
-                enrichWithGeniusAnnotations(track, state.document, forceRefresh = false),
+                enrichWithGeniusAnnotations(track, state.document, forceRemoteAnnotationsRefresh),
             )
             LyricsLoadState.NotFound -> state
             else -> state
@@ -219,8 +231,10 @@ class LyricsRepository(
     ): LyricsDocument {
         if (!document.hasText || document.instrumental) return document
 
-        document.annotations?.takeIf { annotations -> annotations.isFresh() }?.let {
-            return document
+        if (!forceRefresh) {
+            document.annotations?.takeIf { annotations -> annotations.isFresh() }?.let {
+                return document
+            }
         }
         val cached = cachedGeniusAnnotations(document.trackFingerprint)
         if (!forceRefresh && cached != null && cached.isFresh()) {
@@ -362,7 +376,7 @@ private fun matchAnnotationTarget(
                     parts += line
                 }
             }
-            val candidate = parts.joinToString(" ").normalizedAnnotationText()
+            val candidate = parts.joinToString(" ")
             if (candidate.matchesAnnotationTarget(target, targetTokens) && indexes.isNotEmpty()) {
                 return LyricsAnnotationTarget(indexes)
             }

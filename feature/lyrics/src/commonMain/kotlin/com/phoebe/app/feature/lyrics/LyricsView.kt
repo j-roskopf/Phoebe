@@ -632,6 +632,7 @@ private fun AnnotationBottomSheet(
     val scrimAlpha = remember(sheet) { Animatable(0f) }
     var sheetHeightPx by remember(sheet) { mutableIntStateOf(0) }
     var dismissing by remember(sheet) { mutableStateOf(false) }
+    var animatedSheet by remember { mutableStateOf<AnnotationSheetContent?>(null) }
 
     fun animateDismiss() {
         if (dismissing) return
@@ -653,7 +654,8 @@ private fun AnnotationBottomSheet(
     }
 
     LaunchedEffect(sheet, sheetHeightPx) {
-        if (sheetHeightPx > 0) {
+        if (sheetHeightPx > 0 && animatedSheet != sheet) {
+            animatedSheet = sheet
             sheetOffsetPx.snapTo(sheetHeightPx.toFloat())
             scrimAlpha.snapTo(0f)
             launch {

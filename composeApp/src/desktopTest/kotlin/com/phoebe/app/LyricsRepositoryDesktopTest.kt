@@ -291,6 +291,54 @@ class LyricsRepositoryDesktopTest {
     }
 
     @Test
+    fun twoStepForceRefreshReusesBaseLyricsButRefreshesRemoteAnnotations() = runTest {
+        val (db, sqlDriver) = newInMemoryPhoebeDatabase()
+        driver = sqlDriver
+        var lrclibCalls = 0
+        var backendCalls = 0
+        val http = testHttpClient(
+            MockEngine { request ->
+                when (request.url.host) {
+                    "lrclib.net" -> {
+                        lrclibCalls++
+                        respondJson("""{"id":1,"instrumental":false,"plainLyrics":"Hello\nWorld","syncedLyrics":"[00:01.00] Hello\n[00:02.00] World"}""")
+                    }
+                    BackendHost -> when (request.url.encodedPath) {
+                        "/v1/genius/referents" -> {
+                            backendCalls++
+                            respondJson(geniusBackendReferentsJson(includeUnmatched = false))
+                        }
+                        else -> respond("", HttpStatusCode.NotFound)
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        )
+        val harness = lyricsRepository(db, http, backendBaseUrl = BackendBaseUrl)
+
+        assertIs<LyricsLoadState.Loaded>(harness.repository.lyricsFor(track()))
+        harness.repository.clearMemoryCache()
+        assertIs<LyricsLoadState.Loaded>(
+            harness.repository.lyricsFor(
+                track(),
+                forceRefresh = true,
+                includeRemoteAnnotations = false,
+            ),
+        )
+        assertIs<LyricsLoadState.Loaded>(
+            harness.repository.lyricsFor(
+                track(),
+                forceRefresh = false,
+                includeRemoteAnnotations = true,
+                forceRemoteAnnotationsRefresh = true,
+            ),
+        )
+
+        assertEquals(2, lrclibCalls)
+        assertEquals(2, backendCalls)
+    }
+
+    @Test
     fun enrichesMemoryCachedLyricsWhenBackendBecomesAvailable() = runTest {
         val (db, sqlDriver) = newInMemoryPhoebeDatabase()
         driver = sqlDriver
