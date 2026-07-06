@@ -12,28 +12,44 @@ fun localProperty(name: String): String? {
     return properties.getProperty(name)?.takeIf { it.isNotBlank() }
 }
 
-fun configProperty(name: String, envName: String) =
-    providers.gradleProperty(name)
-        .orElse(providers.environmentVariable(envName))
-        .orElse(providers.provider { localProperty(name).orEmpty() })
+fun configProperty(
+    propertyName: String,
+    envName: String,
+    legacyPropertyName: String,
+    legacyEnvName: String,
+) =
+    providers.provider {
+        providers.gradleProperty(propertyName).orNull
+            ?: providers.environmentVariable(envName).orNull
+            ?: localProperty(propertyName)
+            ?: providers.gradleProperty(legacyPropertyName).orNull
+            ?: providers.environmentVariable(legacyEnvName).orNull
+            ?: localProperty(legacyPropertyName)
+            ?: ""
+    }
         .map { it.trim().trimEnd('/') }
 
-val eventsBackendUrl = configProperty("phoebe.events.backendUrl", "PHOEBE_EVENTS_BACKEND_URL")
-val eventsConfigOutput = layout.buildDirectory.dir("generated/eventsConfig/kotlin")
+val phoebeBackendUrl = configProperty(
+    propertyName = "phoebe.backend.url",
+    envName = "PHOEBE_BACKEND_URL",
+    legacyPropertyName = "phoebe.events.backendUrl",
+    legacyEnvName = "PHOEBE_EVENTS_BACKEND_URL",
+)
+val backendConfigOutput = layout.buildDirectory.dir("generated/phoebeBackendConfig/kotlin")
 
-val generateEventsBuildConfig = tasks.register("generateEventsBuildConfig") {
-    val outputDir = eventsConfigOutput
-    inputs.property("eventsBackendUrl", eventsBackendUrl)
+val generatePhoebeBackendBuildConfig = tasks.register("generatePhoebeBackendBuildConfig") {
+    val outputDir = backendConfigOutput
+    inputs.property("phoebeBackendUrl", phoebeBackendUrl)
     outputs.dir(outputDir)
     doLast {
-        val file = outputDir.get().file("com/phoebe/app/data/EventsBuildConfig.kt").asFile
+        val file = outputDir.get().file("com/phoebe/app/data/PhoebeBackendBuildConfig.kt").asFile
         file.parentFile.mkdirs()
         file.writeText(
             """
             package com.phoebe.app.data
 
-            internal object EventsBuildConfig {
-                const val productionBackendUrl: String = "${eventsBackendUrl.get().escapeKotlin()}"
+            internal object PhoebeBackendBuildConfig {
+                const val productionBackendUrl: String = "${phoebeBackendUrl.get().escapeKotlin()}"
             }
             """.trimIndent() + "\n",
         )
@@ -43,7 +59,7 @@ val generateEventsBuildConfig = tasks.register("generateEventsBuildConfig") {
 kotlin {
     sourceSets {
         commonMain {
-            kotlin.srcDir(eventsConfigOutput)
+            kotlin.srcDir(backendConfigOutput)
             dependencies {
                 implementation(project(":core:platform"))
                 implementation(project(":data:network"))
@@ -70,7 +86,7 @@ tasks.configureEach {
         name.startsWith("compile") &&
             (name.contains("Kotlin") || name.startsWith("compileAndroid"))
     if (compileUsesCommonMainSources) {
-        dependsOn(generateEventsBuildConfig)
+        dependsOn(generatePhoebeBackendBuildConfig)
     }
 }
 

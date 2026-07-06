@@ -13,6 +13,11 @@ enum class PlaybackEnginePath {
 interface PlaybackDiagnostics {
     fun engineSelected(engine: PlaybackEnginePath) = Unit
 
+    fun playbackStartupEvent(
+        engine: PlaybackEnginePath,
+        event: String,
+    ) = Unit
+
     fun platformPlaying(
         engine: PlaybackEnginePath,
         positionMs: Long,

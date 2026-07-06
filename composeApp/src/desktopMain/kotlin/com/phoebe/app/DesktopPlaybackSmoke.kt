@@ -95,7 +95,8 @@ private fun runDesktopPlaybackSmokeTrack(
             if (firstAudioMs != null) {
                 println(
                     "PHOEBE_PLAYBACK_SMOKE_OK firstAudioMs=$firstAudioMs " +
-                        "engines=${snapshot.engines.asSmokeValue()} errors=${snapshot.errors.asSmokeValue()} " +
+                        "engines=${snapshot.engines.asSmokeValue()} startup=${snapshot.startupEvents.asSmokeValue()} " +
+                        "errors=${snapshot.errors.asSmokeValue()} " +
                         label,
                 )
                 return 0
@@ -107,7 +108,8 @@ private fun runDesktopPlaybackSmokeTrack(
         val state = player.state.value
         println(
             "PHOEBE_PLAYBACK_SMOKE_FAILED reason=timeout timeoutMs=$timeoutMs " +
-                "engines=${snapshot.engines.asSmokeValue()} errors=${snapshot.errors.asSmokeValue()} " +
+                "engines=${snapshot.engines.asSmokeValue()} startup=${snapshot.startupEvents.asSmokeValue()} " +
+                "errors=${snapshot.errors.asSmokeValue()} " +
                 "buffering=${state.isBuffering} playing=${state.isPlaying} errorSerial=${state.playbackErrorSerial} " +
                 label,
         )
@@ -147,6 +149,7 @@ private fun File.toSmokeTrack(): Track {
 private data class PlaybackSmokeSnapshot(
     val engines: List<PlaybackEnginePath>,
     val firstAudioMs: Long?,
+    val startupEvents: List<String>,
     val errors: List<String>,
 )
 
@@ -155,6 +158,7 @@ private class PlaybackSmokeDiagnostics : PlaybackDiagnostics {
     private var playRequestedAtNs = System.nanoTime()
     private val engines = mutableListOf<PlaybackEnginePath>()
     private var firstAudioMs: Long? = null
+    private val startupEvents = mutableListOf<String>()
     private val errors = mutableListOf<String>()
 
     fun markPlayRequested() {
@@ -162,6 +166,7 @@ private class PlaybackSmokeDiagnostics : PlaybackDiagnostics {
             playRequestedAtNs = System.nanoTime()
             engines.clear()
             firstAudioMs = null
+            startupEvents.clear()
             errors.clear()
         }
     }
@@ -169,6 +174,13 @@ private class PlaybackSmokeDiagnostics : PlaybackDiagnostics {
     override fun engineSelected(engine: PlaybackEnginePath) {
         synchronized(lock) {
             if (engine !in engines) engines += engine
+        }
+    }
+
+    override fun playbackStartupEvent(engine: PlaybackEnginePath, event: String) {
+        engineSelected(engine)
+        synchronized(lock) {
+            startupEvents += "${elapsedMs()}ms:${engine.name}:${singleLine(event)}"
         }
     }
 
@@ -204,6 +216,7 @@ private class PlaybackSmokeDiagnostics : PlaybackDiagnostics {
         PlaybackSmokeSnapshot(
             engines = engines.toList(),
             firstAudioMs = firstAudioMs,
+            startupEvents = startupEvents.toList(),
             errors = errors.toList(),
         )
     }
@@ -215,6 +228,9 @@ private class PlaybackSmokeDiagnostics : PlaybackDiagnostics {
             }
         }
     }
+
+    private fun elapsedMs(): Long =
+        ((System.nanoTime() - playRequestedAtNs) / 1_000_000L).coerceAtLeast(0L)
 }
 
 private fun List<Any>.asSmokeValue(): String =

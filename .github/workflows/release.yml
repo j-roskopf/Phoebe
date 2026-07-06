@@ -22,7 +22,8 @@ permissions:
 env:
   JAVA_VERSION: 21
   JAVA_DISTRIBUTION: temurin
-  PHOEBE_EVENTS_BACKEND_URL: ${{ secrets.PHOEBE_EVENTS_BACKEND_URL }}
+  PHOEBE_BACKEND_URL: ${{ secrets.PHOEBE_BACKEND_URL || secrets.PHOEBE_EVENTS_BACKEND_URL }}
+  PHOEBE_EVENTS_BACKEND_URL: ${{ secrets.PHOEBE_EVENTS_BACKEND_URL || secrets.PHOEBE_BACKEND_URL }}
 
 jobs:
   version:
@@ -97,15 +98,15 @@ jobs:
             echo "tag_name=${tag_name}"
           } >> "${GITHUB_OUTPUT}"
 
-  events-backend:
-    name: Deploy events backend
+  phoebe-backend:
+    name: Deploy Phoebe backend
     needs: version
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_EVENTS_PROD }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID_PHOEBE_BACKEND_PROD || secrets.VERCEL_PROJECT_ID_EVENTS_PROD }}
 
     steps:
       - name: Checkout
@@ -113,16 +114,16 @@ jobs:
         with:
           ref: ${{ needs.version.outputs.tag_name }}
 
-      - name: Validate events backend release secrets
+      - name: Validate Phoebe backend release secrets
         shell: bash
         run: |
           missing=()
           [[ -n "${VERCEL_TOKEN}" ]] || missing+=("VERCEL_TOKEN")
           [[ -n "${VERCEL_ORG_ID}" ]] || missing+=("VERCEL_ORG_ID")
-          [[ -n "${VERCEL_PROJECT_ID}" ]] || missing+=("VERCEL_PROJECT_ID_EVENTS_PROD")
-          [[ -n "${PHOEBE_EVENTS_BACKEND_URL}" ]] || missing+=("PHOEBE_EVENTS_BACKEND_URL")
+          [[ -n "${VERCEL_PROJECT_ID}" ]] || missing+=("VERCEL_PROJECT_ID_PHOEBE_BACKEND_PROD")
+          [[ -n "${PHOEBE_BACKEND_URL}" ]] || missing+=("PHOEBE_BACKEND_URL")
           if (( ${#missing[@]} > 0 )); then
-            echo "::error::Missing required events backend release secrets: ${missing[*]}"
+            echo "::error::Missing required Phoebe backend release secrets: ${missing[*]}"
             exit 1
           fi
 
@@ -134,14 +135,14 @@ jobs:
       - name: Install Vercel CLI
         run: npm install --global vercel@latest
 
-      - name: Deploy production events backend to Vercel
+      - name: Deploy production Phoebe backend to Vercel
         id: deploy
         shell: bash
         run: |
           set -euo pipefail
           vercel pull --yes --environment=production --token "${VERCEL_TOKEN}"
-          deploy_log="${RUNNER_TEMP}/vercel-events-deploy.log"
-          scripts/deploy-events-backend-vercel.sh --prod --yes --token "${VERCEL_TOKEN}" | tee "${deploy_log}"
+          deploy_log="${RUNNER_TEMP}/vercel-phoebe-backend-deploy.log"
+          scripts/deploy-phoebe-backend-vercel.sh --prod --yes --token "${VERCEL_TOKEN}" | tee "${deploy_log}"
           deployment_url="$(grep -Eo 'https://[^[:space:]"]+\.vercel\.app' "${deploy_log}" | tail -n 1)"
           if [[ -z "${deployment_url}" ]]; then
             echo "::error::Vercel deploy did not print a deployment URL"
@@ -149,17 +150,21 @@ jobs:
           fi
           echo "deployment_url=${deployment_url}" >> "${GITHUB_OUTPUT}"
 
-      - name: Smoke test production events backend
+      - name: Smoke test production Phoebe backend
         shell: bash
         run: |
           set -euo pipefail
-          base_url="${PHOEBE_EVENTS_BACKEND_URL%/}"
+          base_url="${PHOEBE_BACKEND_URL%/}"
           curl --fail --show-error --silent "${base_url}/health"
           curl --fail --show-error --silent --get "${base_url}/v1/artist-events" \
             --data-urlencode "provider=ticketmaster" \
             --data-urlencode "artist=Taylor Swift" \
             --data-urlencode "limit=1" \
             >/dev/null
+          curl --fail --show-error --silent --get "${base_url}/v1/genius/referents" \
+            --data-urlencode "artist=Taylor Swift" \
+            --data-urlencode "title=Anti-Hero" \
+            | grep -q '"referents"'
 
   android:
     name: Android release
@@ -885,12 +890,12 @@ jobs:
     name: Create GitHub release
     needs:
       - version
-      - events-backend
+      - phoebe-backend
       - android
       - linux
       - windows
       - macos
-    if: always() && needs.version.result == 'success' && needs.events-backend.result == 'success' && needs.android.result == 'success' && needs.linux.result == 'success' && needs.windows.result == 'success' && needs.macos.result == 'success'
+    if: always() && needs.version.result == 'success' && needs.phoebe-backend.result == 'success' && needs.android.result == 'success' && needs.linux.result == 'success' && needs.windows.result == 'success' && needs.macos.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -1002,9 +1007,9 @@ jobs:
   web-pages-deploy:
     name: Deploy web to GitHub Pages
     needs:
-      - events-backend
+      - phoebe-backend
       - web
-    if: always() && needs.events-backend.result == 'success' && needs.web.result == 'success'
+    if: always() && needs.phoebe-backend.result == 'success' && needs.web.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     environment:

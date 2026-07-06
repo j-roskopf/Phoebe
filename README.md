@@ -209,23 +209,33 @@ export PHOEBE_GOOGLE_MAPS_WEB_API_KEY=your-web-key
 
 Platform-specific keys take precedence over the shared `phoebe.googleMaps.apiKey` / `PHOEBE_GOOGLE_MAPS_API_KEY` fallback. Desktop environment variables are checked before build-time keys so you can override a packaged/local key for one run. Keep these values out of git; release keys are configured separately as GitHub secrets in [docs/github-actions.md](docs/github-actions.md).
 
-### Events backend
+### Phoebe backend
 
-Artist event search is served by the Ktor backend in `:backend:events`. Release builds call the production backend URL from `PHOEBE_EVENTS_BACKEND_URL` / `phoebe.events.backendUrl`; debug builds can switch between production and localhost from the hidden debug menu.
+Artist event search and Genius annotation enrichment are served by the Ktor backend in `:backend:app`. Feature routes live in `:backend:events` and `:backend:lyrics`, and deployment discovers backend modules from the `backend/` directory. Release builds call the production backend URL from `PHOEBE_BACKEND_URL` / `phoebe.backend.url`; debug builds can switch between production and localhost from the hidden debug menu. The old `PHOEBE_EVENTS_BACKEND_URL` / `phoebe.events.backendUrl` names still work as fallbacks.
 
 Run it locally on port `8088`:
 
 ```bash
 export TICKETMASTER_API_KEY=your-ticketmaster-consumer-key
 export SEATGEEK_CLIENT_ID=your-seatgeek-client-id
-./gradlew :backend:events:run
+export GENIUS_ACCESS_TOKEN=your-genius-client-access-token
+./gradlew :backend:app:run
 ```
 
-The VS Code and Codex `Events Backend` run configs also load optional local secrets from `.env.events.local`:
+Or put local-only backend secrets in `~/.gradle/gradle.properties`; the `:backend:app:run` task passes them to the Ktor process:
+
+```properties
+TICKETMASTER_API_KEY=your-ticketmaster-consumer-key
+SEATGEEK_CLIENT_ID=your-seatgeek-client-id
+GENIUS_ACCESS_TOKEN=your-genius-client-access-token
+```
+
+The VS Code and Codex `Phoebe Backend` run configs also load optional local secrets from `.env.backend.local`; `.env.events.local` still works as a fallback:
 
 ```bash
 TICKETMASTER_API_KEY=your-ticketmaster-consumer-key
 SEATGEEK_CLIENT_ID=your-seatgeek-client-id
+GENIUS_ACCESS_TOKEN=your-genius-client-access-token
 ```
 
 Check it:
@@ -233,6 +243,7 @@ Check it:
 ```bash
 curl http://127.0.0.1:8088/health
 curl "http://127.0.0.1:8088/v1/artist-events?provider=ticketmaster&artist=Taylor%20Swift&limit=1"
+curl "http://127.0.0.1:8088/v1/genius/referents?artist=Taylor%20Swift&title=Anti-Hero"
 ```
 
 For Vercel, create/link the project from the repository root because the deployment uses `Dockerfile.vercel`:
@@ -240,39 +251,43 @@ For Vercel, create/link the project from the repository root because the deploym
 ```bash
 npm install --global vercel
 vercel login
-vercel link
+vercel project add phoebe-backend # first time only; skip if the project already exists
+vercel link --yes --project phoebe-backend
 ```
+
+If the backend lives in another Vercel team or account, add `--scope <team-slug-or-username>` to the `project add` and `link` commands.
 
 In the Vercel project, add these Production environment variables:
 
 - `TICKETMASTER_API_KEY`
 - `SEATGEEK_CLIENT_ID`
+- `GENIUS_ACCESS_TOKEN`: Genius client access token used only by the backend
 - `ALLOWED_ORIGINS`, optional comma-separated allowed origins
-- `EVENTS_CACHE_TTL_MINUTES`, optional cache TTL override, default `240`
+- `BACKEND_CACHE_TTL_MINUTES`, optional cache TTL override, default `240`; `EVENTS_CACHE_TTL_MINUTES` still works as a fallback
 
-Deploy manually using the backend-only context script:
+Deploy manually using the backend-only context script, or use the VS Code/Codex `Publish Phoebe Backend` action:
 
 ```bash
-scripts/deploy-events-backend-vercel.sh --prod --yes
+scripts/deploy-phoebe-backend-vercel.sh --prod --yes
 ```
 
-Use the script from this repository. It creates a temporary Vercel context containing only the backend service, `:domain`, Gradle metadata, and build logic, then deploys that directory with archive upload enabled. Plain `vercel deploy --prod` from the repo root can upload the wrong context, deploy no container, or fail with `Request body too large. Limit: 10mb`.
+Use the script from this repository. It creates a temporary Vercel context containing the backend modules, `:domain`, Gradle metadata, and build logic, then deploys that directory with archive upload enabled. Plain `vercel deploy --prod` from the repo root can upload the wrong context, deploy no container, or fail with `Request body too large. Limit: 10mb`.
 
 After deploy, copy the production URL into local app builds:
 
 ```properties
 # local.properties
-phoebe.events.backendUrl=https://your-events-backend.vercel.app
+phoebe.backend.url=https://your-backend.vercel.app
 ```
 
 For release CI, add these GitHub Actions repository secrets:
 
-- `PHOEBE_EVENTS_BACKEND_URL`: the Vercel production backend URL
+- `PHOEBE_BACKEND_URL`: the Vercel production backend URL
 - `VERCEL_TOKEN`: Vercel access token
 - `VERCEL_ORG_ID`: from `.vercel/project.json`
-- `VERCEL_PROJECT_ID_EVENTS_PROD`: from `.vercel/project.json`
+- `VERCEL_PROJECT_ID_PHOEBE_BACKEND_PROD`: from `.vercel/project.json`
 
-The release workflow runs on every push to `main`, so merging to `main` triggers a release. Its `events-backend` job deploys the production backend with `scripts/deploy-events-backend-vercel.sh --prod --yes`, checks `/health`, and runs a Ticketmaster smoke lookup in parallel with the client packaging jobs. The GitHub release and final web Pages deploy still wait for the backend smoke test to pass.
+The release workflow runs on every push to `main`, so merging to `main` triggers a release. Its `phoebe-backend` job deploys the production backend with `scripts/deploy-phoebe-backend-vercel.sh --prod --yes`, checks `/health`, and runs a Ticketmaster smoke lookup in parallel with the client packaging jobs. The GitHub release and final web Pages deploy still wait for the backend smoke test to pass. Legacy `PHOEBE_EVENTS_BACKEND_URL`, `phoebe.events.backendUrl`, and `VERCEL_PROJECT_ID_EVENTS_PROD` still work as fallback names.
 
 **iOS debug build:**
 
@@ -283,7 +298,7 @@ xcodebuild -project iosApp/iosApp.xcodeproj -scheme iosApp -configuration Debug 
 
 ## Releases
 
-Every push to `main` runs the release workflow. It bumps `gradle.properties`, tags `release/x.y.z`, then deploys the events backend to Vercel in parallel with signed Android APK/AAB, Linux DEB and Flatpak, Windows MSI, macOS DMG, web, and iOS artifact generation. Signing secrets and setup are documented in [docs/github-actions.md](docs/github-actions.md) and `docs/release-signing-setup.md`.
+Every push to `main` runs the release workflow. It bumps `gradle.properties`, tags `release/x.y.z`, then deploys the Phoebe backend to Vercel in parallel with signed Android APK/AAB, Linux DEB and Flatpak, Windows MSI, macOS DMG, web, and iOS artifact generation. Signing secrets and setup are documented in [docs/github-actions.md](docs/github-actions.md) and `docs/release-signing-setup.md`.
 
 ## Debug logging
 

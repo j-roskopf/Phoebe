@@ -77,7 +77,7 @@ internal fun EventsDebugMenuDialog(
         ) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Events Backend", color = PhoebeUi.primaryText, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                    Text("Phoebe Backend", color = PhoebeUi.primaryText, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text("Debug server target", color = PhoebeUi.secondaryText, fontSize = 12.sp)
                 }
                 TextButton(

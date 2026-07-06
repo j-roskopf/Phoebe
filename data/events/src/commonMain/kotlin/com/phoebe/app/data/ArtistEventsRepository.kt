@@ -20,7 +20,7 @@ class ArtistEventsRepository(
         settings: EventSettings = appSettingsRepository.settings.value.events,
     ): ArtistEventsResponse {
         val baseUrl = resolveEventsBackendBaseUrl(settings)
-            ?: error("Events backend URL is not configured.")
+            ?: error("Phoebe backend URL is not configured.")
         return client.fetchArtistEvents(
             baseUrl = baseUrl,
             provider = settings.provider,
@@ -44,7 +44,7 @@ class ArtistEventsRepository(
 
     suspend fun checkHealth(settings: EventSettings = appSettingsRepository.settings.value.events): Result<String> {
         val baseUrl = resolveEventsBackendBaseUrl(settings)
-            ?: return Result.failure(IllegalStateException("Events backend URL is not configured."))
+            ?: return Result.failure(IllegalStateException("Phoebe backend URL is not configured."))
         return try {
             Result.success(client.health(baseUrl))
         } catch (e: CancellationException) {

@@ -2,11 +2,17 @@ package com.phoebe.app.data
 
 import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import com.phoebe.app.db.PhoebeDatabase
+import com.phoebe.app.domain.GeniusReferent
+import com.phoebe.app.domain.GeniusSongReference
+import com.phoebe.app.domain.LyricsAnnotation
+import com.phoebe.app.domain.LyricsAnnotations
+import com.phoebe.app.domain.LyricsAnnotationTarget
 import com.phoebe.app.domain.LyricsDocument
 import com.phoebe.app.domain.LyricsLoadState
 import com.phoebe.app.domain.LyricsSource
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PhoebeLog
+import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.sources.LocalLibraryIO
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
@@ -23,6 +29,8 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlin.math.roundToInt
 
 @SingleIn(AppScope::class)
@@ -30,6 +38,8 @@ import kotlin.math.roundToInt
 class LyricsRepository(
     private val database: PhoebeDatabase,
     private val httpClient: HttpClient,
+    private val appSettingsRepository: AppSettingsRepository,
+    private val geniusBackendClient: GeniusBackendClient,
 ) {
     private val memoryCache = mutableMapOf<String, LyricsLoadState>()
     private val lookupMutex = Mutex()
@@ -40,28 +50,70 @@ class LyricsRepository(
         }
     }
 
-    suspend fun lyricsFor(track: Track, forceRefresh: Boolean = false): LyricsLoadState = withContext(Dispatchers.Default) {
+    suspend fun lyricsFor(
+        track: Track,
+        forceRefresh: Boolean = false,
+        includeRemoteAnnotations: Boolean = true,
+    ): LyricsLoadState = withContext(Dispatchers.Default) {
         val fingerprint = track.lyricsFingerprint()
-        if (!forceRefresh) {
-            memoryCache[fingerprint]?.let { return@withContext it }
-        }
         lookupMutex.withLock {
             if (!forceRefresh) {
-                memoryCache[fingerprint]?.let { return@withLock it }
+                memoryCache[fingerprint]?.let { cached ->
+                    val state = if (includeRemoteAnnotations) {
+                        enrichCachedLyricsState(track, cached)
+                    } else {
+                        cachedLyricsStateWithFreshCachedAnnotations(cached)
+                    }
+                    memoryCache[fingerprint] = state
+                    return@withLock state
+                }
             }
-            val loaded = loadLyrics(track, fingerprint, forceRefresh)
+            val loaded = loadLyrics(track, fingerprint, forceRefresh, includeRemoteAnnotations)
             memoryCache[fingerprint] = loaded
             loaded
         }
     }
 
-    private suspend fun loadLyrics(track: Track, fingerprint: String, forceRefresh: Boolean): LyricsLoadState {
+    private suspend fun loadLyrics(
+        track: Track,
+        fingerprint: String,
+        forceRefresh: Boolean,
+        includeRemoteAnnotations: Boolean,
+    ): LyricsLoadState {
+        val document = loadBaseLyrics(track, fingerprint, forceRefresh) ?: return LyricsLoadState.NotFound
+        return LyricsLoadState.Loaded(
+            if (includeRemoteAnnotations) {
+                enrichWithGeniusAnnotations(track, document, forceRefresh)
+            } else {
+                document.withFreshCachedGeniusAnnotations(forceRefresh)
+            },
+        )
+    }
+
+    private suspend fun enrichCachedLyricsState(track: Track, state: LyricsLoadState): LyricsLoadState =
+        when (state) {
+            is LyricsLoadState.Loaded -> LyricsLoadState.Loaded(
+                enrichWithGeniusAnnotations(track, state.document, forceRefresh = false),
+            )
+            LyricsLoadState.NotFound -> state
+            else -> state
+        }
+
+    private suspend fun cachedLyricsStateWithFreshCachedAnnotations(state: LyricsLoadState): LyricsLoadState =
+        when (state) {
+            is LyricsLoadState.Loaded -> LyricsLoadState.Loaded(
+                state.document.withFreshCachedGeniusAnnotations(forceRefresh = false),
+            )
+            else -> state
+        }
+
+    private suspend fun loadBaseLyrics(track: Track, fingerprint: String, forceRefresh: Boolean): LyricsDocument? {
         if (!forceRefresh) {
-            cachedLyrics(fingerprint)?.let { return LyricsLoadState.Loaded(it) }
+            cachedLyrics(fingerprint)?.let { return it }
         }
         localLyrics(track, fingerprint)?.let { document ->
             cache(document, rawSynced = if (document.synced) document.lines.toLrcText() else null, rawPlain = document.lines.toPlainText())
-            return LyricsLoadState.Loaded(document)
+            return document
         }
         fetchLrclib(track, fingerprint)?.let { document ->
             cache(
@@ -69,9 +121,9 @@ class LyricsRepository(
                 rawSynced = if (document.synced) document.lines.toLrcText() else null,
                 rawPlain = document.lines.toPlainText(),
             )
-            return LyricsLoadState.Loaded(document)
+            return document
         }
-        return LyricsLoadState.NotFound
+        return null
     }
 
     private suspend fun cachedLyrics(fingerprint: String): LyricsDocument? {
@@ -159,6 +211,112 @@ class LyricsRepository(
             PhoebeLog.d("LyricsRepository") { "lyrics cache write failed: ${error.message}" }
         }
     }
+
+    private suspend fun enrichWithGeniusAnnotations(
+        track: Track,
+        document: LyricsDocument,
+        forceRefresh: Boolean,
+    ): LyricsDocument {
+        if (!document.hasText || document.instrumental) return document
+
+        document.annotations?.takeIf { annotations -> annotations.isFresh() }?.let {
+            return document
+        }
+        val cached = cachedGeniusAnnotations(document.trackFingerprint)
+        if (!forceRefresh && cached != null && cached.isFresh()) {
+            return document.copy(annotations = cached)
+        }
+
+        val baseUrl = resolveEventsBackendBaseUrl(appSettingsRepository.settings.value.events)
+            ?: return document.copy(annotations = cached)
+        val annotations = runCatching {
+            val response = geniusBackendClient.referents(baseUrl, track)
+            val song = response.song ?: return@runCatching null
+            response.referents.toLyricsAnnotations(song, document)
+        }.onFailure { error ->
+            PhoebeLog.d("LyricsRepository") { "Genius annotation enrichment failed: ${error.message}" }
+        }.getOrNull() ?: return document.copy(annotations = cached)
+
+        cacheGeniusAnnotations(document.trackFingerprint, annotations)
+        return document.copy(annotations = annotations)
+    }
+
+    private suspend fun LyricsDocument.withFreshCachedGeniusAnnotations(forceRefresh: Boolean): LyricsDocument {
+        if (!hasText || instrumental) return this
+        annotations?.takeIf { annotationSet -> annotationSet.isFresh() }?.let {
+            return this
+        }
+        if (forceRefresh) return copy(annotations = null)
+        val cached = cachedGeniusAnnotations(trackFingerprint)?.takeIf { annotationSet -> annotationSet.isFresh() }
+        return copy(annotations = cached)
+    }
+
+    private fun LyricsAnnotations.isFresh(): Boolean =
+        matchingVersion == GeniusAnnotationMatchingVersion &&
+            currentTimeMs() - fetchedAtMs < GeniusAnnotationCacheTtlMs
+
+    private suspend fun cachedGeniusAnnotations(fingerprint: String): LyricsAnnotations? {
+        val row = runCatching {
+            database.lyricsQueries.selectGeniusAnnotations(fingerprint).awaitAsOneOrNull()
+        }.onFailure { error ->
+            PhoebeLog.d("LyricsRepository") { "Genius annotation cache read failed: ${error.message}" }
+        }.getOrNull() ?: return null
+        return runCatching {
+            PhoebeDataJson.decodeFromString<LyricsAnnotations>(row.annotationsJson)
+        }.onFailure { error ->
+            PhoebeLog.d("LyricsRepository") { "Genius annotation cache decode failed: ${error.message}" }
+        }.getOrNull()
+    }
+
+    private suspend fun cacheGeniusAnnotations(fingerprint: String, annotations: LyricsAnnotations) {
+        runCatching {
+            database.lyricsQueries.upsertGeniusAnnotations(
+                trackFingerprint = fingerprint,
+                geniusSongId = annotations.songId,
+                geniusSongUrl = annotations.songUrl,
+                annotationsJson = PhoebeDataJson.encodeToString(annotations),
+                fetchedAtMs = annotations.fetchedAtMs,
+            )
+        }.onFailure { error ->
+            PhoebeLog.d("LyricsRepository") { "Genius annotation cache write failed: ${error.message}" }
+        }
+    }
+
+    private fun List<GeniusReferent>.toLyricsAnnotations(song: GeniusSongReference, document: LyricsDocument): LyricsAnnotations {
+        val matched = mutableListOf<LyricsAnnotation>()
+        val unmatched = mutableListOf<LyricsAnnotation>()
+        forEach { referent ->
+            val target = matchAnnotationTarget(referent.fragment, document.lines)
+            referent.annotations.forEach { annotation ->
+                val lyricsAnnotation = LyricsAnnotation(
+                    id = annotation.id,
+                    referentId = referent.id,
+                    fragment = referent.fragment,
+                    body = annotation.body,
+                    target = target,
+                    authorName = annotation.authorName,
+                    verified = annotation.verified,
+                    votesTotal = annotation.votesTotal,
+                    url = annotation.url,
+                )
+                if (target == null) {
+                    unmatched += lyricsAnnotation
+                } else {
+                    matched += lyricsAnnotation
+                }
+            }
+        }
+        return LyricsAnnotations(
+            songId = song.id,
+            songUrl = song.url,
+            songTitle = song.title.takeIf { it.isNotBlank() },
+            artistName = song.primaryArtistName,
+            fetchedAtMs = currentTimeMs(),
+            annotations = matched,
+            unmatched = unmatched,
+            matchingVersion = GeniusAnnotationMatchingVersion,
+        )
+    }
 }
 
 fun Track.lyricsFingerprint(): String =
@@ -172,6 +330,111 @@ fun Track.lyricsFingerprint(): String =
 
 private fun String.normalizedLyricsKey(): String =
     trim().lowercase().replace(Regex("""\s+"""), " ")
+
+private fun matchAnnotationTarget(
+    fragment: String,
+    lines: List<com.phoebe.app.domain.LyricsLine>,
+): LyricsAnnotationTarget? {
+    val target = fragment.normalizedAnnotationText()
+    if (target.isBlank()) return null
+    val targetTokens = target.annotationTokens()
+    val targetLineCount = fragment
+        .lineSequence()
+        .count { line -> line.normalizedAnnotationText().isNotBlank() }
+        .coerceAtLeast(1)
+    val normalizedLines = lines.map { it.text.normalizedAnnotationText() }
+    val maxSpanSize = minOf(
+        normalizedLines.size,
+        maxOf(
+            targetLineCount + GeniusAnnotationExtraSpanLineAllowance,
+            minOf(targetTokens.size + GeniusAnnotationExtraSpanLineAllowance, GeniusAnnotationDefaultMaxSpanLines),
+        ),
+    )
+    for (spanSize in 1..maxSpanSize) {
+        for (startIndex in 0..normalizedLines.size - spanSize) {
+            val endIndex = startIndex + spanSize - 1
+            val indexes = mutableListOf<Int>()
+            val parts = mutableListOf<String>()
+            for (lineIndex in startIndex..endIndex) {
+                val line = normalizedLines[lineIndex]
+                if (line.isNotBlank()) {
+                    indexes += lineIndex
+                    parts += line
+                }
+            }
+            val candidate = parts.joinToString(" ").normalizedAnnotationText()
+            if (candidate.matchesAnnotationTarget(target, targetTokens) && indexes.isNotEmpty()) {
+                return LyricsAnnotationTarget(indexes)
+            }
+        }
+    }
+    return null
+}
+
+private fun String.matchesAnnotationTarget(target: String, targetTokens: List<String>): Boolean {
+    if (this == target || startsWith("$target ") || endsWith(" $target") || contains(" $target ")) {
+        return true
+    }
+    if (compactAnnotationText() == target.compactAnnotationText()) {
+        return true
+    }
+    val candidateTokens = annotationTokens()
+    if (
+        targetTokens.size < 4 ||
+        candidateTokens.isEmpty() ||
+        candidateTokens.size > targetTokens.size + GeniusAnnotationFuzzyTokenSlack
+    ) {
+        return false
+    }
+    if (
+        candidateTokens.size < targetTokens.size &&
+        targetTokens.take(candidateTokens.size) == candidateTokens
+    ) {
+        return false
+    }
+    if (targetTokens.first() !in candidateTokens || targetTokens.last() !in candidateTokens) {
+        return false
+    }
+    val lcs = longestCommonSubsequenceLength(targetTokens, candidateTokens)
+    return lcs.toDouble() / targetTokens.size >= 0.80 &&
+        lcs.toDouble() / candidateTokens.size >= 0.55
+}
+
+private fun String.annotationTokens(): List<String> =
+    split(' ')
+        .filter { it.isNotBlank() }
+        .map { token ->
+            if (token.length > 3 && token.endsWith("s")) token.dropLast(1) else token
+        }
+
+private fun longestCommonSubsequenceLength(left: List<String>, right: List<String>): Int {
+    val previous = IntArray(right.size + 1)
+    val current = IntArray(right.size + 1)
+    for (leftIndex in left.indices) {
+        for (rightIndex in right.indices) {
+            current[rightIndex + 1] = if (left[leftIndex] == right[rightIndex]) {
+                previous[rightIndex] + 1
+            } else {
+                maxOf(previous[rightIndex + 1], current[rightIndex])
+            }
+        }
+        for (index in current.indices) {
+            previous[index] = current[index]
+            current[index] = 0
+        }
+    }
+    return previous[right.size]
+}
+
+private fun String.normalizedAnnotationText(): String =
+    lowercase()
+        .replace(Regex("""['\u2019\u2018`\u00B4\u02BC\u02B9]"""), "")
+        .replace(Regex("""[^\p{L}\p{Nd}]+"""), " ")
+        .trim()
+        .replace(Regex("""\s+"""), " ")
+
+private fun String.compactAnnotationText(): String =
+    replace(" ", "")
 
 private fun List<com.phoebe.app.domain.LyricsLine>.toPlainText(): String =
     joinToString("\n") { it.text }
@@ -193,3 +456,9 @@ private data class LrclibLyricsResponse(
     @SerialName("plainLyrics") val plainLyrics: String? = null,
     @SerialName("syncedLyrics") val syncedLyrics: String? = null,
 )
+
+private const val GeniusAnnotationCacheTtlMs = 7L * 24L * 60L * 60L * 1_000L
+private const val GeniusAnnotationMatchingVersion = 9
+private const val GeniusAnnotationDefaultMaxSpanLines = 12
+private const val GeniusAnnotationExtraSpanLineAllowance = 3
+private const val GeniusAnnotationFuzzyTokenSlack = 8

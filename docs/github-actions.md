@@ -54,7 +54,7 @@ phoebe.versionName=1.2.3
 phoebe.versionCode=1002003
 ```
 
-The release workflow validates that the version is plain semver, commits the version bump back to `main`, creates the matching `release/x.y.z` tag, then starts the production events backend deploy and the Android, Linux, Windows, macOS, iOS, and web build jobs in parallel. Native package jobs use `phoebe.versionCode` for Android, rename the generated binaries to include `phoebe.versionName`, then create a draft GitHub release with the generated APK, AAB, DEB, Flatpak bundle, MSI, and DMG assets attached after those jobs and the backend smoke test finish successfully. The iOS IPA is built on its own macOS runner and is uploaded to the same release afterward, so a slow iOS build no longer blocks publishing the other platform artifacts.
+The release workflow validates that the version is plain semver, commits the version bump back to `main`, creates the matching `release/x.y.z` tag, then starts the production Phoebe backend deploy and the Android, Linux, Windows, macOS, iOS, and web build jobs in parallel. Native package jobs use `phoebe.versionCode` for Android, rename the generated binaries to include `phoebe.versionName`, then create a draft GitHub release with the generated APK, AAB, DEB, Flatpak bundle, MSI, and DMG assets attached after those jobs and the backend smoke test finish successfully. The iOS IPA is built on its own macOS runner and is uploaded to the same release afterward, so a slow iOS build no longer blocks publishing the other platform artifacts.
 
 The web build job prepares the Wasm distribution independently of the draft GitHub release. The final GitHub Pages deploy waits for both the web build and the backend smoke test to finish successfully.
 
@@ -137,19 +137,22 @@ git push origin gh-pages
 
 Production GitHub Pages deploys do not need repository secrets. The release workflow uses `GITHUB_TOKEN` with `pages: write` and `id-token: write`.
 
-Events backend release deploys need these repository secrets:
+Phoebe backend release deploys need these repository secrets:
 
-- `PHOEBE_EVENTS_BACKEND_URL`: production events backend URL embedded into release builds
+- `PHOEBE_BACKEND_URL`: production backend URL embedded into release builds
 - `VERCEL_TOKEN`: Vercel token allowed to deploy the production backend project
 - `VERCEL_ORG_ID`
-- `VERCEL_PROJECT_ID_EVENTS_PROD`
+- `VERCEL_PROJECT_ID_PHOEBE_BACKEND_PROD`
+
+The legacy `PHOEBE_EVENTS_BACKEND_URL` and `VERCEL_PROJECT_ID_EVENTS_PROD` secret names are still accepted as fallbacks.
 
 Configure these environment variables in the Vercel production project:
 
 - `TICKETMASTER_API_KEY`
 - `SEATGEEK_CLIENT_ID`
+- `GENIUS_ACCESS_TOKEN`: Genius client access token used only by the backend
 - `ALLOWED_ORIGINS`, optional comma-separated allowlist
-- `EVENTS_CACHE_TTL_MINUTES`, optional cache TTL override
+- `BACKEND_CACHE_TTL_MINUTES`, optional cache TTL override; `EVENTS_CACHE_TTL_MINUTES` still works as a fallback
 
 Preview deploys need two repository secrets in this repository:
 

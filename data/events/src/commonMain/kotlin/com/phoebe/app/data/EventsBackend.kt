@@ -9,7 +9,7 @@ expect fun defaultEventsLocalBackendUrl(): String
 fun resolveEventsBackendBaseUrl(
     settings: EventSettings,
     debugBuild: Boolean = isDebugBuild(),
-    productionBackendUrl: String = EventsBuildConfig.productionBackendUrl,
+    productionBackendUrl: String = PhoebeBackendBuildConfig.productionBackendUrl,
 ): String? {
     val production = productionBackendUrl.trim().trimEnd('/').takeIf { it.isNotBlank() }
     if (!debugBuild || settings.backendTarget == EventsBackendTarget.Production) return production

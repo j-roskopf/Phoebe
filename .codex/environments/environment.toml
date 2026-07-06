@@ -26,9 +26,14 @@ icon = "debug"
 command = "./gradlew :composeApp:wasmJsBrowserDevelopmentRun"
 
 [[actions]]
-name = "Events Backend"
+name = "Phoebe Backend"
 icon = "run"
-command = "set -a; [ ! -f .env.events.local ] || . ./.env.events.local; set +a; ./gradlew :backend:events:run"
+command = "set -a; [ ! -f .env.backend.local ] || . ./.env.backend.local; [ ! -f .env.events.local ] || . ./.env.events.local; set +a; ./gradlew :backend:app:run"
+
+[[actions]]
+name = "Publish Phoebe Backend"
+icon = "run"
+command = "scripts/deploy-phoebe-backend-vercel.sh --prod --yes"
 
 [[actions]]
 name = "Screenshots"

@@ -1148,6 +1148,37 @@ data class ArtistEventsResponse(
     val events: List<ArtistEvent> = emptyList(),
 )
 
+@Serializable
+data class GeniusReferentsResponse(
+    val song: GeniusSongReference? = null,
+    val referents: List<GeniusReferent> = emptyList(),
+)
+
+@Serializable
+data class GeniusSongReference(
+    val id: Long,
+    val title: String,
+    val url: String? = null,
+    val primaryArtistName: String? = null,
+)
+
+@Serializable
+data class GeniusReferent(
+    val id: Long,
+    val fragment: String,
+    val annotations: List<GeniusReferentAnnotation> = emptyList(),
+)
+
+@Serializable
+data class GeniusReferentAnnotation(
+    val id: Long,
+    val body: String,
+    val authorName: String? = null,
+    val verified: Boolean = false,
+    val votesTotal: Int? = null,
+    val url: String? = null,
+)
+
 data class ArtistEventsLoadState(
     val loading: Boolean = false,
     val events: List<ArtistEvent> = emptyList(),
@@ -1860,10 +1891,44 @@ data class LyricsDocument(
     val source: LyricsSource,
     val synced: Boolean,
     val instrumental: Boolean = false,
+    val annotations: LyricsAnnotations? = null,
 ) {
     val hasText: Boolean
         get() = lines.any { it.text.isNotBlank() }
 }
+
+@Serializable
+data class LyricsAnnotations(
+    val songId: Long,
+    val songUrl: String? = null,
+    val songTitle: String? = null,
+    val artistName: String? = null,
+    val fetchedAtMs: Long,
+    val annotations: List<LyricsAnnotation> = emptyList(),
+    val unmatched: List<LyricsAnnotation> = emptyList(),
+    val matchingVersion: Int = 0,
+) {
+    val hasAnnotations: Boolean
+        get() = annotations.isNotEmpty() || unmatched.isNotEmpty()
+}
+
+@Serializable
+data class LyricsAnnotation(
+    val id: Long,
+    val referentId: Long,
+    val fragment: String,
+    val body: String,
+    val target: LyricsAnnotationTarget? = null,
+    val authorName: String? = null,
+    val verified: Boolean = false,
+    val votesTotal: Int? = null,
+    val url: String? = null,
+)
+
+@Serializable
+data class LyricsAnnotationTarget(
+    val lineIndexes: List<Int>,
+)
 
 sealed interface LyricsLoadState {
     data object Idle : LyricsLoadState

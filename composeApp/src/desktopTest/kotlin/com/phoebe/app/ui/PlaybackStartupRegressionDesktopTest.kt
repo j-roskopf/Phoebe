@@ -91,10 +91,15 @@ class PlaybackStartupRegressionDesktopTest {
                 val firstAudioMs = waitForFirstAudioMs(diagnostics, PlaybackStartupThresholds.DesktopMs)
                 val snapshot = diagnostics.snapshot.value
                 assertTrue(playRequested, "Expected tapping ${target.title} to request playback")
-                assertNotNull(firstAudioMs, "Expected first desktop audio signal; engines=${snapshot.engines} errors=${snapshot.errors}")
+                assertNotNull(
+                    firstAudioMs,
+                    "Expected first desktop audio signal; engines=${snapshot.engines} " +
+                        "startup=${snapshot.startupEvents} errors=${snapshot.errors}",
+                )
                 assertTrue(
                     firstAudioMs <= PlaybackStartupThresholds.DesktopMs,
-                    "Desktop first audio took ${firstAudioMs}ms, threshold=${PlaybackStartupThresholds.DesktopMs}ms, engines=${snapshot.engines}",
+                    "Desktop first audio took ${firstAudioMs}ms, threshold=${PlaybackStartupThresholds.DesktopMs}ms, " +
+                        "engines=${snapshot.engines} startup=${snapshot.startupEvents}",
                 )
             } finally {
                 player.releaseForTests()

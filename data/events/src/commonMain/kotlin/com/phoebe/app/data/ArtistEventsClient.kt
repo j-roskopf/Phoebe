@@ -27,7 +27,7 @@ class ArtistEventsClient(
             }
         }
         if (!response.status.isSuccess()) {
-            error(response.bodyAsText().ifBlank { "Events backend returned HTTP ${response.status.value}." })
+            error(response.bodyAsText().ifBlank { "Phoebe backend returned HTTP ${response.status.value}." })
         }
         return response.body()
     }
@@ -35,7 +35,7 @@ class ArtistEventsClient(
     suspend fun health(baseUrl: String): String {
         val response = httpClient.get("${baseUrl.trimEnd('/')}/health")
         if (!response.status.isSuccess()) {
-            error(response.bodyAsText().ifBlank { "Events backend returned HTTP ${response.status.value}." })
+            error(response.bodyAsText().ifBlank { "Phoebe backend returned HTTP ${response.status.value}." })
         }
         return response.bodyAsText()
     }

@@ -20,6 +20,15 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "PhoebeEventsBackend"
-include(":backend:events")
+rootProject.name = "PhoebeBackend"
+includeBackendModules()
 include(":domain")
+
+fun includeBackendModules() {
+    rootDir.resolve("backend")
+        .listFiles()
+        .orEmpty()
+        .filter { moduleDir -> moduleDir.isDirectory && moduleDir.resolve("build.gradle.kts").isFile }
+        .sortedBy { moduleDir -> moduleDir.name }
+        .forEach { moduleDir -> include(":backend:${moduleDir.name}") }
+}

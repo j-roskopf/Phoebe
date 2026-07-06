@@ -12,6 +12,7 @@ internal data class PlaybackStartupSnapshot(
     val engines: List<PlaybackEnginePath> = emptyList(),
     val firstPlatformPlayingMs: Long? = null,
     val firstDecodedEnergyMs: Long? = null,
+    val startupEvents: List<String> = emptyList(),
     val errors: List<String> = emptyList(),
 ) {
     val firstAudioMs: Long?
@@ -33,6 +34,13 @@ internal class PlaybackStartupProbe : PlaybackDiagnostics {
     override fun engineSelected(engine: PlaybackEnginePath) {
         mutableSnapshot.update { current ->
             if (engine in current.engines) current else current.copy(engines = current.engines + engine)
+        }
+    }
+
+    override fun playbackStartupEvent(engine: PlaybackEnginePath, event: String) {
+        engineSelected(engine)
+        mutableSnapshot.update { current ->
+            current.copy(startupEvents = current.startupEvents + "${elapsedMs()}ms:${engine.name}:$event")
         }
     }
 

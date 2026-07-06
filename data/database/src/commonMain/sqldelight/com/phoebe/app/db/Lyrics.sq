@@ -6,12 +6,36 @@ CREATE TABLE LyricsRow (
     instrumental INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE LyricsGeniusAnnotationRow (
+    trackFingerprint TEXT NOT NULL PRIMARY KEY,
+    geniusSongId INTEGER NOT NULL,
+    geniusSongUrl TEXT,
+    annotationsJson TEXT NOT NULL,
+    fetchedAtMs INTEGER NOT NULL,
+    FOREIGN KEY(trackFingerprint) REFERENCES LyricsRow(trackFingerprint) ON DELETE CASCADE
+);
+
 selectLyrics:
 SELECT * FROM LyricsRow WHERE trackFingerprint = ?;
 
 upsertLyrics:
 INSERT OR REPLACE INTO LyricsRow(trackFingerprint, source, syncedLyrics, plainLyrics, instrumental)
 VALUES (?, ?, ?, ?, ?);
+
+selectGeniusAnnotations:
+SELECT * FROM LyricsGeniusAnnotationRow WHERE trackFingerprint = ?;
+
+upsertGeniusAnnotations:
+INSERT OR REPLACE INTO LyricsGeniusAnnotationRow(
+    trackFingerprint,
+    geniusSongId,
+    geniusSongUrl,
+    annotationsJson,
+    fetchedAtMs
+) VALUES (?, ?, ?, ?, ?);
+
+clearGeniusAnnotations:
+DELETE FROM LyricsGeniusAnnotationRow;
 
 clear:
 DELETE FROM LyricsRow;

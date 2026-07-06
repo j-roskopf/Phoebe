@@ -9,6 +9,22 @@ import kotlin.test.assertTrue
 
 class DesktopPlaybackStartupPolicyTest {
     @Test
+    fun javaFxMediaWarmupAssetIsTinyPcmWav() {
+        val bytes = javaFxMediaWarmupWavBytes()
+
+        assertEquals("RIFF", bytes.ascii(0, 4))
+        assertEquals("WAVE", bytes.ascii(8, 4))
+        assertEquals("fmt ", bytes.ascii(12, 4))
+        assertEquals("data", bytes.ascii(36, 4))
+        assertEquals(1, bytes.shortLe(20))
+        assertEquals(1, bytes.shortLe(22))
+        assertEquals(8_000, bytes.intLe(24))
+        assertEquals(16, bytes.shortLe(34))
+        assertEquals(bytes.size - 44, bytes.intLe(40))
+        assertTrue(bytes.size < 4_096)
+    }
+
+    @Test
     fun remoteJavaFxHttpFormatsStreamDirectly() {
         assertFalse(
             DesktopPlaybackStartupPolicy.shouldEagerlyBufferRemotePlayback(
@@ -49,6 +65,142 @@ class DesktopPlaybackStartupPolicyTest {
                 "https://music.example.test/library/track.mp3?token=abc",
             ),
         )
+        assertFalse(
+            DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
+                uri = "https://music.example.test/library/track.mp3?token=abc",
+                isKnownLiveStream = false,
+                preferredJavaFxExtension = "mp3",
+            ),
+        )
+    }
+
+    @Test
+    fun extensionlessRemoteMp3UsesJavaFxWhenCodecIsKnown() {
+        assertEquals(
+            "mp3",
+            DesktopPlaybackStartupPolicy.javaFxPlaybackExtensionFromMetadata(
+                audioCodec = "MP3",
+                filepath = "/music/Artist/Album/Track.mp3",
+                uri = "https://music.example.test/rest/stream.view?id=abc",
+            ),
+        )
+        assertFalse(
+            DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
+                uri = "https://music.example.test/rest/stream.view?id=abc",
+                isKnownLiveStream = false,
+                preferredJavaFxExtension = "mp3",
+            ),
+        )
+    }
+
+    @Test
+    fun knownLiveStreamsUsePcmBeforeJavaFxEvenWhenUrlHasJavaFxSuffix() {
+        assertTrue(
+            DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
+                uri = "https://radio.example/live.mp3",
+                isKnownLiveStream = true,
+                preferredJavaFxExtension = "mp3",
+            ),
+        )
+    }
+
+    @Test
+    fun knownRemoteFormatsHaveDeterministicInstantStartupPlans() {
+        val cases = listOf(
+            RemoteStartupCase(
+                label = "remote mp3",
+                uri = "https://music.example.test/library/track.mp3?token=abc",
+                audioCodec = "mp3",
+                expectedPath = DesktopPlaybackStartupPath.JavaFxMediaPlayer,
+            ),
+            RemoteStartupCase(
+                label = "extensionless remote mp3",
+                uri = "https://music.example.test/rest/stream.view?id=abc",
+                audioCodec = "mp3",
+                filepath = "/music/Artist/Album/Track.mp3",
+                expectedPath = DesktopPlaybackStartupPath.JavaFxMediaPlayer,
+            ),
+            RemoteStartupCase(
+                label = "remote aac",
+                uri = "https://music.example.test/library/track.m4a?token=abc",
+                audioCodec = "aac",
+                expectedPath = DesktopPlaybackStartupPath.JavaFxMediaPlayer,
+            ),
+            RemoteStartupCase(
+                label = "extensionless remote aac",
+                uri = "https://music.example.test/Audio/1/stream?static=true",
+                audioCodec = "aac",
+                filepath = "/music/Artist/Album/Track.m4a",
+                expectedPath = DesktopPlaybackStartupPath.JavaFxMediaPlayer,
+            ),
+            RemoteStartupCase(
+                label = "remote wav",
+                uri = "https://music.example.test/library/track.wav?token=abc",
+                audioCodec = "wav",
+                expectedPath = DesktopPlaybackStartupPath.SampledStream,
+            ),
+            RemoteStartupCase(
+                label = "extensionless remote wav",
+                uri = "https://music.example.test/stream",
+                audioCodec = "wav",
+                filepath = "/music/Artist/Album/Track.wav",
+                expectedPath = DesktopPlaybackStartupPath.SampledStream,
+            ),
+            RemoteStartupCase(
+                label = "remote flac",
+                uri = "https://music.example.test/library/track.flac?token=abc",
+                audioCodec = "flac",
+                expectedPath = DesktopPlaybackStartupPath.SampledStream,
+            ),
+            RemoteStartupCase(
+                label = "extensionless remote flac",
+                uri = "https://music.example.test/stream",
+                audioCodec = "flac",
+                filepath = "/music/Artist/Album/Track.flac",
+                expectedPath = DesktopPlaybackStartupPath.SampledStream,
+            ),
+            RemoteStartupCase(
+                label = "mp3 radio",
+                uri = "https://radio.example/live.mp3",
+                audioCodec = "mp3",
+                isKnownLiveStream = true,
+                durationMs = 0L,
+                expectedPath = DesktopPlaybackStartupPath.FfmpegPcmStream,
+            ),
+            RemoteStartupCase(
+                label = "extensionless radio",
+                uri = "https://radio.example/live",
+                isKnownLiveStream = true,
+                durationMs = 0L,
+                expectedPath = DesktopPlaybackStartupPath.FfmpegPcmStream,
+            ),
+        )
+
+        cases.forEach { case ->
+            val plan = startupPlan(case)
+            assertEquals(case.expectedPath, plan.path, case.label)
+            assertEquals(0L, plan.deterministicDelayBeforeFirstEngineMs, case.label)
+            assertFalse(plan.waitsForJavaFxFailureBeforeFallback, case.label)
+        }
+    }
+
+    @Test
+    fun unknownExtensionlessRemoteStreamKeepsJavaFxFallbackDelayVisible() {
+        val plan = startupPlan(
+            RemoteStartupCase(
+                label = "unknown extensionless stream",
+                uri = "https://music.example.test/stream",
+                durationMs = 0L,
+                expectedPath = DesktopPlaybackStartupPath.JavaFxThenFallback,
+            ),
+        )
+
+        assertEquals(DesktopPlaybackStartupPath.JavaFxThenFallback, plan.path)
+        assertEquals(
+            DesktopPlaybackStartupPolicy.JavaFxFailureFallbackDelayMs,
+            plan.deterministicDelayBeforeFirstEngineMs,
+        )
+        assertTrue(plan.waitsForJavaFxFailureBeforeFallback)
     }
 
     @Test
@@ -118,6 +270,26 @@ class DesktopPlaybackStartupPolicyTest {
             ).copy(
                 audioCodec = "M4A",
                 filepath = "/music/Artist/Album/02 Track.m4a",
+            )
+            assertEquals(
+                "https://jellyfin.example/Audio/550e8400-e29b-41d4-a716-446655440000/stream.mp3?static=true&audioCodec=mp3&api_key=token",
+                DesktopSandboxPlayback.playbackStreamUrlForTrack(track),
+            )
+        } finally {
+            DesktopSandboxPlayback.flatpakSandboxOverride = null
+        }
+    }
+
+    @Test
+    fun desktopUsesJellyfinMp3StreamSuffixForExtensionlessMp3Streams() {
+        DesktopSandboxPlayback.flatpakSandboxOverride = { false }
+        try {
+            val track = playbackTrack(
+                streamUrl = "https://jellyfin.example/Audio/550e8400-e29b-41d4-a716-446655440000/stream?static=true&api_key=token",
+                localUri = null,
+            ).copy(
+                audioCodec = "MP3",
+                filepath = "/music/Artist/Album/02 Track.mp3",
             )
             assertEquals(
                 "https://jellyfin.example/Audio/550e8400-e29b-41d4-a716-446655440000/stream.mp3?static=true&audioCodec=mp3&api_key=token",
@@ -271,4 +443,56 @@ class DesktopPlaybackStartupPolicyTest {
             downloadUrl = "",
             localUri = localUri,
         )
+
+    private data class RemoteStartupCase(
+        val label: String,
+        val uri: String,
+        val audioCodec: String? = null,
+        val filepath: String? = null,
+        val isKnownLiveStream: Boolean = false,
+        val durationMs: Long = 180_000L,
+        val expectedPath: DesktopPlaybackStartupPath,
+    )
+
+    private fun startupPlan(case: RemoteStartupCase): DesktopPlaybackStartupPlan =
+        DesktopPlaybackStartupPolicy.startupPlanForRemotePlayback(
+            uri = case.uri,
+            isKnownLiveStream = case.isKnownLiveStream,
+            preferredJavaFxExtension = DesktopPlaybackStartupPolicy.javaFxPlaybackExtensionFromMetadata(
+                audioCodec = case.audioCodec,
+                filepath = case.filepath,
+                uri = case.uri,
+            ),
+            preferredSampledExtension = sampledExtension(case),
+            preferredStreamingExtension = streamingExtension(case),
+            durationMs = case.durationMs,
+            isFlatpakSandbox = false,
+        )
+
+    private fun sampledExtension(case: RemoteStartupCase): String? =
+        DesktopPlaybackStartupPolicy.sampledPlaybackExtensionFromSuffix(case.audioCodec.orEmpty())
+            ?: DesktopPlaybackStartupPolicy.sampledPlaybackExtensionFromUri(case.uri)
+            ?: DesktopPlaybackStartupPolicy.sampledPlaybackExtensionFromSuffix(
+                case.filepath.orEmpty().substringAfterLast('.', missingDelimiterValue = ""),
+            )
+
+    private fun streamingExtension(case: RemoteStartupCase): String? =
+        DesktopPlaybackStartupPolicy.streamingSampledExtensionFromSuffix(case.audioCodec.orEmpty())
+            ?: DesktopPlaybackStartupPolicy.streamingSampledExtensionFromUri(case.uri)
+            ?: DesktopPlaybackStartupPolicy.streamingSampledExtensionFromSuffix(
+                case.filepath.orEmpty().substringAfterLast('.', missingDelimiterValue = ""),
+            )
 }
+
+private fun ByteArray.ascii(offset: Int, length: Int): String =
+    copyOfRange(offset, offset + length).decodeToString()
+
+private fun ByteArray.shortLe(offset: Int): Int =
+    (this[offset].toInt() and 0xFF) or
+        ((this[offset + 1].toInt() and 0xFF) shl 8)
+
+private fun ByteArray.intLe(offset: Int): Int =
+    (this[offset].toInt() and 0xFF) or
+        ((this[offset + 1].toInt() and 0xFF) shl 8) or
+        ((this[offset + 2].toInt() and 0xFF) shl 16) or
+        ((this[offset + 3].toInt() and 0xFF) shl 24)

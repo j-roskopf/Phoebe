@@ -197,7 +197,7 @@ internal fun Sidebar(
     val pickLocalFolder = rememberPickLocalFolder(onPicked = onAddLocalFolder)
     val playlistActions = LocalPlaylistActions.current
     val remoteSignedIn = session?.token?.isNotBlank() == true
-    var profileExpanded by remember(remoteSignedIn) { mutableStateOf(!remoteSignedIn) }
+    var profileExpanded by remember(remoteSignedIn) { mutableStateOf(false) }
     val mainNavEnabled = canBrowseMainSections(session, mediaSources)
     val providerName = session.providerLabel()
     val remoteSourceLabel = if (remoteSignedIn) "$providerName — streaming library" else "Streaming provider — Plex or Jellyfin"

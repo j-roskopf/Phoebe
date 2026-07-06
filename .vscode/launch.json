@@ -41,13 +41,25 @@
       "cwd": "${workspaceFolder}"
     },
     {
-      "name": "Events Backend",
+      "name": "Phoebe Backend",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "bash",
       "runtimeArgs": [
         "-lc",
-        "set -a; [ ! -f .env.events.local ] || . ./.env.events.local; set +a; ./gradlew :backend:events:run"
+        "set -a; [ ! -f .env.backend.local ] || . ./.env.backend.local; [ ! -f .env.events.local ] || . ./.env.events.local; set +a; ./gradlew :backend:app:run"
+      ],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}"
+    },
+    {
+      "name": "Publish Phoebe Backend",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-lc",
+        "scripts/deploy-phoebe-backend-vercel.sh --prod --yes"
       ],
       "console": "integratedTerminal",
       "cwd": "${workspaceFolder}"

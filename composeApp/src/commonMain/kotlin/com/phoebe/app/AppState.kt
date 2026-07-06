@@ -2803,8 +2803,16 @@ class AppState(
         playTracks(current.queue, target, preserveQueueContext = true)
     }
     fun seekTo(positionMs: Long) = dependencies.playbackTransportService.seekTo(positionMs)
-    suspend fun loadLyrics(track: Track, forceRefresh: Boolean = false): LyricsLoadState =
-        dependencies.lyricsRepository.lyricsFor(track, forceRefresh)
+    suspend fun loadLyrics(
+        track: Track,
+        forceRefresh: Boolean = false,
+        includeRemoteAnnotations: Boolean = true,
+    ): LyricsLoadState =
+        dependencies.lyricsRepository.lyricsFor(
+            track = track,
+            forceRefresh = forceRefresh,
+            includeRemoteAnnotations = includeRemoteAnnotations,
+        )
 
     fun toggleShuffle() = dependencies.playbackTransportService.toggleShuffle(player.value.shuffle)
     fun cycleRepeat() {
@@ -3092,10 +3100,10 @@ class AppState(
         scope.launch {
             val result = dependencies.artistEventsRepository.checkHealth(settings)
             mutableEventsBackendHealth.value = result.fold(
-                onSuccess = { EventsBackendHealthState(message = "Connected to events backend.", success = true) },
+                onSuccess = { EventsBackendHealthState(message = "Connected to Phoebe backend.", success = true) },
                 onFailure = { error ->
                     EventsBackendHealthState(
-                        message = error.message ?: "Couldn't reach events backend.",
+                        message = error.message ?: "Couldn't reach Phoebe backend.",
                         success = false,
                     )
                 },

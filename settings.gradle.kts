@@ -21,7 +21,7 @@ dependencyResolutionManagement {
 }
 
 rootProject.name = "Phoebe"
-include(":backend:events")
+includeBackendModules()
 include(":androidApp")
 include(":composeApp")
 include(":domain")
@@ -61,3 +61,12 @@ include(":feature:lyrics")
 include(":feature:history")
 include(":feature:favorites")
 include(":feature:settings")
+
+fun includeBackendModules() {
+    rootDir.resolve("backend")
+        .listFiles()
+        .orEmpty()
+        .filter { moduleDir -> moduleDir.isDirectory && moduleDir.resolve("build.gradle.kts").isFile }
+        .sortedBy { moduleDir -> moduleDir.name }
+        .forEach { moduleDir -> include(":backend:${moduleDir.name}") }
+}

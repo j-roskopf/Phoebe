@@ -1,0 +1,8 @@
+CREATE TABLE LyricsGeniusAnnotationRow (
+    trackFingerprint TEXT NOT NULL PRIMARY KEY,
+    geniusSongId INTEGER NOT NULL,
+    geniusSongUrl TEXT,
+    annotationsJson TEXT NOT NULL,
+    fetchedAtMs INTEGER NOT NULL,
+    FOREIGN KEY(trackFingerprint) REFERENCES LyricsRow(trackFingerprint) ON DELETE CASCADE
+);

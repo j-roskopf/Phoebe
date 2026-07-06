@@ -1,6 +1,6 @@
 {
   "services": {
-    "events": {
+    "backend": {
       "root": ".",
       "entrypoint": "Dockerfile.vercel"
     }
@@ -9,7 +9,7 @@
     {
       "source": "/(.*)",
       "destination": {
-        "service": "events"
+        "service": "backend"
       }
     }
   ]

@@ -40,11 +40,11 @@ internal object DesktopSandboxPlayback {
      * limited to Flatpak where JavaFX media is unavailable; the Java Sound MP3 SPI can produce static.
      */
     fun shouldStreamRemoteSampledPlayback(uri: String): Boolean {
-        if (!DesktopPlaybackStartupPolicy.isRemoteUri(uri)) return false
-        val extension = DesktopPlaybackStartupPolicy.streamingSampledExtensionFromUri(uri)
-            ?: sampledPlaybackExtensionFromUri(uri)
-            ?: return false
-        return streamingSampledExtensionFromSuffix(extension) != null
+        return DesktopPlaybackStartupPolicy.shouldStreamRemoteSampledPlayback(
+            uri = uri,
+            preferredStreamingExtension = null,
+            isFlatpakSandbox = isFlatpakSandbox(),
+        )
     }
 
     fun bufferedRemotePlaybackUri(activeUri: String, downloadUri: String?): String {
@@ -76,10 +76,27 @@ internal object DesktopSandboxPlayback {
     }
 
     fun playbackStreamUrlForTrack(track: Track): String {
-        if (!isFlatpakSandbox() || track.streamUrl.isBlank()) return track.streamUrl
+        if (track.streamUrl.isBlank()) return track.streamUrl
+        if (!isFlatpakSandbox()) {
+            return javaFxFriendlyStreamUrlForTrack(track) ?: track.streamUrl
+        }
         if (flatpakSandboxSampledPlaybackExtension(track.audioCodec, track.filepath, track.streamUrl) != null) {
             return track.streamUrl
         }
         return track.flatpakSandboxTranscodeUrl() ?: track.streamUrl
+    }
+
+    private fun javaFxFriendlyStreamUrlForTrack(track: Track): String? {
+        if (!DesktopPlaybackStartupPolicy.isRemoteUri(track.streamUrl)) return null
+        if (DesktopPlaybackStartupPolicy.javaFxPlaybackExtensionFromUri(track.streamUrl) != null) return null
+        val extension = DesktopPlaybackStartupPolicy.javaFxPlaybackExtensionFromMetadata(
+            audioCodec = track.audioCodec,
+            filepath = track.filepath,
+            uri = track.streamUrl,
+        )
+        return when (extension) {
+            "mp3" -> track.jellyfinFamilyMp3TranscodeUrl()
+            else -> null
+        }
     }
 }
