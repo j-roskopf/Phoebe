@@ -97,7 +97,9 @@ class LyricsRepository(
             throw error
         } finally {
             lookupMutex.withLock {
-                activeLoads.remove(key, activeLoad)
+                if (activeLoads[key] === activeLoad) {
+                    activeLoads.remove(key)
+                }
             }
         }
     }
