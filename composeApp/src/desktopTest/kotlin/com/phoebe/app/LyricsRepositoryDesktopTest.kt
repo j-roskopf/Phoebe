@@ -22,11 +22,13 @@ import io.ktor.http.headersOf
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Test
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
 import kotlin.test.assertNull
@@ -221,6 +223,79 @@ class LyricsRepositoryDesktopTest {
                 withTimeout(2_000) { firstLoad.await() }
             },
         )
+    }
+
+    @Test
+    fun concurrentSameTrackLyricsLoadsShareInFlightWork() = runTest {
+        val (db, sqlDriver) = newInMemoryPhoebeDatabase()
+        driver = sqlDriver
+        val backendStarted = CompletableDeferred<Unit>()
+        val releaseBackend = CompletableDeferred<Unit>()
+        val lrclibCalls = AtomicInteger()
+        val backendCalls = AtomicInteger()
+        val lrclibHttp = testHttpClient(
+            MockEngine { request ->
+                when {
+                    request.url.host == "lrclib.net" -> {
+                        lrclibCalls.incrementAndGet()
+                        respondJson("""{"id":1,"instrumental":false,"plainLyrics":"Shared lyric","syncedLyrics":null}""")
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        )
+        val backendHttp = testHttpClient(
+            MockEngine { request ->
+                when (request.url.host) {
+                    BackendHost -> {
+                        backendCalls.incrementAndGet()
+                        backendStarted.complete(Unit)
+                        releaseBackend.await()
+                        respondJson(geniusBackendReferentsJson(includeUnmatched = false))
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        )
+        val settingsRepository = AppSettingsRepository(db)
+        settingsRepository.setEventSettings(
+            EventSettings(
+                backendTarget = EventsBackendTarget.Localhost,
+                localBackendUrl = BackendBaseUrl,
+            ),
+        )
+        val repository = LyricsRepository(
+            database = db,
+            httpClient = lrclibHttp,
+            appSettingsRepository = settingsRepository,
+            geniusBackendClient = GeniusBackendClient(backendHttp),
+        )
+
+        val firstLoad = async { repository.lyricsFor(track()) }
+        backendStarted.await()
+        val secondLoad = async { repository.lyricsFor(track()) }
+
+        try {
+            withContext(Dispatchers.Default) { delay(200) }
+            assertEquals(1, lrclibCalls.get())
+            assertEquals(1, backendCalls.get())
+        } finally {
+            releaseBackend.complete(Unit)
+        }
+        val firstLoaded = assertIs<LyricsLoadState.Loaded>(
+            withContext(Dispatchers.Default) {
+                withTimeout(2_000) { firstLoad.await() }
+            },
+        )
+        val secondLoaded = assertIs<LyricsLoadState.Loaded>(
+            withContext(Dispatchers.Default) {
+                withTimeout(2_000) { secondLoad.await() }
+            },
+        )
+        assertEquals(listOf("Shared lyric"), firstLoaded.document.lines.map { it.text })
+        assertEquals(firstLoaded.document.lines.map { it.text }, secondLoaded.document.lines.map { it.text })
+        assertEquals(1, lrclibCalls.get())
+        assertEquals(1, backendCalls.get())
     }
 
     @Test

@@ -23,6 +23,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.parameter
 import io.ktor.http.HttpStatusCode
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -43,6 +44,7 @@ class LyricsRepository(
     private val geniusBackendClient: GeniusBackendClient,
 ) {
     private val memoryCache = mutableMapOf<String, LyricsLoadState>()
+    private val activeLoads = mutableMapOf<ActiveLyricsLoadKey, CompletableDeferred<LyricsLoadState>>()
     private val lookupMutex = Mutex()
 
     suspend fun clearMemoryCache() {
@@ -58,12 +60,61 @@ class LyricsRepository(
         forceRemoteAnnotationsRefresh: Boolean = forceRefresh,
     ): LyricsLoadState = withContext(Dispatchers.Default) {
         val fingerprint = track.lyricsFingerprint()
+        val key = ActiveLyricsLoadKey(
+            fingerprint = fingerprint,
+            forceRefresh = forceRefresh,
+            includeRemoteAnnotations = includeRemoteAnnotations,
+            forceRemoteAnnotationsRefresh = forceRemoteAnnotationsRefresh,
+        )
+        val activeLoad = CompletableDeferred<LyricsLoadState>()
+        val existingLoad = lookupMutex.withLock {
+            activeLoads[key]?.let { return@withLock it }
+            activeLoads[key] = activeLoad
+            null
+        }
+        if (existingLoad != null) return@withContext existingLoad.await()
+        try {
+            val loaded = loadLyricsState(
+                track = track,
+                fingerprint = fingerprint,
+                forceRefresh = forceRefresh,
+                includeRemoteAnnotations = includeRemoteAnnotations,
+                forceRemoteAnnotationsRefresh = forceRemoteAnnotationsRefresh,
+            )
+            val state = lookupMutex.withLock {
+                val merged = mergeLyricsMemoryCacheState(
+                    current = memoryCache[fingerprint],
+                    loaded = loaded,
+                    forceRefresh = forceRefresh,
+                )
+                memoryCache[fingerprint] = merged
+                merged
+            }
+            activeLoad.complete(state)
+            state
+        } catch (error: Throwable) {
+            activeLoad.completeExceptionally(error)
+            throw error
+        } finally {
+            lookupMutex.withLock {
+                activeLoads.remove(key, activeLoad)
+            }
+        }
+    }
+
+    private suspend fun loadLyricsState(
+        track: Track,
+        fingerprint: String,
+        forceRefresh: Boolean,
+        includeRemoteAnnotations: Boolean,
+        forceRemoteAnnotationsRefresh: Boolean,
+    ): LyricsLoadState {
         val cached = if (!forceRefresh) {
             lookupMutex.withLock { memoryCache[fingerprint] }
         } else {
             null
         }
-        val loaded = if (cached != null) {
+        return if (cached != null) {
             if (includeRemoteAnnotations) {
                 enrichCachedLyricsState(track, cached, forceRemoteAnnotationsRefresh)
             } else {
@@ -77,15 +128,6 @@ class LyricsRepository(
                 includeRemoteAnnotations = includeRemoteAnnotations,
                 forceRemoteAnnotationsRefresh = forceRemoteAnnotationsRefresh,
             )
-        }
-        lookupMutex.withLock {
-            val state = mergeLyricsMemoryCacheState(
-                current = memoryCache[fingerprint],
-                loaded = loaded,
-                forceRefresh = forceRefresh,
-            )
-            memoryCache[fingerprint] = state
-            state
         }
     }
 
@@ -137,6 +179,13 @@ class LyricsRepository(
         if (loaded.document.annotations != null || current.document.trackFingerprint != loaded.document.trackFingerprint) return loaded
         return loaded.copy(document = loaded.document.copy(annotations = existingAnnotations))
     }
+
+    private data class ActiveLyricsLoadKey(
+        val fingerprint: String,
+        val forceRefresh: Boolean,
+        val includeRemoteAnnotations: Boolean,
+        val forceRemoteAnnotationsRefresh: Boolean,
+    )
 
     private suspend fun loadBaseLyrics(track: Track, fingerprint: String, forceRefresh: Boolean): LyricsDocument? {
         if (!forceRefresh) {
