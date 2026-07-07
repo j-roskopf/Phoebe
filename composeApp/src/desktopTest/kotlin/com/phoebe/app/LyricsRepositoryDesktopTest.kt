@@ -28,6 +28,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Test
+import java.nio.file.Files
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.assertEquals
 import kotlin.test.assertIs
@@ -299,6 +300,59 @@ class LyricsRepositoryDesktopTest {
     }
 
     @Test
+    fun notFoundRaceDoesNotDowngradeLoadedLyricsCache() = runTest {
+        val (db, sqlDriver) = newInMemoryPhoebeDatabase()
+        driver = sqlDriver
+        val dir = Files.createTempDirectory("phoebe-lyrics-race-test")
+        val audio = dir.resolve("song.mp3")
+        val lrc = dir.resolve("song.lrc")
+        Files.write(audio, byteArrayOf(0))
+        Files.writeString(lrc, "[00:01.00] Sidecar lyric")
+        val lrclibStarted = CompletableDeferred<Unit>()
+        val releaseLrclib = CompletableDeferred<Unit>()
+        val http = testHttpClient(
+            MockEngine { request ->
+                when (request.url.host) {
+                    "lrclib.net" -> {
+                        lrclibStarted.complete(Unit)
+                        releaseLrclib.await()
+                        respond("", HttpStatusCode.NotFound)
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        )
+        val repo = lyricsRepository(db, http).repository
+        val remoteOnlyTrack = track(localUri = null)
+        val localSidecarTrack = track(localUri = audio.toUri().toString())
+
+        val notFoundLoad = async { repo.lyricsFor(remoteOnlyTrack, includeRemoteAnnotations = true) }
+        lrclibStarted.await()
+        try {
+            val loadedLoad = async { repo.lyricsFor(localSidecarTrack, includeRemoteAnnotations = false) }
+            val sidecarLoaded = assertIs<LyricsLoadState.Loaded>(
+                withContext(Dispatchers.Default) {
+                    withTimeout(2_000) { loadedLoad.await() }
+                },
+            )
+            assertEquals(listOf("Sidecar lyric"), sidecarLoaded.document.lines.map { it.text })
+        } finally {
+            releaseLrclib.complete(Unit)
+        }
+
+        val racedState = assertIs<LyricsLoadState.Loaded>(
+            withContext(Dispatchers.Default) {
+                withTimeout(2_000) { notFoundLoad.await() }
+            },
+        )
+        assertEquals(listOf("Sidecar lyric"), racedState.document.lines.map { it.text })
+        val cached = assertIs<LyricsLoadState.Loaded>(
+            repo.lyricsFor(remoteOnlyTrack, includeRemoteAnnotations = false),
+        )
+        assertEquals(listOf("Sidecar lyric"), cached.document.lines.map { it.text })
+    }
+
+    @Test
     fun matchesGeniusFragmentsAcrossCurlyAndStraightApostrophes() = runTest {
         val (db, sqlDriver) = newInMemoryPhoebeDatabase()
         driver = sqlDriver
@@ -559,6 +613,7 @@ class LyricsRepositoryDesktopTest {
         artist: String = "Test Artist",
         album: String = "Test Album",
         durationMs: Long = 123_000L,
+        localUri: String? = null,
     ): Track = Track(
         id = id,
         title = title,
@@ -567,6 +622,7 @@ class LyricsRepositoryDesktopTest {
         durationMs = durationMs,
         streamUrl = "",
         downloadUrl = "",
+        localUri = localUri,
     )
 
     private suspend fun lyricsRepository(

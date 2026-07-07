@@ -174,7 +174,8 @@ class LyricsRepository(
         loaded: LyricsLoadState,
         forceRefresh: Boolean,
     ): LyricsLoadState {
-        if (forceRefresh || current !is LyricsLoadState.Loaded || loaded !is LyricsLoadState.Loaded) return loaded
+        if (forceRefresh || current !is LyricsLoadState.Loaded) return loaded
+        if (loaded !is LyricsLoadState.Loaded) return current
         val existingAnnotations = current.document.annotations ?: return loaded
         if (loaded.document.annotations != null || current.document.trackFingerprint != loaded.document.trackFingerprint) return loaded
         return loaded.copy(document = loaded.document.copy(annotations = existingAnnotations))
