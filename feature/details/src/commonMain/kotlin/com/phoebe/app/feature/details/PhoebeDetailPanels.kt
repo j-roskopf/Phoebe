@@ -2708,7 +2708,6 @@ private fun ArtworkGalleryDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
-        PlatformBackHandler(enabled = true, onBack = onDismiss)
         Box(
             Modifier
                 .fillMaxSize()
