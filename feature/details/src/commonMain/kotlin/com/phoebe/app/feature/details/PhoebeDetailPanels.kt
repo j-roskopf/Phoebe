@@ -2708,15 +2708,16 @@ private fun ArtworkGalleryDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false),
     ) {
+        PlatformBackHandler(enabled = true, onBack = onDismiss)
         Box(
             Modifier
                 .fillMaxSize()
-                .background(Color.Black.copy(alpha = 0.94f))
-                .windowInsetsPadding(WindowInsets.safeDrawing),
+                .background(Color.Black.copy(alpha = 0.94f)),
         ) {
             Column(
                 Modifier
                     .fillMaxSize()
+                    .windowInsetsPadding(WindowInsets.safeDrawing)
                     .padding(start = 18.dp, top = topPadding, end = 18.dp, bottom = 14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {

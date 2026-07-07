@@ -468,15 +468,34 @@ fun MobilePlayer(
         val fullArtworkHeight = fullArtworkWidth - artworkHeightTrim
 
         val collapsedArtworkSize = 44.dp
-        val currentArtworkWidth = lerp(collapsedArtworkSize, fullArtworkWidth, clampedExpansionFraction)
-        val currentArtworkHeight = lerp(collapsedArtworkSize, fullArtworkHeight, clampedExpansionFraction)
-        val artworkLayerScaleX = (currentArtworkWidth.value / fullArtworkWidth.value.coerceAtLeast(1f))
+        val artworkIsImage = visualizerPreset == NowPlayingVisualizerPreset.Artwork
+        val artworkInset = if (artworkIsImage) {
+            (fullArtworkWidth - fullArtworkHeight).coerceAtLeast(0.dp)
+        } else {
+            0.dp
+        }
+        val fullArtworkDisplayWidth = if (artworkIsImage) {
+            (fullArtworkWidth - artworkInset * 2f)
+                .coerceAtLeast(collapsedArtworkSize)
+                .coerceAtMost(fullArtworkWidth)
+        } else {
+            fullArtworkWidth
+        }
+        val fullArtworkDisplayHeight = if (artworkIsImage) {
+            fullArtworkDisplayWidth
+        } else {
+            fullArtworkHeight
+        }
+        val currentArtworkWidth = lerp(collapsedArtworkSize, fullArtworkDisplayWidth, clampedExpansionFraction)
+        val currentArtworkHeight = lerp(collapsedArtworkSize, fullArtworkDisplayHeight, clampedExpansionFraction)
+        val artworkLayerScaleX = (currentArtworkWidth.value / fullArtworkDisplayWidth.value.coerceAtLeast(1f))
             .coerceIn(0.01f, 1f)
-        val artworkLayerScaleY = (currentArtworkHeight.value / fullArtworkHeight.value.coerceAtLeast(1f))
+        val artworkLayerScaleY = (currentArtworkHeight.value / fullArtworkDisplayHeight.value.coerceAtLeast(1f))
             .coerceIn(0.01f, 1f)
-        val targetArtworkX = 0.dp
+        val targetArtworkX = artworkInset
+        val targetArtworkY = artworkInset
         val currentArtworkX = lerp(12.dp, targetArtworkX, clampedExpansionFraction)
-        val currentArtworkY = lerp(14.dp, 0.dp, clampedExpansionFraction)
+        val currentArtworkY = lerp(14.dp, targetArtworkY, clampedExpansionFraction)
 
         val miniPlayerAlpha = collapsedChromeAlpha
         val fullPlayerAlpha = ((clampedExpansionFraction - 0.2f) * 1.25f).coerceIn(0f, 1f)
@@ -729,8 +748,8 @@ fun MobilePlayer(
         if (track != null) {
             Box(
                 modifier = Modifier
-                    .width(fullArtworkWidth)
-                    .height(fullArtworkHeight)
+                    .width(fullArtworkDisplayWidth)
+                    .height(fullArtworkDisplayHeight)
                     .graphicsLayer {
                         translationX = currentArtworkX.toPx()
                         translationY = currentArtworkY.toPx()
