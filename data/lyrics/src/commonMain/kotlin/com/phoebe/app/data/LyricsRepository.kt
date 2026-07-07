@@ -58,27 +58,34 @@ class LyricsRepository(
         forceRemoteAnnotationsRefresh: Boolean = forceRefresh,
     ): LyricsLoadState = withContext(Dispatchers.Default) {
         val fingerprint = track.lyricsFingerprint()
-        lookupMutex.withLock {
-            if (!forceRefresh) {
-                memoryCache[fingerprint]?.let { cached ->
-                    val state = if (includeRemoteAnnotations) {
-                        enrichCachedLyricsState(track, cached, forceRemoteAnnotationsRefresh)
-                    } else {
-                        cachedLyricsStateWithFreshCachedAnnotations(cached)
-                    }
-                    memoryCache[fingerprint] = state
-                    return@withLock state
-                }
+        val cached = if (!forceRefresh) {
+            lookupMutex.withLock { memoryCache[fingerprint] }
+        } else {
+            null
+        }
+        val loaded = if (cached != null) {
+            if (includeRemoteAnnotations) {
+                enrichCachedLyricsState(track, cached, forceRemoteAnnotationsRefresh)
+            } else {
+                cachedLyricsStateWithFreshCachedAnnotations(cached)
             }
-            val loaded = loadLyrics(
+        } else {
+            loadLyrics(
                 track = track,
                 fingerprint = fingerprint,
                 forceRefresh = forceRefresh,
                 includeRemoteAnnotations = includeRemoteAnnotations,
                 forceRemoteAnnotationsRefresh = forceRemoteAnnotationsRefresh,
             )
-            memoryCache[fingerprint] = loaded
-            loaded
+        }
+        lookupMutex.withLock {
+            val state = mergeLyricsMemoryCacheState(
+                current = memoryCache[fingerprint],
+                loaded = loaded,
+                forceRefresh = forceRefresh,
+            )
+            memoryCache[fingerprint] = state
+            state
         }
     }
 
@@ -119,6 +126,17 @@ class LyricsRepository(
             )
             else -> state
         }
+
+    private fun mergeLyricsMemoryCacheState(
+        current: LyricsLoadState?,
+        loaded: LyricsLoadState,
+        forceRefresh: Boolean,
+    ): LyricsLoadState {
+        if (forceRefresh || current !is LyricsLoadState.Loaded || loaded !is LyricsLoadState.Loaded) return loaded
+        val existingAnnotations = current.document.annotations ?: return loaded
+        if (loaded.document.annotations != null || current.document.trackFingerprint != loaded.document.trackFingerprint) return loaded
+        return loaded.copy(document = loaded.document.copy(annotations = existingAnnotations))
+    }
 
     private suspend fun loadBaseLyrics(track: Track, fingerprint: String, forceRefresh: Boolean): LyricsDocument? {
         if (!forceRefresh) {

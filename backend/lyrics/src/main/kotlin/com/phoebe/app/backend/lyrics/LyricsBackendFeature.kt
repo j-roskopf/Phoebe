@@ -4,7 +4,6 @@ import com.phoebe.app.backend.MissingProviderCredentialException
 import com.phoebe.app.backend.BackendSingleFlight
 import com.phoebe.app.backend.PhoebeBackendEnvironment
 import com.phoebe.app.backend.PhoebeBackendFeature
-import com.phoebe.app.backend.ProviderApiException
 import com.phoebe.app.backend.normalizedBackendCacheKey
 import com.phoebe.app.backend.optionalBackendQueryParameter
 import com.phoebe.app.backend.positiveDurationMsQueryParameter
@@ -164,10 +163,9 @@ class GeniusApiAdapter(
         val token = accessToken ?: throw MissingProviderCredentialException("GENIUS_ACCESS_TOKEN is not configured.")
         val songs = search(artist = artist, title = title, token = token)
         val selected = songs.bestMatch(artist = artist, title = title) ?: return GeniusReferentsResponse()
-        val song = runCatching { song(selected.id, token) }.getOrDefault(selected)
         return GeniusReferentsResponse(
-            song = song,
-            referents = referents(song.id, token),
+            song = selected,
+            referents = referents(selected.id, token),
         )
     }
 
@@ -187,13 +185,6 @@ class GeniusApiAdapter(
             }
         }
         return songs.distinctBy { it.id }
-    }
-
-    private suspend fun song(songId: Long, token: String): GeniusSongReference {
-        val response = geniusRequest("$GeniusApiBaseUrl/songs/$songId", token)
-        val body: GeniusSongApiResponse = response.body()
-        return body.response?.song?.toSong()
-            ?: throw ProviderApiException("Genius song response did not include a song.")
     }
 
     private suspend fun referents(songId: Long, token: String): List<GeniusReferent> {
@@ -260,16 +251,6 @@ private data class GeniusSearchPayload(
 @Serializable
 private data class GeniusSearchHit(
     val result: GeniusSongPayload? = null,
-)
-
-@Serializable
-private data class GeniusSongApiResponse(
-    val response: GeniusSongPayloadWrapper? = null,
-)
-
-@Serializable
-private data class GeniusSongPayloadWrapper(
-    val song: GeniusSongPayload? = null,
 )
 
 @Serializable

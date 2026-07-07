@@ -19,7 +19,12 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.encodedPath
 import io.ktor.http.headersOf
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Test
 import kotlin.test.assertEquals
@@ -143,6 +148,79 @@ class LyricsRepositoryDesktopTest {
         assertEquals(listOf("Hello", "World"), loaded.document.lines.map { it.text })
         assertNull(loaded.document.annotations)
         assertEquals(0, backendCalls)
+    }
+
+    @Test
+    fun unrelatedLyricsLoadsDoNotWaitForSlowRemoteGeniusAnnotations() = runTest {
+        val (db, sqlDriver) = newInMemoryPhoebeDatabase()
+        driver = sqlDriver
+        val firstTrack = track(id = "local:first", title = "First Song")
+        val secondTrack = track(id = "local:second", title = "Second Song")
+        val backendStarted = CompletableDeferred<Unit>()
+        val releaseBackend = CompletableDeferred<Unit>()
+        val lrclibHttp = testHttpClient(
+            MockEngine { request ->
+                when {
+                    request.url.host == "lrclib.net" -> {
+                        val lyric = when (request.url.parameters["track_name"]) {
+                            "Second Song" -> "Second lyric"
+                            else -> "First lyric"
+                        }
+                        respondJson(
+                            """{"id":1,"instrumental":false,"plainLyrics":"$lyric","syncedLyrics":null}""",
+                        )
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        )
+        val backendHttp = testHttpClient(
+            MockEngine { request ->
+                when (request.url.host) {
+                    BackendHost -> {
+                        backendStarted.complete(Unit)
+                        releaseBackend.await()
+                        respondJson(geniusBackendReferentsJson(includeUnmatched = false))
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        )
+        val settingsRepository = AppSettingsRepository(db)
+        settingsRepository.setEventSettings(
+            EventSettings(
+                backendTarget = EventsBackendTarget.Localhost,
+                localBackendUrl = BackendBaseUrl,
+            ),
+        )
+        val repository = LyricsRepository(
+            database = db,
+            httpClient = lrclibHttp,
+            appSettingsRepository = settingsRepository,
+            geniusBackendClient = GeniusBackendClient(backendHttp),
+        )
+
+        val firstLoad = async { repository.lyricsFor(firstTrack) }
+        backendStarted.await()
+        val secondLoad = async {
+            repository.lyricsFor(secondTrack, includeRemoteAnnotations = false)
+        }
+
+        try {
+            val secondLoaded = assertIs<LyricsLoadState.Loaded>(
+                withContext(Dispatchers.Default) {
+                    withTimeout(2_000) { secondLoad.await() }
+                },
+            )
+            assertEquals(listOf("Second lyric"), secondLoaded.document.lines.map { it.text })
+        } finally {
+            releaseBackend.complete(Unit)
+        }
+        assertIs<LyricsLoadState.Loaded>(
+            withContext(Dispatchers.Default) {
+                withTimeout(2_000) { firstLoad.await() }
+            },
+        )
     }
 
     @Test
@@ -400,12 +478,18 @@ class LyricsRepositoryDesktopTest {
         assertNull(loaded.document.annotations)
     }
 
-    private fun track(): Track = Track(
-        id = "local:test",
-        title = "Test Song",
-        artist = "Test Artist",
-        album = "Test Album",
-        durationMs = 123_000L,
+    private fun track(
+        id: String = "local:test",
+        title: String = "Test Song",
+        artist: String = "Test Artist",
+        album: String = "Test Album",
+        durationMs: Long = 123_000L,
+    ): Track = Track(
+        id = id,
+        title = title,
+        artist = artist,
+        album = album,
+        durationMs = durationMs,
         streamUrl = "",
         downloadUrl = "",
     )
