@@ -140,8 +140,17 @@ class PlexPlayHistorySyncer(
             }
         }.getOrDefault(StatsSyncResult(imported = 0, seen = 0))
 
-        val imported = topStats.imported + recentStats.imported
-        val seen = topStats.seen + recentStats.seen
+        val recentHistory = runCatching {
+            syncRecentHistoryEntries(server, library, token, importedAtMs)
+        }.onFailure { error ->
+            if (error is CancellationException) throw error
+            PhoebeLog.d("PlexPlayHistorySyncer") {
+                "recent history event sync failed: ${error.message}"
+            }
+        }.getOrDefault(StatsSyncResult(imported = 0, seen = 0))
+
+        val imported = topStats.imported + recentStats.imported + recentHistory.imported
+        val seen = topStats.seen + recentStats.seen + recentHistory.seen
         if (imported == 0 && seen == 0) {
             PhoebeLog.d("PlexPlayHistorySyncer") {
                 "recent sync skipped: no Plex plays found"
@@ -149,7 +158,8 @@ class PlexPlayHistorySyncer(
             return PlexPlayHistorySyncResult.Skipped
         }
         PhoebeLog.d("PlexPlayHistorySyncer") {
-            "recent sync complete → seen=$seen imported=$imported topSeen=${topStats.seen} recentSeen=${recentStats.seen}"
+            "recent sync complete → seen=$seen imported=$imported topSeen=${topStats.seen} " +
+                "recentSeen=${recentStats.seen} historySeen=${recentHistory.seen}"
         }
         return PlexPlayHistorySyncResult.Synced(imported = imported, seen = seen)
     }
@@ -300,6 +310,41 @@ class PlexPlayHistorySyncer(
         )
     }
 
+    private suspend fun syncRecentHistoryEntries(
+        server: PlexServer,
+        library: MusicLibrary,
+        token: String,
+        importedAtMs: Long,
+    ): StatsSyncResult {
+        val latestImported = playHistoryRepository.maxImportedPlexPlayedAt(server.id)
+        val minViewedAtMs = latestImported?.minus(IncrementalLookbackMs)?.coerceAtLeast(0L)
+        PhoebeLog.d("PlexPlayHistorySyncer") {
+            "recent history event fetch start size=$RecentHistoryPageSize minViewedAtMs=$minViewedAtMs"
+        }
+        val page = withTimeoutOrNull(RecentHistoryTimeoutMs) {
+            plexClient.playbackHistoryPage(
+                server = server,
+                token = token,
+                library = library,
+                minViewedAtMs = minViewedAtMs,
+                start = 0,
+                size = RecentHistoryPageSize,
+            )
+        } ?: error("timed out after ${RecentHistoryTimeoutMs}ms")
+        val imported = importHistoryEntries(
+            server = server,
+            library = library,
+            tracksById = emptyMap(),
+            entries = page.entries,
+            importedAtMs = importedAtMs,
+            allowFallbackTrack = true,
+        )
+        PhoebeLog.d("PlexPlayHistorySyncer") {
+            "recent history event sync finished → seen=${page.entries.size} imported=$imported"
+        }
+        return StatsSyncResult(imported = imported, seen = page.entries.size)
+    }
+
     private suspend fun importTrackPlaybackStats(
         stats: List<PlexTrackPlaybackStat>,
         serverId: String,
@@ -445,6 +490,8 @@ class PlexPlayHistorySyncer(
         const val StartupMostPlayedStatsPageSize = 100
         const val RecentStatsPageSize = 50
         const val RecentStatsTimeoutMs = 10_000L
+        const val RecentHistoryPageSize = 50
+        const val RecentHistoryTimeoutMs = 1_000L
         const val RecentBaseResolveTimeoutMs = 1_500L
         private const val PlexTrackTypeName = "track"
     }

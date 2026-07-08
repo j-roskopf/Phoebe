@@ -318,11 +318,13 @@ class PlexPlayHistorySyncerDesktopTest {
     }
 
     @Test
-    fun syncRecentOnlyFetchesFirstStatsPage() = runBlocking {
+    fun syncRecentFetchesFirstStatsPagesAndRecentHistoryPage() = runBlocking {
         val statsStarts = mutableListOf<String?>()
         val statsSizes = mutableListOf<String?>()
         val encodedQueries = mutableListOf<String>()
         val contentDirectoryIds = mutableListOf<String?>()
+        var historyRequests = 0
+        val historySizes = mutableListOf<String?>()
         val engine = MockEngine { request ->
             when {
                 request.url.encodedPath.endsWith("/identity") -> respond(
@@ -330,7 +332,20 @@ class PlexPlayHistorySyncerDesktopTest {
                     status = HttpStatusCode.OK,
                     headers = headersOf(HttpHeaders.ContentType, "application/json"),
                 )
-                request.url.encodedPath.endsWith("/history/all") -> error("recent sync should not call Plex history")
+                request.url.encodedPath.endsWith("/history/all") -> {
+                    historyRequests += 1
+                    historySizes += request.url.parameters["X-Plex-Container-Size"]
+                    respond(
+                        content = historyJson(
+                            offset = 0,
+                            size = 1,
+                            totalSize = 1,
+                            metadata = historyTrack("history", "recent-history", 1700000200),
+                        ),
+                        status = HttpStatusCode.OK,
+                        headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                    )
+                }
                 else -> {
                     val encodedQuery = request.url.encodedQuery
                     statsStarts += request.url.parameters["X-Plex-Container-Start"]
@@ -361,7 +376,9 @@ class PlexPlayHistorySyncerDesktopTest {
             newSyncer(engine, db, repo).syncRecent(testSession(), testCatalog()),
         )
 
-        assertEquals(2, result.seen)
+        assertEquals(3, result.seen)
+        assertEquals(1, historyRequests)
+        assertEquals(listOf<String?>("${PlexPlayHistorySyncer.RecentHistoryPageSize}"), historySizes)
         assertEquals(listOf<String?>("0", "0"), statsStarts)
         assertEquals(
             listOf<String?>(
@@ -381,10 +398,12 @@ class PlexPlayHistorySyncerDesktopTest {
         assertEquals(15L, mostPlayed.first { it.trackId == "plex:top" }.playCount)
         val recent = repo.topRecentlyPlayed.first { list -> list.any { it.trackId == "plex:t1" } }
         assertEquals(1700000000L * 1000L, recent.first { it.trackId == "plex:t1" }.lastPlayedMs)
+        val history = repo.topRecentlyPlayed.first { list -> list.any { it.trackId == "plex:history" } }
+        assertEquals(1700000200L * 1000L, history.first { it.trackId == "plex:history" }.lastPlayedMs)
     }
 
     @Test
-    fun syncRecentDoesNotCallHistoryWhenHistoryEndpointWouldHang() = runBlocking {
+    fun syncRecentDoesNotBlockWhenHistoryEndpointWouldHang() = runBlocking {
         val engine = MockEngine { request ->
             when {
                 request.url.encodedPath.endsWith("/history/all") -> awaitCancellation()
