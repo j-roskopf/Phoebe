@@ -8,16 +8,18 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -43,9 +45,9 @@ import androidx.compose.ui.unit.dp
 import coil3.ImageLoader
 import coil3.PlatformContext
 import coil3.annotation.ExperimentalCoilApi
-import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.compose.LocalPlatformContext
+import coil3.compose.rememberAsyncImagePainter
 import coil3.network.ConcurrentRequestStrategy
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
@@ -141,38 +143,36 @@ private fun CoilArtworkImage(
                 .build()
         }
     }
-    var visualState by remember(request) {
-        mutableStateOf(if (request == null) RemoteArtworkVisualState.Missing else RemoteArtworkVisualState.Loading)
+    val imageLoader = remember(platformContext) { phoebeArtworkImageLoader(platformContext) }
+    val painter = rememberAsyncImagePainter(model = request, imageLoader = imageLoader)
+    val painterState by painter.state.collectAsState()
+
+    LaunchedEffect(painterState) {
+        val state = painterState
+        if (
+            state is AsyncImagePainter.State.Error &&
+            state.result.throwable !is CancellationException &&
+            candidateIndex < candidates.lastIndex
+        ) {
+            candidateIndex += 1
+        }
     }
-    val imageLoader = remember(platformContext) { PhoebeArtworkCoilImageLoader.get(platformContext) }
+
+    val visualState = when {
+        candidate == null -> RemoteArtworkVisualState.Missing
+        painterState is AsyncImagePainter.State.Success -> RemoteArtworkVisualState.Image
+        painterState is AsyncImagePainter.State.Error && candidateIndex >= candidates.lastIndex ->
+            RemoteArtworkVisualState.Missing
+        else -> RemoteArtworkVisualState.Loading
+    }
 
     Box(modifier) {
-        AsyncImage(
-            model = request,
+        Image(
+            painter = painter,
             contentDescription = null,
-            imageLoader = imageLoader,
             contentScale = contentScale,
             alignment = alignment,
             modifier = artworkSurfaceModifier(Modifier.matchParentSize(), shape, elevated),
-            onState = { state ->
-                visualState = when (state) {
-                    is AsyncImagePainter.State.Success -> RemoteArtworkVisualState.Image
-                    is AsyncImagePainter.State.Error -> {
-                        if (
-                            state.result.throwable !is CancellationException &&
-                            candidateIndex < candidates.lastIndex
-                        ) {
-                            candidateIndex += 1
-                            RemoteArtworkVisualState.Loading
-                        } else {
-                            RemoteArtworkVisualState.Missing
-                        }
-                    }
-                    AsyncImagePainter.State.Empty,
-                    is AsyncImagePainter.State.Loading,
-                        -> if (request == null) RemoteArtworkVisualState.Missing else RemoteArtworkVisualState.Loading
-                }
-            },
         )
         Crossfade(
             targetState = visualState,
@@ -193,17 +193,12 @@ private fun CoilArtworkImage(
 }
 
 @OptIn(ExperimentalCoilApi::class)
-private object PhoebeArtworkCoilImageLoader {
-    private var imageLoader: ImageLoader? = null
-
-    fun get(context: PlatformContext): ImageLoader =
-        imageLoader ?: ImageLoader.Builder(context)
-            .components {
-                add(KtorNetworkFetcherFactory(createPlatformHttpClient(), ConcurrentRequestStrategy.UNCOORDINATED))
-            }
-            .build()
-            .also { imageLoader = it }
-}
+private fun phoebeArtworkImageLoader(context: PlatformContext): ImageLoader =
+    ImageLoader.Builder(context)
+        .components {
+            add(KtorNetworkFetcherFactory(createPlatformHttpClient(), ConcurrentRequestStrategy.UNCOORDINATED))
+        }
+        .build()
 
 private data class ArtworkImageCandidate(
     val sourceUrl: String,

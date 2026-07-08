@@ -491,7 +491,7 @@ class PlexPlayHistorySyncer(
         const val RecentStatsPageSize = 50
         const val RecentStatsTimeoutMs = 10_000L
         const val RecentHistoryPageSize = 50
-        const val RecentHistoryTimeoutMs = 1_000L
+        const val RecentHistoryTimeoutMs = 3_000L
         const val RecentBaseResolveTimeoutMs = 1_500L
         private const val PlexTrackTypeName = "track"
     }
