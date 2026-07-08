@@ -51,7 +51,6 @@ class CatalogSyncService(
         if (session?.selectedLibrary == null || session.selectedServer == null) return
         catalogRepository.syncLightweightRemoteState(session)
         ensureLikedSongsPlaylistIfPossible(session)
-        warmPlaylistTracks(session)
     }
 
     suspend fun syncRemotePlayHistory(

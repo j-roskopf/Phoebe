@@ -885,9 +885,44 @@ class CatalogRepositoryRefreshDesktopTest {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d
         db.transaction {
-            db.catalogQueries.upsertArtist("plex:artist1", "Old Artist", null, 1, 0, 0, null, null, null, null, null, 0)
-            db.catalogQueries.upsertAlbum("plex:a1", "Old Album", "Old Artist", null, null, 0, null, null, null, null, null, 0)
-            db.catalogQueries.upsertPlaylist("plex:p1", "Old Playlist", 1, "/playlists/p1/items", null, 0, null, 0)
+            db.catalogQueries.upsertArtist(
+                "plex:artist1",
+                "Old Artist",
+                "https://plex.example:32400/library/metadata/artist1/thumb?X-Plex-Token=token",
+                1,
+                0,
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                0,
+            )
+            db.catalogQueries.upsertAlbum(
+                "plex:a1",
+                "Old Album",
+                "Old Artist",
+                null,
+                "https://plex.example:32400/library/metadata/a1/thumb?X-Plex-Token=token",
+                0,
+                null,
+                null,
+                null,
+                null,
+                null,
+                0,
+            )
+            db.catalogQueries.upsertPlaylist(
+                "plex:p1",
+                "Old Playlist",
+                1,
+                "/playlists/p1/items",
+                "https://plex.example:32400/playlists/p1/art?X-Plex-Token=token",
+                0,
+                null,
+                0,
+            )
             db.catalogQueries.upsertTrack(
                 id = "plex:t1",
                 title = "Cached Song",
@@ -920,6 +955,7 @@ class CatalogRepositoryRefreshDesktopTest {
                 request.url.encodedPath == "/library/sections/1/all" &&
                     request.url.parameters["type"] == "10" -> error("Lightweight sync should not index tracks.")
                 request.url.encodedPath.startsWith("/library/metadata/") -> error("Lightweight sync should not load album children.")
+                request.url.encodedPath == "/playlists/p1/items" -> error("Lightweight sync should not warm playlist tracks.")
                 request.url.encodedPath == "/library/sections/1/all" -> respondJson(favoriteArtistsJson())
                 request.url.encodedPath == "/library/sections/1/albums" -> respondJson(favoriteAlbumsJson())
                 request.url.encodedPath == "/playlists" -> respondJson(playlistsJson(trackCount = 2))
@@ -941,12 +977,25 @@ class CatalogRepositoryRefreshDesktopTest {
 
         assertEquals("Artist One", repo.catalog.value.artists.single { it.id == "plex:artist1" }.title)
         assertTrue(repo.catalog.value.artists.single { it.id == "plex:artist1" }.favorite)
+        assertEquals(
+            "https://plex.example:32400/library/metadata/artist1/thumb?X-Plex-Token=token",
+            repo.catalog.value.artists.single { it.id == "plex:artist1" }.thumbUrl,
+        )
         assertEquals("Album One", repo.catalog.value.albums.single { it.id == "plex:a1" }.title)
         assertTrue(repo.catalog.value.albums.single { it.id == "plex:a1" }.favorite)
+        assertEquals(
+            "https://plex.example:32400/library/metadata/a1/thumb?X-Plex-Token=token",
+            repo.catalog.value.albums.single { it.id == "plex:a1" }.thumbUrl,
+        )
         assertEquals(2, repo.catalog.value.playlists.single { it.id == "plex:p1" }.trackCount)
+        assertEquals(
+            "https://plex.example:32400/playlists/p1/art?X-Plex-Token=token",
+            repo.catalog.value.playlists.single { it.id == "plex:p1" }.thumbUrl,
+        )
         assertEquals(listOf("plex:t1"), repo.catalog.value.tracksByParent["plex:a1"].orEmpty().map { it.id })
         assertFalse(requestedPaths.any { it.contains("type=10") })
         assertFalse(requestedPaths.any { it.startsWith("/library/metadata/") })
+        assertFalse(requestedPaths.any { it.startsWith("/playlists/p1/items") })
     }
 
     @Test

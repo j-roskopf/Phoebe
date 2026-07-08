@@ -492,6 +492,7 @@ class AppState(
             dependencies.catalogRepository.restoreCachedCatalog()
             refreshInternetRadio()
             syncLightweightRemoteStateInBackground()
+            var refreshedCatalogOnStartup = false
             val hasRemoteLibrary = session.value?.selectedLibrary != null
             val hasLocalFolders = mediaSources.value.localFolders.any { it.enabled }
             val refreshedMissingLocalOnlyCatalog = !hasRemoteLibrary &&
@@ -499,8 +500,10 @@ class AppState(
                 !dependencies.catalogRepository.catalog.value.hasBrowseableContent()
             if (refreshedMissingLocalOnlyCatalog) {
                 refreshCatalogSuspended(catalogMessage = null)
+                refreshedCatalogOnStartup = true
             }
-            if (appSettings.value.scanLibraryOnLaunch &&
+            if (isDesktopPlatform() &&
+                appSettings.value.scanLibraryOnLaunch &&
                 (hasRemoteLibrary || (hasLocalFolders && !refreshedMissingLocalOnlyCatalog))
             ) {
                 delay(500)
@@ -510,15 +513,19 @@ class AppState(
                     dependencies.sessionRepository.warmServerConnection()
                 }
                 refreshCatalogSuspended(catalogMessage = null, backgroundIfCached = true)
+                refreshedCatalogOnStartup = true
             }
             if (session.value.isEmbyFamily() &&
                 session.value?.selectedLibrary != null &&
                 !dependencies.catalogRepository.catalog.value.hasBrowseableContent()
             ) {
                 refreshCatalogSuspended(catalogMessage = "Library refreshed.")
+                refreshedCatalogOnStartup = true
             }
             cacheDownloadedArtworkInBackground()
-            warmPlaylistTracksInBackground()
+            if (!refreshedCatalogOnStartup) {
+                warmPlaylistTracksInBackground()
+            }
             ensureLikedSongsPlaylistIfPossible()
             if (session.value?.token?.isNotBlank() == true &&
                 session.value?.selectedServer != null &&
@@ -1511,7 +1518,8 @@ class AppState(
             if (currentSession.isPlex() || currentSession.isEmbyFamily() || currentSession.isNavidrome()) {
                 syncRemotePlayHistory(
                     showMessage = false,
-                    recentOnly = backgroundIfCached && !currentSession.isPlex(),
+                    recentOnly = backgroundIfCached,
+                    warmAfterSync = !backgroundIfCached,
                 )
             } else {
                 syncRemotePlayHistoryInBackground()
@@ -1532,6 +1540,7 @@ class AppState(
     }
 
     private fun warmPlaylistTracksInBackground() {
+        if (!isDesktopPlatform()) return
         scope.launch {
             runCatching {
                 dependencies.catalogSyncService.warmPlaylistTracks(session.value)
@@ -1617,10 +1626,8 @@ class AppState(
         cancelPlexPlayCountRefresh()
         playHistorySyncJob?.cancel()
         playHistorySyncJob = scope.launch {
-            PhoebeLog.d("AppState") { "startup Plex play history sync requested: recent pass then full reconcile" }
-            syncRemotePlayHistory(showMessage = false, recentOnly = true)
-            cancelPlexPlayCountRefresh()
-            syncRemotePlayHistory(showMessage = false, recentOnly = false)
+            PhoebeLog.d("AppState") { "startup Plex play history sync requested: recent pass" }
+            syncRemotePlayHistory(showMessage = false, recentOnly = true, warmAfterSync = false)
         }
     }
 
@@ -1719,7 +1726,11 @@ class AppState(
         dependencies.catalogRepository.clearActiveSyncProgress()
     }
 
-    private suspend fun syncRemotePlayHistory(showMessage: Boolean, recentOnly: Boolean): Any? {
+    private suspend fun syncRemotePlayHistory(
+        showMessage: Boolean,
+        recentOnly: Boolean,
+        warmAfterSync: Boolean = true,
+    ): Any? {
         return runCatching {
             val currentSession = session.value
             PhoebeLog.d("AppState") {
@@ -1731,10 +1742,12 @@ class AppState(
                 catalog = catalog.value,
                 recentOnly = recentOnly,
             )
-            if (currentSession.isPlex() && recentOnly) {
+            if (warmAfterSync && currentSession.isPlex() && recentOnly) {
                 launchKnownPlexPlayCountRefresh(currentSession)
             }
-            warmTracksForMostPlayed()
+            if (warmAfterSync) {
+                warmTracksForMostPlayed()
+            }
             result
         }.onSuccess { result ->
             if (showMessage) {
@@ -2072,6 +2085,7 @@ class AppState(
     }
 
     fun warmTopTracksMixTracks() {
+        if (!session.value.canUsePlexBackgroundFetches()) return
         val currentSession = session.value
         val plexSession = currentSession?.takeIf { it.isPlex() } ?: return
         val signature = currentSession.topTracksMixSessionSignature() ?: return
@@ -2094,6 +2108,7 @@ class AppState(
     }
 
     fun warmHomeMixStartupTracks() {
+        if (!session.value.canUsePlexBackgroundFetches()) return
         val currentSession = session.value
         val plexSession = currentSession?.takeIf { it.isPlex() }
         val signature = currentSession.topTracksMixSessionSignature()
@@ -3905,6 +3920,7 @@ private fun Artist.mixBuilderPreloadKey(): String =
     id.ifBlank { title }
 
 private fun PlexSession?.canUsePlexBackgroundFetches(): Boolean {
+    if (!isDesktopPlatform()) return false
     val server = this?.selectedServer ?: return false
     if (isNavidrome() || isEmbyFamily()) return server.uri.isNotBlank()
     return server.uri.isNotBlank() ||

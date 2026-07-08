@@ -209,7 +209,7 @@ private fun artworkImageCandidates(
     return listOfNotNull(primary, fallback)
         .flatMap { sourceUrl ->
             val fetchUrls = if (sourceUrl.isRemoteArtworkUrl()) {
-                remoteArtworkRequestUrls(sourceUrl, maxDecodeDimension)
+                listOf(sourceUrl) + remoteArtworkRequestUrls(sourceUrl, maxDecodeDimension)
             } else {
                 listOf(sourceUrl)
             }

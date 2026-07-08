@@ -78,6 +78,7 @@ import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.catalogTrackIndexParallelism
 import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.platform.downloadParallelism
+import com.phoebe.app.platform.isDesktopPlatform
 import com.phoebe.app.platform.platformStreamHttpDownloadToStorage
 import com.phoebe.app.sources.CatalogMerge
 import com.phoebe.app.sources.LocalFolderMusicSourcePlugin
@@ -1032,7 +1033,26 @@ class CatalogRepository(
                 remotePageInfo = prefixed.remotePageInfo.takeIf { it.hasAny } ?: base.remotePageInfo,
             )
         }
-        return merged.withPlaylistUserStateFrom(previous)
+        return merged
+            .withRemoteArtworkFrom(previous)
+            .withPlaylistUserStateFrom(previous)
+    }
+
+    private fun CatalogSnapshot.withRemoteArtworkFrom(source: CatalogSnapshot): CatalogSnapshot {
+        val sourceArtists = source.artists.associateBy { it.id }
+        val sourceAlbums = source.albums.associateBy { it.id }
+        val sourcePlaylists = source.playlists.associateBy { it.id }
+        return copy(
+            artists = artists.map { artist ->
+                artist.copy(thumbUrl = artist.thumbUrl ?: sourceArtists[artist.id]?.thumbUrl)
+            },
+            albums = albums.map { album ->
+                album.copy(thumbUrl = album.thumbUrl ?: sourceAlbums[album.id]?.thumbUrl)
+            },
+            playlists = playlists.map { playlist ->
+                playlist.copy(thumbUrl = playlist.thumbUrl ?: sourcePlaylists[playlist.id]?.thumbUrl)
+            },
+        )
     }
 
     private inline fun <T> mergeItemsById(
@@ -7388,6 +7408,7 @@ class CatalogRepository(
 
     private fun warmLikelyClickedContent(session: PlexSession?, snapshot: CatalogSnapshot) {
         if (session?.isPlex() != true) return
+        if (!isDesktopPlatform()) return
         persistenceScope.launch {
             runCatching {
                 val albumIds = buildList {
