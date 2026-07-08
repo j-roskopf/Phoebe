@@ -1044,16 +1044,51 @@ class CatalogRepository(
         val sourcePlaylists = source.playlists.associateBy { it.id }
         return copy(
             artists = artists.map { artist ->
-                artist.copy(thumbUrl = artist.thumbUrl ?: sourceArtists[artist.id]?.thumbUrl)
+                artist.withPreservedArtwork(
+                    preserveAuthenticatedPlexArtwork(
+                        incoming = artist.thumbUrl,
+                        previous = sourceArtists[artist.id]?.thumbUrl,
+                    ),
+                )
             },
             albums = albums.map { album ->
-                album.copy(thumbUrl = album.thumbUrl ?: sourceAlbums[album.id]?.thumbUrl)
+                album.withPreservedArtwork(
+                    preserveAuthenticatedPlexArtwork(
+                        incoming = album.thumbUrl,
+                        previous = sourceAlbums[album.id]?.thumbUrl,
+                    ),
+                )
             },
             playlists = playlists.map { playlist ->
-                playlist.copy(thumbUrl = playlist.thumbUrl ?: sourcePlaylists[playlist.id]?.thumbUrl)
+                playlist.withPreservedArtwork(
+                    preserveAuthenticatedPlexArtwork(
+                        incoming = playlist.thumbUrl,
+                        previous = sourcePlaylists[playlist.id]?.thumbUrl,
+                    ),
+                )
             },
         )
     }
+
+    private fun Artist.withPreservedArtwork(thumbUrl: String?): Artist =
+        if (this.thumbUrl == thumbUrl) this else copy(thumbUrl = thumbUrl)
+
+    private fun Album.withPreservedArtwork(thumbUrl: String?): Album =
+        if (this.thumbUrl == thumbUrl) this else copy(thumbUrl = thumbUrl)
+
+    private fun Playlist.withPreservedArtwork(thumbUrl: String?): Playlist =
+        if (this.thumbUrl == thumbUrl) this else copy(thumbUrl = thumbUrl)
+
+    private fun preserveAuthenticatedPlexArtwork(incoming: String?, previous: String?): String? {
+        if (incoming.isNullOrBlank()) return previous
+        if (previous.isNullOrBlank()) return incoming
+        if (incoming.plexTokenQueryValue() != null) return incoming
+        if (previous.plexTokenQueryValue() == null) return incoming
+        return if (incoming.artworkUrlWithoutQuery() == previous.artworkUrlWithoutQuery()) previous else incoming
+    }
+
+    private fun String.artworkUrlWithoutQuery(): String =
+        substringBefore("?").substringBefore("#")
 
     private inline fun <T> mergeItemsById(
         existing: List<T>,

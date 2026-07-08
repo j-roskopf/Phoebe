@@ -8,18 +8,16 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -39,16 +37,19 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import coil3.ImageLoader
+import coil3.PlatformContext
+import coil3.annotation.ExperimentalCoilApi
+import coil3.compose.AsyncImage
 import coil3.compose.AsyncImagePainter
 import coil3.compose.LocalPlatformContext
-import coil3.compose.rememberAsyncImagePainter
-import coil3.compose.rememberConstraintsSizeResolver
+import coil3.network.ConcurrentRequestStrategy
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
+import coil3.network.ktor3.KtorNetworkFetcherFactory
 import coil3.request.ImageRequest
 import com.phoebe.app.data.applyEmbyFamilyArtworkAuth
 import com.phoebe.app.data.cachedArtworkPathForUrl
@@ -132,49 +133,46 @@ private fun CoilArtworkImage(
     var candidateIndex by remember(candidates) { mutableIntStateOf(0) }
     val candidate = candidates.getOrNull(candidateIndex)
     val platformContext = LocalPlatformContext.current
-    val sizeResolver = rememberConstraintsSizeResolver()
-    val request = remember(platformContext, candidate, sizeResolver) {
+    val request = remember(platformContext, candidate) {
         candidate?.let {
             ImageRequest.Builder(platformContext)
                 .data(it.fetchUrl)
-                .size(sizeResolver)
                 .applyArtworkHeaders(it.fetchUrl)
                 .build()
         }
     }
-    val painter = rememberAsyncImagePainter(model = request)
-    val painterState by painter.state.collectAsState()
-
-    LaunchedEffect(painterState) {
-        val state = painterState
-        if (
-            state is AsyncImagePainter.State.Error &&
-            state.result.throwable !is CancellationException &&
-            candidateIndex < candidates.lastIndex
-        ) {
-            candidateIndex += 1
-        }
+    var visualState by remember(request) {
+        mutableStateOf(if (request == null) RemoteArtworkVisualState.Missing else RemoteArtworkVisualState.Loading)
     }
-
-    val success = painterState is AsyncImagePainter.State.Success
-    val visualState = when {
-        candidate == null -> RemoteArtworkVisualState.Missing
-        success -> RemoteArtworkVisualState.Image
-        painterState is AsyncImagePainter.State.Error && candidateIndex >= candidates.lastIndex -> RemoteArtworkVisualState.Missing
-        else -> RemoteArtworkVisualState.Loading
-    }
+    val imageLoader = remember(platformContext) { PhoebeArtworkCoilImageLoader.get(platformContext) }
 
     Box(modifier) {
-        Image(
-            painter = painter,
+        AsyncImage(
+            model = request,
             contentDescription = null,
+            imageLoader = imageLoader,
             contentScale = contentScale,
             alignment = alignment,
-            modifier = Modifier
-                .matchParentSize()
-                .then(artworkSurfaceModifier(shape, elevated))
-                .then(sizeResolver)
-                .graphicsLayer { alpha = if (success) 1f else 0f },
+            modifier = artworkSurfaceModifier(Modifier.matchParentSize(), shape, elevated),
+            onState = { state ->
+                visualState = when (state) {
+                    is AsyncImagePainter.State.Success -> RemoteArtworkVisualState.Image
+                    is AsyncImagePainter.State.Error -> {
+                        if (
+                            state.result.throwable !is CancellationException &&
+                            candidateIndex < candidates.lastIndex
+                        ) {
+                            candidateIndex += 1
+                            RemoteArtworkVisualState.Loading
+                        } else {
+                            RemoteArtworkVisualState.Missing
+                        }
+                    }
+                    AsyncImagePainter.State.Empty,
+                    is AsyncImagePainter.State.Loading,
+                        -> if (request == null) RemoteArtworkVisualState.Missing else RemoteArtworkVisualState.Loading
+                }
+            },
         )
         Crossfade(
             targetState = visualState,
@@ -194,6 +192,19 @@ private fun CoilArtworkImage(
     }
 }
 
+@OptIn(ExperimentalCoilApi::class)
+private object PhoebeArtworkCoilImageLoader {
+    private var imageLoader: ImageLoader? = null
+
+    fun get(context: PlatformContext): ImageLoader =
+        imageLoader ?: ImageLoader.Builder(context)
+            .components {
+                add(KtorNetworkFetcherFactory(createPlatformHttpClient(), ConcurrentRequestStrategy.UNCOORDINATED))
+            }
+            .build()
+            .also { imageLoader = it }
+}
+
 private data class ArtworkImageCandidate(
     val sourceUrl: String,
     val fetchUrl: String,
@@ -209,7 +220,7 @@ private fun artworkImageCandidates(
     return listOfNotNull(primary, fallback)
         .flatMap { sourceUrl ->
             val fetchUrls = if (sourceUrl.isRemoteArtworkUrl()) {
-                listOf(sourceUrl) + remoteArtworkRequestUrls(sourceUrl, maxDecodeDimension)
+                remoteArtworkRequestUrls(sourceUrl, maxDecodeDimension)
             } else {
                 listOf(sourceUrl)
             }
@@ -227,10 +238,10 @@ private fun ImageRequest.Builder.applyArtworkHeaders(fetchUrl: String): ImageReq
     return httpHeaders(networkHeaders)
 }
 
-private fun artworkSurfaceModifier(shape: Shape, elevated: Boolean): Modifier =
+private fun artworkSurfaceModifier(modifier: Modifier, shape: Shape, elevated: Boolean): Modifier =
     when {
-        !elevated || prefersReducedArtworkEffects() -> Modifier.clip(shape)
-        else -> Modifier
+        !elevated || prefersReducedArtworkEffects() -> modifier.clip(shape)
+        else -> modifier
             .shadow(18.dp, shape, ambientColor = Color.Black.copy(alpha = 0.38f))
             .clip(shape)
     }
