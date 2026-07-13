@@ -2252,7 +2252,7 @@ class AppState(
             if (popularMixSeedBuildSignature == signature && active.isActive) return active
             if (active.isActive) active.cancel()
         }
-        val deferred = scope.async(Dispatchers.Default) {
+        val deferred = scope.async {
             val tracks = runCatching {
                 withTimeoutOrNull(MixProviderLoadTimeoutMs) {
                     dependencies.catalogRepository.popularSongsForLibrary(
@@ -2292,7 +2292,7 @@ class AppState(
 
     private fun appendPopularMixRemainder(seed: PopularMixSeed, seedQueue: List<Track>) {
         if (dependencies.castController.state.value.isPlaybackActive) return
-        scope.launch(Dispatchers.Default) {
+        scope.launch {
             if (dependencies.castController.state.value.isPlaybackActive) return@launch
             val fullPool = runCatching {
                 withTimeoutOrNull(MixProviderLoadTimeoutMs) {
@@ -2316,7 +2316,7 @@ class AppState(
 
     private fun appendTopTracksMixRemainder(seed: PopularMixSeed, seedQueue: List<Track>) {
         if (dependencies.castController.state.value.isPlaybackActive) return
-        scope.launch(Dispatchers.Default) {
+        scope.launch {
             if (dependencies.castController.state.value.isPlaybackActive) return@launch
             val fullPool = dependencies.catalogRepository.cachedPopularTracksForLibrary(seed.session)
                 .takeIf { it.isNotEmpty() }
@@ -2349,7 +2349,7 @@ class AppState(
         topTracksMixBuildDeferred
             ?.takeIf { topTracksMixBuildSignature == signature && it.isActive }
             ?.let { return it }
-        val deferred = scope.async(Dispatchers.Default) {
+        val deferred = scope.async {
             runCatching {
                 dependencies.catalogRepository.popularTracksForLibrary(session)
             }.getOrElse { error ->
