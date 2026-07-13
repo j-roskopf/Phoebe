@@ -358,8 +358,12 @@ class CatalogRepository(
     }
 
     private suspend fun runCatalogDbWrite(block: suspend () -> Unit) {
-        awaitPendingCatalogDbWrites(excluding = currentCoroutineContext()[Job])
-        databaseWriteGate.withWrite { block() }
+        // Android AppState uses the UI scope; keep SQLite waits off the main thread.
+        val callerJob = currentCoroutineContext()[Job]
+        withContext(Dispatchers.Default) {
+            awaitPendingCatalogDbWrites(excluding = callerJob)
+            databaseWriteGate.withWrite { block() }
+        }
     }
 
     private suspend fun awaitCatalogDbWrites() {
@@ -3739,12 +3743,12 @@ class CatalogRepository(
     suspend fun popularSongsForLibrary(
         session: PlexSession?,
         limit: Int = LibraryPopularSongLimit,
-    ): List<Track> {
-        val plexSession = session?.takeIf { it.isPlex() } ?: return emptyList()
-        val server = plexSession.selectedServer ?: return emptyList()
-        val library = plexSession.selectedLibrary ?: return emptyList()
-        val token = plexSession.serverAuthToken() ?: return emptyList()
-        if (limit <= 0) return emptyList()
+    ): List<Track> = withContext(Dispatchers.Default) {
+        val plexSession = session?.takeIf { it.isPlex() } ?: return@withContext emptyList()
+        val server = plexSession.selectedServer ?: return@withContext emptyList()
+        val library = plexSession.selectedLibrary ?: return@withContext emptyList()
+        val token = plexSession.serverAuthToken() ?: return@withContext emptyList()
+        if (limit <= 0) return@withContext emptyList()
         val tracks = plexClient.popularTracksForLibrary(
             server = server,
             library = library,
@@ -3757,19 +3761,19 @@ class CatalogRepository(
             publishIndexedPlexTracks(tracks)
             runCatalogDbWrite { persistTrackBatch(tracks) }
         }
-        return tracks
+        tracks
     }
 
     suspend fun popularTracksForLibrary(
         session: PlexSession?,
         tracksPerArtist: Int = LibraryPopularTracksPerArtist,
-    ): List<Track> {
-        val plexSession = session?.takeIf { it.isPlex() } ?: return emptyList()
-        val server = plexSession.selectedServer ?: return emptyList()
-        val library = plexSession.selectedLibrary ?: return emptyList()
-        val token = plexSession.serverAuthToken() ?: return emptyList()
-        val libraryKey = plexSession.libraryPopularTrackCacheKey() ?: return emptyList()
-        if (tracksPerArtist <= 0) return emptyList()
+    ): List<Track> = withContext(Dispatchers.Default) {
+        val plexSession = session?.takeIf { it.isPlex() } ?: return@withContext emptyList()
+        val server = plexSession.selectedServer ?: return@withContext emptyList()
+        val library = plexSession.selectedLibrary ?: return@withContext emptyList()
+        val token = plexSession.serverAuthToken() ?: return@withContext emptyList()
+        val libraryKey = plexSession.libraryPopularTrackCacheKey() ?: return@withContext emptyList()
+        if (tracksPerArtist <= 0) return@withContext emptyList()
         val artistRatingKeys = mutableCatalog.value.artists
             .asSequence()
             .mapNotNull { artist -> artist.plexPopularMixRatingKey()?.let { key -> key to artist } }
@@ -3778,7 +3782,7 @@ class CatalogRepository(
         if (artistRatingKeys.isEmpty()) {
             publishLibraryPopularTracks(libraryKey, emptyList())
             runCatalogDbWrite { persistLibraryPopularTracks(libraryKey, emptyList()) }
-            return emptyList()
+            return@withContext emptyList()
         }
         val tracks = coroutineScope {
             val collected = mutableListOf<Track>()
@@ -3819,7 +3823,7 @@ class CatalogRepository(
             }
             persistLibraryPopularTracks(libraryKey, tracks)
         }
-        return tracks
+        tracks
     }
 
     private suspend fun publishLibraryPopularTracks(libraryKey: String, tracks: List<Track>) {
@@ -7563,8 +7567,8 @@ class CatalogRepository(
     private suspend fun persistTrackBatch(
         tracks: List<Track>,
         replaceParents: Set<String> = emptySet(),
-    ) {
-        if (tracks.isEmpty()) return
+    ) = withContext(Dispatchers.Default) {
+        if (tracks.isEmpty()) return@withContext
         val snapshot = mutableCatalog.value
         val tracksByParent = tracks
             .groupBy { track -> resolveIndexedTrackParentId(track, snapshot) }
