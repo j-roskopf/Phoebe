@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -262,16 +263,15 @@ fun UpNextList(
                 )
             }
         }
-        upNext.forEachIndexed { index, track ->
-            if (dividerUpNextIndex == index && upNextDivider != null) {
-                item(
-                    key = "keep-playing-divider-${upNextDivider.beforeQueueIndex}",
-                    contentType = "keep-playing-divider",
-                ) {
+        itemsIndexed(
+            items = upNext,
+            key = { _, track -> track.id },
+            contentType = { _, _ -> "up-next" },
+        ) { index, track ->
+            Column(verticalArrangement = Arrangement.spacedBy(rowSpacing)) {
+                if (dividerUpNextIndex == index && upNextDivider != null) {
                     KeepPlayingDivider(upNextDivider.label)
                 }
-            }
-            item(key = track.id, contentType = "up-next") {
                 val isDragging = draggingTrackId == track.id
                 val draggingId = draggingTrackId
                 val startIndex = dragStartIndex
