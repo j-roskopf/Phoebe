@@ -97,8 +97,14 @@ private data class CrossfadeOutgoingSetup(
 
 internal const val AndroidPlatformQueueWindowSize = 24
 
-internal fun platformQueueWindowEndExclusive(startIndex: Int, queueSize: Int): Int =
-    (startIndex + AndroidPlatformQueueWindowSize).coerceAtMost(queueSize)
+internal fun platformQueueWindowEndExclusive(
+    startIndex: Int,
+    queueSize: Int,
+    repeatMode: RepeatMode,
+): Int {
+    val windowSize = if (repeatMode == RepeatMode.One) 1 else AndroidPlatformQueueWindowSize
+    return (startIndex + windowSize).coerceAtMost(queueSize)
+}
 
 class AndroidAudioPlayer(
     private val diagnostics: PlaybackDiagnostics = AndroidPlaybackDiagnostics.diagnostics,
@@ -1031,8 +1037,13 @@ class AndroidAudioPlayer(
         val windowStartIndex = targetIndex
         // Keep a bounded forward window in Media3. A queue selection still starts at the
         // requested track, but subsequent skips can seek to an already-installed item
-        // instead of stopping the decoder and setting up a fresh stream request.
-        val windowEndExclusive = platformQueueWindowEndExclusive(windowStartIndex, queue.size)
+        // instead of stopping the decoder and setting up a fresh stream request. Repeat
+        // One must stay single-item so Media3 cannot advance before the app restarts it.
+        val windowEndExclusive = platformQueueWindowEndExclusive(
+            startIndex = windowStartIndex,
+            queueSize = queue.size,
+            repeatMode = state.value.repeat,
+        )
         val windowTracks = queue.subList(windowStartIndex, windowEndExclusive)
         expectControllerTarget(queueIds, platformIndex = 0, generation)
         releasePlatformDecoderBeforeLoad(player)
