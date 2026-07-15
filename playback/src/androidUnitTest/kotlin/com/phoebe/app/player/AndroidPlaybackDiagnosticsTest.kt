@@ -6,6 +6,13 @@ import kotlin.test.assertTrue
 
 class AndroidPlaybackDiagnosticsTest {
     @Test
+    fun platformQueueWindowKeepsUpcomingSkipsOnTheExistingMedia3Player() {
+        assertEquals(24, AndroidPlatformQueueWindowSize)
+        assertEquals(24, platformQueueWindowEndExclusive(startIndex = 0, queueSize = 50))
+        assertEquals(50, platformQueueWindowEndExclusive(startIndex = 42, queueSize = 50))
+    }
+
+    @Test
     fun media3LoadControlUsesRelaxedProfileForForegroundUnmeteredPlayback() {
         val profile = PhoebeLoadControlConfig.profileFor(
             engine = PlaybackEnginePath.Media3,
