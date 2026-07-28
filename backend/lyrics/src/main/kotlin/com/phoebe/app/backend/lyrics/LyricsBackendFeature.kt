@@ -190,13 +190,15 @@ class GeniusApiAdapter(
     private suspend fun referents(songId: Long, token: String): List<GeniusReferent> {
         val referents = mutableListOf<GeniusReferent>()
         var page = 1
-        while (true) {
+        var pagesFetched = 0
+        while (pagesFetched < MaxReferentsPages) {
             val response = geniusRequestOrNullOnNotFound("$GeniusApiBaseUrl/referents", token) {
                 parameter("song_id", songId)
                 parameter("text_format", "plain")
                 parameter("per_page", GeniusReferentsPerPage)
                 parameter("page", page)
             } ?: break
+            pagesFetched++
             val body: GeniusReferentsApiResponse = response.body()
             referents += body.response?.referents.orEmpty().mapNotNull { it.toReferent() }
             val nextPage = body.response?.nextPage ?: break
@@ -426,6 +428,7 @@ private fun String.looksLikePlaylistPage(): Boolean =
 private const val GeniusApiBaseUrl = "https://api.genius.com"
 private const val GeniusSearchPerPage = 10
 private const val GeniusReferentsPerPage = 50
+private const val MaxReferentsPages = 10
 private const val StrongMatchScore = 100
 private val FeaturingSegmentPattern = Regex(
     pattern = """(?i)[\[(][^\])]*(?:feat\.?|ft\.?|featuring|with)\s+[^)\]]*[\])]""",
