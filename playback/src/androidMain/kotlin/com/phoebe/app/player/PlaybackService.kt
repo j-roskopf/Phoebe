@@ -229,6 +229,18 @@ class PlaybackService : MediaLibraryService() {
                 PhoebeLog.d(TAG) {
                     "onSetMediaItems package=${controller.packageName} count=${mediaItems.size} item=${mediaItems.firstOrNull()?.debugSummary()}"
                 }
+                // Voice requests carry a search query and no resolvable media id, so try the
+                // search path first: expanding them only burns a lookup that cannot succeed.
+                if (mediaItems.isVoiceSearchRequest()) {
+                    return@listenableFuture resolveSearchMediaItems(
+                        source,
+                        mediaItems,
+                        startIndex,
+                        startPositionMs,
+                    ) ?: throw UnsupportedOperationException(
+                        "No results for voice search \"${mediaItems.first().requestMetadata.searchQuery}\".",
+                    )
+                }
                 val expanded = expandMediaItems(source, mediaItems, startIndex)
                 if (expanded != null) {
                     val tracks = expanded.tracks
@@ -241,10 +253,6 @@ class PlaybackService : MediaLibraryService() {
                     }
                     MediaItemsWithStartPosition(expanded.items, expanded.startIndex, startPositionMs)
                 } else {
-                    val searched = resolveSearchMediaItems(source, mediaItems, startIndex, startPositionMs)
-                    if (searched != null) {
-                        return@listenableFuture searched
-                    }
                     val tracks = source.resolveTracks(mediaItems)
                     if (tracks.isEmpty()) {
                         throw UnsupportedOperationException("No playable media items resolved for request.")
@@ -406,6 +414,12 @@ class PlaybackService : MediaLibraryService() {
 
     private fun List<MediaItem>.isInAppPlaybackQueue(): Boolean =
         isNotEmpty() && all { it.requestMetadata.extras?.getBoolean(InAppPlaybackExtra, false) == true }
+
+    /** True for Assistant/Android Auto voice requests, which arrive as a lone query-bearing item. */
+    private fun List<MediaItem>.isVoiceSearchRequest(): Boolean {
+        val request = singleOrNull()?.requestMetadata ?: return false
+        return isSearchRequest(request.searchQuery?.trim().orEmpty(), request.extras)
+    }
 
     private fun MediaItem.debugSummary(): String {
         val extras = requestMetadata.extras

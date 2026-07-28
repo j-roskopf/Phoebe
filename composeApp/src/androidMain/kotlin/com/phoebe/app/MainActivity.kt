@@ -1,7 +1,8 @@
 package com.phoebe.app
 
-import android.annotation.SuppressLint
 import android.Manifest
+import android.annotation.SuppressLint
+import android.app.SearchManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -15,7 +16,6 @@ import android.widget.FrameLayout
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.core.app.ActivityCompat
-import androidx.core.content.ContextCompat
 import androidx.fragment.app.FragmentActivity
 import androidx.mediarouter.app.MediaRouteButton
 import com.google.android.gms.cast.framework.CastButtonFactory
@@ -33,12 +33,14 @@ class MainActivity : FragmentActivity(), AndroidCastRoutePickerHost {
         setContent { App() }
         installCastRouteButton()
         handlePlayFromSearchIntent(intent)
+        handleAssistantSearchIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handlePlayFromSearchIntent(intent)
+        handleAssistantSearchIntent(intent)
     }
 
     override fun onStart() {
@@ -96,13 +98,34 @@ class MainActivity : FragmentActivity(), AndroidCastRoutePickerHost {
 
     private fun handlePlayFromSearchIntent(intent: Intent?) {
         if (intent?.action != MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) return
+        startPlaybackFromSearch(
+            query = intent.getStringExtra(SearchManager.QUERY).orEmpty(),
+            extras = intent.extras,
+        )
+    }
+
+    /** Handles the query passed by the Assistant App Actions GET_THING capability. */
+    private fun handleAssistantSearchIntent(intent: Intent?) {
+        if (intent?.action != Intent.ACTION_VIEW) return
+        val query = intent.getStringExtra(AssistantSearchQueryExtra)?.trim().orEmpty()
+        if (query.isBlank()) return
+        startPlaybackFromSearch(query = query, extras = null)
+    }
+
+    private fun startPlaybackFromSearch(query: String, extras: Bundle?) {
         val serviceIntent = Intent(this, com.phoebe.app.player.PlaybackService::class.java)
             .setAction(MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH)
-            .putExtras(intent)
-        ContextCompat.startForegroundService(this, serviceIntent)
+            .putExtra(SearchManager.QUERY, query)
+            .apply { extras?.let(::putExtras) }
+        // Deliberately not startForegroundService: the service only calls startForeground once
+        // playback actually begins, and a search that matches nothing would otherwise trip
+        // ForegroundServiceDidNotStartInTimeException. The activity is foreground here, so a
+        // plain start is allowed, and media3 promotes the service when the player starts.
+        startService(serviceIntent)
     }
 
     private companion object {
         private const val REQUEST_POST_NOTIFICATIONS = 1001
+        private const val AssistantSearchQueryExtra = "phoebe.assistant.SEARCH_QUERY"
     }
 }

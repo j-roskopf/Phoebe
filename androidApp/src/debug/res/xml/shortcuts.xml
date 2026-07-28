@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The Assistant preview must target the debug application ID installed on the test phone. -->
+    <capability android:name="actions.intent.GET_THING">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetPackage="com.phoebe.app.debug"
+            android:targetClass="com.phoebe.app.MainActivity">
+            <parameter
+                android:name="thing.name"
+                android:key="phoebe.assistant.SEARCH_QUERY" />
+        </intent>
+    </capability>
+</shortcuts>

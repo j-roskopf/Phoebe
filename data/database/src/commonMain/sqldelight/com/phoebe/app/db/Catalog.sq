@@ -191,6 +191,12 @@ SELECT * FROM TrackRow;
 selectTrackById:
 SELECT * FROM TrackRow WHERE id = ? LIMIT 1;
 
+-- Narrow projection for voice/browse search ranking. Reading all 40 TrackRow columns
+-- for every candidate is what made Assistant queries time out; only matched ids are
+-- hydrated afterwards via selectTracksByIds.
+selectTrackSearchIndex:
+SELECT id, title, artist, album, genre, dateAddedMs FROM TrackRow;
+
 selectTracksByIds:
 SELECT * FROM TrackRow WHERE id IN :ids;
 

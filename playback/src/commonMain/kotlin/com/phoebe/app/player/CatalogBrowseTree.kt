@@ -1,6 +1,7 @@
 package com.phoebe.app.player
 
 import com.phoebe.app.db.PhoebeDatabase
+import com.phoebe.app.db.SelectTrackSearchIndex
 import com.phoebe.app.domain.Album
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.Playlist
@@ -81,7 +82,8 @@ class CatalogBrowseTree(
 
     fun trackById(trackId: String): Track? {
         val resolvedId = BrowseMediaIds.parseTrackId(trackId)?.trackId ?: trackId
-        val row = database.catalogQueries.selectAllTracks().executeAsList().find { it.id == resolvedId }
+        if (resolvedId.isBlank()) return null
+        val row = database.catalogQueries.selectTrackById(resolvedId).executeAsOneOrNull()
             ?: return null
         return row.toTrack()
     }
@@ -133,6 +135,11 @@ class CatalogBrowseTree(
         }.orEmpty()
         if (playlistTracks.isNotEmpty()) return playlistTracks.distinctBy { it.id }
 
+        // Rank over the narrow projection, then hydrate only the ids that matched. Reading
+        // every TrackRow column per branch is what pushed voice searches past the Assistant's
+        // timeout on large libraries.
+        val index by lazy { database.catalogQueries.selectTrackSearchIndex().executeAsList() }
+
         val albumTracks = album?.takeIf { it.isNotBlank() }?.let { albumQuery ->
             val matchedAlbums = albums()
                 .filter { candidate ->
@@ -140,59 +147,77 @@ class CatalogBrowseTree(
                         artist?.takeIf { it.isNotBlank() }?.let { candidate.artist.matchesVoiceQuery(it) } != false
                 }
             matchedAlbums.flatMap { tracksForParent(it.id) }.ifEmpty {
-                allTracks().filter { track ->
-                    track.album.matchesVoiceQuery(albumQuery) &&
-                        artist?.takeIf { it.isNotBlank() }?.let { track.artist.matchesVoiceQuery(it) } != false
-                }
+                hydrate(
+                    index.filter { row ->
+                        row.album.matchesVoiceQuery(albumQuery) &&
+                            artist?.takeIf { it.isNotBlank() }?.let { row.artist.matchesVoiceQuery(it) } != false
+                    }.map { it.id },
+                )
             }
         }.orEmpty()
         if (albumTracks.isNotEmpty()) return albumTracks.distinctBy { it.id }
 
         val artistTracks = artist?.takeIf { it.isNotBlank() }?.let { artistQuery ->
-            allTracks().filter { it.artist.matchesVoiceQuery(artistQuery) }
+            hydrate(index.filter { it.artist.matchesVoiceQuery(artistQuery) }.map { it.id })
         }.orEmpty()
         if (artistTracks.isNotEmpty()) return artistTracks.distinctBy { it.id }
 
         val titleTracks = title?.takeIf { it.isNotBlank() }?.let { titleQuery ->
-            allTracks().rankedByVoiceQuery(titleQuery) {
-                listOf(
-                    VoiceSearchField(it.title, FieldWeightTitle),
-                    VoiceSearchField(it.artist, FieldWeightArtist),
-                    VoiceSearchField(it.album, FieldWeightAlbum),
-                )
-            }
+            hydrate(
+                index.rankedByVoiceQuery(titleQuery) {
+                    listOf(
+                        VoiceSearchField(it.title, FieldWeightTitle),
+                        VoiceSearchField(it.artist, FieldWeightArtist),
+                        VoiceSearchField(it.album, FieldWeightAlbum),
+                    )
+                },
+            )
         }.orEmpty()
         if (titleTracks.isNotEmpty()) return titleTracks
 
         val genreTracks = genre?.takeIf { it.isNotBlank() }?.let { genreQuery ->
-            allTracks().filter { it.genre?.matchesVoiceQuery(genreQuery) == true }
+            hydrate(index.filter { it.genre?.matchesVoiceQuery(genreQuery) == true }.map { it.id })
         }.orEmpty()
         if (genreTracks.isNotEmpty()) return genreTracks.distinctBy { it.id }
 
         val freeformQuery = query.trim()
         return if (freeformQuery.isBlank()) {
-            allTracks()
-                .sortedWith(compareByDescending<Track> { it.dateAddedMs ?: Long.MIN_VALUE }.thenBy { it.title.lowercase() })
-                .take(25)
+            hydrate(
+                index
+                    .sortedWith(
+                        compareByDescending<SelectTrackSearchIndex> { it.dateAddedMs ?: Long.MIN_VALUE }
+                            .thenBy { it.title.lowercase() },
+                    )
+                    .take(25)
+                    .map { it.id },
+            )
         } else {
-            allTracks().rankedByVoiceQuery(freeformQuery) {
-                listOf(
-                    VoiceSearchField(it.title, FieldWeightTitle),
-                    VoiceSearchField(it.artist, FieldWeightArtist),
-                    VoiceSearchField(it.album, FieldWeightAlbum),
-                    VoiceSearchField(it.genre.orEmpty(), FieldWeightGenre),
-                )
-            }
+            hydrate(
+                index.rankedByVoiceQuery(freeformQuery) {
+                    listOf(
+                        VoiceSearchField(it.title, FieldWeightTitle),
+                        VoiceSearchField(it.artist, FieldWeightArtist),
+                        VoiceSearchField(it.album, FieldWeightAlbum),
+                        VoiceSearchField(it.genre.orEmpty(), FieldWeightGenre),
+                    )
+                },
+            )
         }
+    }
+
+    /** Loads full rows for [ids], preserving the ranked order they were matched in. */
+    private fun hydrate(ids: List<String>): List<Track> {
+        if (ids.isEmpty()) return emptyList()
+        val tracksById = database.catalogQueries.selectTracksByIds(ids)
+            .executeAsList()
+            .associate { it.id to it.toTrack() }
+        return ids.mapNotNull { tracksById[it] }
     }
 
     private fun hasCachedCatalog(): Boolean =
         database.catalogQueries.selectArtists().executeAsList().isNotEmpty() ||
             database.catalogQueries.selectAlbums().executeAsList().isNotEmpty() ||
             database.catalogQueries.selectPlaylists().executeAsList().isNotEmpty()
-
-    private fun allTracks(): List<Track> =
-        database.catalogQueries.selectAllTracks().executeAsList().map { it.toTrack() }
 
     private fun artists(): List<Artist> =
         database.catalogQueries.selectArtists().executeAsList().map {
@@ -230,12 +255,8 @@ class CatalogBrowseTree(
     private fun albumsForArtist(artistTitle: String): List<Album> =
         albums().filter { it.artist.equals(artistTitle, ignoreCase = true) }
 
-    private fun tracksForParent(parentId: String): List<Track> {
-        val trackRows = database.catalogQueries.selectAllTracks().executeAsList()
-        val tracksById = trackRows.associate { it.id to it.toTrack() }
-        return database.catalogQueries.selectTracksForParent(parentId).executeAsList()
-            .mapNotNull { tracksById[it.id] }
-    }
+    private fun tracksForParent(parentId: String): List<Track> =
+        database.catalogQueries.selectTracksForParent(parentId).executeAsList().map { it.toTrack() }
 
     private fun com.phoebe.app.db.TrackRow.toTrack(): Track =
         Track(
@@ -339,10 +360,11 @@ class CatalogBrowseTree(
         return target.isNotBlank() && (value == target || value.contains(target))
     }
 
-    private fun List<Track>.rankedByVoiceQuery(
+    /** Returns matching track ids, best match first. */
+    private fun List<SelectTrackSearchIndex>.rankedByVoiceQuery(
         query: String,
-        fields: (Track) -> List<VoiceSearchField>,
-    ): List<Track> {
+        fields: (SelectTrackSearchIndex) -> List<VoiceSearchField>,
+    ): List<String> {
         val normalizedQuery = query.normalizedForVoiceSearch()
         val tokens = normalizedQuery.split(' ').filter { it.isNotBlank() }
         if (normalizedQuery.isBlank()) return emptyList()
@@ -361,12 +383,12 @@ class CatalogBrowseTree(
                 if (score > 0) track to score else null
             }
             .sortedWith(
-                compareByDescending<Pair<Track, Int>> { it.second }
+                compareByDescending<Pair<SelectTrackSearchIndex, Int>> { it.second }
                     .thenBy { it.first.title.lowercase() }
                     .thenBy { it.first.artist.lowercase() },
             )
-            .map { it.first }
-            .distinctBy { it.id }
+            .map { it.first.id }
+            .distinct()
             .toList()
     }
 

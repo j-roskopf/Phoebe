@@ -50,6 +50,47 @@ class CatalogBrowseTreeSearchTest {
     }
 
     @Test
+    fun searchTracksReturnsWholeArtistCatalogForArtistRequest() = runTest {
+        val db = populatedDatabase()
+        val tree = CatalogBrowseTree(db)
+
+        val results = tree.searchTracks(query = "signal garden", artist = "Signal Garden")
+
+        assertEquals(setOf("track-moon", "track-river"), results.map { it.id }.toSet())
+    }
+
+    @Test
+    fun searchTracksReturnsPlaylistQueueInOrderForPlaylistRequest() = runTest {
+        val db = populatedDatabase()
+        val tree = CatalogBrowseTree(db)
+
+        val results = tree.searchTracks(query = "night drive", playlist = "Night Drive")
+
+        assertEquals(listOf("track-river", "track-moon"), results.map { it.id })
+    }
+
+    @Test
+    fun searchTracksReturnsEmptyWhenNothingMatches() = runTest {
+        val db = populatedDatabase()
+        val tree = CatalogBrowseTree(db)
+
+        val results = tree.searchTracks(query = "noah kahan", artist = "Noah Kahan")
+
+        assertEquals(emptyList(), results.map { it.id })
+    }
+
+    @Test
+    fun searchTracksHydratesFullTrackRowsNotJustIndexFields() = runTest {
+        val db = populatedDatabase()
+        val tree = CatalogBrowseTree(db)
+
+        val track = tree.searchTracks(query = "moon").first()
+
+        assertEquals("https://example.test/track-moon.mp3", track.streamUrl)
+        assertEquals(180_000, track.durationMs)
+    }
+
+    @Test
     fun playlistChildrenIncludeShuffleThenContextualTrackIds() = runTest {
         val db = populatedDatabase()
         val tree = CatalogBrowseTree(db)
