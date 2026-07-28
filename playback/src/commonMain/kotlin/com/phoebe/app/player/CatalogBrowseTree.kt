@@ -157,6 +157,16 @@ class CatalogBrowseTree(
         }.orEmpty()
         if (albumTracks.isNotEmpty()) return albumTracks.distinctBy { it.id }
 
+        val titleAndArtistTracks = if (!title.isNullOrBlank() && !artist.isNullOrBlank()) {
+            hydrate(
+                index.filter { it.title.matchesVoiceQuery(title) && it.artist.matchesVoiceQuery(artist) }
+                    .map { it.id },
+            )
+        } else {
+            emptyList()
+        }
+        if (titleAndArtistTracks.isNotEmpty()) return titleAndArtistTracks.distinctBy { it.id }
+
         val artistTracks = artist?.takeIf { it.isNotBlank() }?.let { artistQuery ->
             hydrate(index.filter { it.artist.matchesVoiceQuery(artistQuery) }.map { it.id })
         }.orEmpty()
@@ -394,9 +404,9 @@ class CatalogBrowseTree(
 
     private fun String.normalizedForVoiceSearch(): String =
         lowercase()
-            .replace(Regex("[^a-z0-9]+"), " ")
+            .replace(NonAlphanumericRegex, " ")
             .trim()
-            .replace(Regex("\\s+"), " ")
+            .replace(WhitespaceRegex, " ")
 
     private data class VoiceSearchField(val value: String, val weight: Int)
 
@@ -405,5 +415,7 @@ class CatalogBrowseTree(
         private const val FieldWeightArtist = 30
         private const val FieldWeightAlbum = 20
         private const val FieldWeightGenre = 10
+        private val NonAlphanumericRegex = Regex("[^a-z0-9]+")
+        private val WhitespaceRegex = Regex("\\s+")
     }
 }

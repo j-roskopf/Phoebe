@@ -60,6 +60,16 @@ class CatalogBrowseTreeSearchTest {
     }
 
     @Test
+    fun searchTracksReturnsOnlyMatchingSongForTitleAndArtistRequest() = runTest {
+        val db = populatedDatabase()
+        val tree = CatalogBrowseTree(db)
+
+        val results = tree.searchTracks(query = "moon song by signal garden", title = "Moon Song", artist = "Signal Garden")
+
+        assertEquals(listOf("track-moon"), results.map { it.id })
+    }
+
+    @Test
     fun searchTracksReturnsPlaylistQueueInOrderForPlaylistRequest() = runTest {
         val db = populatedDatabase()
         val tree = CatalogBrowseTree(db)
