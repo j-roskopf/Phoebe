@@ -99,7 +99,10 @@ data class PhoebeTintOption(
             }
 
         fun defaultForDesign(design: PhoebeDesignSystem): PhoebeTintOption =
-            optionsForDesign(design).first()
+            when (design) {
+                PhoebeDesignSystem.Default -> Purple
+                else -> optionsForDesign(design).first()
+            }
 
         fun fromId(id: String?, design: PhoebeDesignSystem): PhoebeTintOption {
             val options = optionsForDesign(design)

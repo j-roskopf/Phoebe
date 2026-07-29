@@ -1086,7 +1086,7 @@ data class AppSettings(
     val showUltimateGuitarButton: Boolean = true,
     val blurredArtworkAppearance: Boolean = true,
     val fullBleedDetailArtwork: Boolean = true,
-    val tintedBackgroundGradient: Boolean = true,
+    val tintedBackgroundGradient: Boolean = false,
     val listenBrainz: ListenBrainzSettings = ListenBrainzSettings(),
     val lastFm: LastFmSettings = LastFmSettings(),
     val downloadPolicy: DownloadPolicySettings = DownloadPolicySettings(),

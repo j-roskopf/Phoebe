@@ -554,7 +554,7 @@ private fun AppearanceSettingsCard(
     onBlurredArtworkAppearance: (Boolean) -> Unit,
     fullBleedDetailArtwork: Boolean = true,
     onFullBleedDetailArtwork: (Boolean) -> Unit = {},
-    tintedBackgroundGradient: Boolean = true,
+    tintedBackgroundGradient: Boolean = false,
     onTintedBackgroundGradient: (Boolean) -> Unit = {},
     showFullBleedDetailArtwork: Boolean = false,
     compact: Boolean = false,
