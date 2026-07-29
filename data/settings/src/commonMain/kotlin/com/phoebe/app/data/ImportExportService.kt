@@ -80,6 +80,7 @@ class ImportExportService(
         appSettingsRepository.setNowPlayingVisualizerInTvFrame(backup.settings.nowPlayingVisualizerInTvFrame)
         appSettingsRepository.setBlurredArtworkAppearance(backup.settings.blurredArtworkAppearance)
         appSettingsRepository.setFullBleedDetailArtwork(backup.settings.fullBleedDetailArtwork)
+        appSettingsRepository.setTintedBackgroundGradient(backup.settings.tintedBackgroundGradient)
         return previewBackupPackage(payload)
     }
 
