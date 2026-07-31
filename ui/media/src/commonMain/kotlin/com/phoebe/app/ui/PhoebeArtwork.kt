@@ -201,20 +201,25 @@ private fun CoilArtworkImage(
  * also means one shared memory cache, so the same album art decodes once rather
  * than once per widget.
  *
- * Keyed by context so a differing [PlatformContext] (tests, previews) still gets
- * a correct loader rather than silently reusing another context's.
+ * Keyed by a lifecycle-stable context ([stableArtworkImageLoaderContext]) so
+ * Android configuration changes do not retain old Activities and their caches.
+ * Non-Android platforms still key by the supplied context for tests and previews.
  */
 private val artworkImageLoaders = mutableMapOf<PlatformContext, ImageLoader>()
 private val artworkImageLoaderLock = ArtworkCacheLock()
 
-internal fun phoebeArtworkImageLoader(context: PlatformContext): ImageLoader =
-    artworkImageLoaderLock.withCacheLock {
-        artworkImageLoaders.getOrPut(context) { buildArtworkImageLoader(context) }
+internal fun phoebeArtworkImageLoader(context: PlatformContext): ImageLoader {
+    val loaderContext = stableArtworkImageLoaderContext(context)
+    return artworkImageLoaderLock.withCacheLock {
+        artworkImageLoaders.getOrPut(loaderContext) { buildArtworkImageLoader(loaderContext) }
     }
+}
 
 @Composable
-private fun rememberPhoebeArtworkImageLoader(context: PlatformContext): ImageLoader =
-    remember(context) { phoebeArtworkImageLoader(context) }
+private fun rememberPhoebeArtworkImageLoader(context: PlatformContext): ImageLoader {
+    val loaderContext = stableArtworkImageLoaderContext(context)
+    return remember(loaderContext) { phoebeArtworkImageLoader(context) }
+}
 
 @OptIn(ExperimentalCoilApi::class)
 private fun buildArtworkImageLoader(context: PlatformContext): ImageLoader =
