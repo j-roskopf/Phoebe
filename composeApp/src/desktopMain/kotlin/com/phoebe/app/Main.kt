@@ -31,6 +31,7 @@ import com.sun.jna.Pointer
 import java.awt.Component
 import java.awt.Desktop
 import java.awt.EventQueue
+import java.awt.GraphicsEnvironment
 import java.awt.Image
 import java.awt.event.HierarchyEvent
 import java.awt.event.HierarchyListener
@@ -52,6 +53,7 @@ private val desktopProcessExitScheduled = AtomicBoolean(false)
 fun main(args: Array<String>) {
     configureDesktopApplicationName()
     configureDesktopApplicationIcon(isDebugBuild())
+    configureSkiaGpuResourceCache()
     configureWindowsDesktopRendering()
     configureSandboxedNativeLibraries()
     if (runDesktopPlaybackSmokeIfRequested(args)) return
@@ -173,6 +175,45 @@ private fun configureDesktopApplicationName() {
     System.setProperty("apple.awt.application.name", displayName)
     System.setProperty("com.apple.mrj.application.apple.menu.about.name", displayName)
 }
+
+/**
+ * Sizes Skia's GPU resource cache from the largest attached display.
+ *
+ * The cache holds every texture and offscreen layer surface the renderer touches
+ * in a frame. Compose nests a layer per `graphicsLayer`/clip, and each one is a
+ * full-window RGBA8 surface — roughly 20 MB on a 3440x1440 screen. When the
+ * budget can't hold one frame's working set, Skia evicts and re-uploads album art
+ * on every frame, which pins a core or more during playback.
+ *
+ * Budgeting ~[SkiaGpuCacheFullScreenLayers] full-screen layers keeps a realistic
+ * frame resident. Respects an explicit `-Dskiko.gpu.resourceCacheLimit` override.
+ */
+private fun configureSkiaGpuResourceCache() {
+    if (System.getProperty("skiko.gpu.resourceCacheLimit") != null) return
+    val limitBytes = runCatching {
+        val screenBytes = GraphicsEnvironment.getLocalGraphicsEnvironment()
+            .screenDevices
+            .maxOf { device ->
+                val config = device.defaultConfiguration
+                val bounds = config.bounds
+                val transform = config.defaultTransform
+                val widthPx = bounds.width * transform.scaleX
+                val heightPx = bounds.height * transform.scaleY
+                widthPx * heightPx * BytesPerPixel
+            }
+        (screenBytes * SkiaGpuCacheFullScreenLayers).toLong()
+    }.getOrDefault(SkiaGpuCacheMinBytes)
+        .coerceIn(SkiaGpuCacheMinBytes, SkiaGpuCacheMaxBytes)
+
+    val limitMb = (limitBytes / (1024L * 1024L)).coerceAtLeast(1L)
+    System.setProperty("skiko.gpu.resourceCacheLimit", "${limitMb}M")
+    PhoebeLog.d("Phoebe") { "skia gpu resource cache limit: ${limitMb}M" }
+}
+
+private const val BytesPerPixel = 4.0
+private const val SkiaGpuCacheFullScreenLayers = 16.0
+private const val SkiaGpuCacheMinBytes = 128L * 1024L * 1024L
+private const val SkiaGpuCacheMaxBytes = 512L * 1024L * 1024L
 
 private fun configureDesktopApplicationIcon(debug: Boolean) {
     if (!isMacOs()) return

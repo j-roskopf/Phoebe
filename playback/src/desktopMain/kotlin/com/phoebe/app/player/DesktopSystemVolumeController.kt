@@ -21,17 +21,32 @@ actual fun createSystemVolumeController(): SystemVolumeController {
 }
 
 /**
- * macOS system volume bridge. Uses `osascript` for both reads and writes:
+ * macOS system volume bridge, backed by CoreAudio:
  *
  *  - reads run every 400 ms so hardware volume keys propagate to the UI
  *  - writes go straight through; subsequent polls reconcile any drift
  *
+ * Reads and writes go through [MacCoreAudioVolume], which is a direct framework
+ * call. `osascript` remains only as a fallback for devices CoreAudio won't report
+ * a software volume for; because that path forks a process, it polls far less
+ * often (see [FALLBACK_POLL_MS]) — hardware key changes just take longer to show.
+ *
  * After a UI-driven write we ignore inbound polls for a short window so a slow
- * AppleScript response can't snap the slider back to a stale value.
+ * response can't snap the slider back to a stale value.
  */
 private class MacSystemVolumeController : SystemVolumeController {
     override val isSupported: Boolean = true
     override val controlsPlayerOutput: Boolean = false
+
+    /**
+     * True when CoreAudio owns volume for this machine, so polling never forks.
+     *
+     * Note this is not "CoreAudio returned a volume". Devices with no software
+     * volume read null through CoreAudio *and* through AppleScript, so falling
+     * back on a null read would fork a process every poll to learn nothing.
+     */
+    private val useCoreAudio: Boolean = MacCoreAudioVolume.isAvailable
+
     private val _volume = MutableStateFlow(readSystemVolume() ?: 0.7f)
     override val volume: StateFlow<Float> = _volume
     private var pollJob: Job? = null
@@ -41,9 +56,10 @@ private class MacSystemVolumeController : SystemVolumeController {
 
     override fun start(scope: CoroutineScope) {
         if (pollJob != null) return
+        val pollIntervalMs = if (useCoreAudio) POLL_MS else FALLBACK_POLL_MS
         pollJob = scope.launch(Dispatchers.IO) {
             while (isActive) {
-                delay(POLL_MS)
+                delay(pollIntervalMs)
                 if (System.currentTimeMillis() - lastWriteAt.get() < IGNORE_POLL_MS) continue
                 val current = readSystemVolume() ?: continue
                 if (kotlin.math.abs(current - _volume.value) > 0.005f) {
@@ -57,6 +73,7 @@ private class MacSystemVolumeController : SystemVolumeController {
         val clamped = value.coerceIn(0f, 1f)
         _volume.value = clamped
         lastWriteAt.set(System.currentTimeMillis())
+        if (MacCoreAudioVolume.writeVolume(clamped)) return
         runCatching {
             val percent = (clamped * 100f).toInt().coerceIn(0, 100)
             ProcessBuilder("osascript", "-e", "set volume output volume $percent")
@@ -66,7 +83,10 @@ private class MacSystemVolumeController : SystemVolumeController {
         }
     }
 
-    private fun readSystemVolume(): Float? = runCatching {
+    private fun readSystemVolume(): Float? =
+        if (useCoreAudio) MacCoreAudioVolume.readVolume() else readSystemVolumeViaAppleScript()
+
+    private fun readSystemVolumeViaAppleScript(): Float? = runCatching {
         val process = ProcessBuilder("osascript", "-e", "output volume of (get volume settings)")
             .redirectErrorStream(true)
             .start()
@@ -77,6 +97,7 @@ private class MacSystemVolumeController : SystemVolumeController {
 
     companion object {
         const val POLL_MS = 400L
+        const val FALLBACK_POLL_MS = 2_000L
         const val IGNORE_POLL_MS = 600L
     }
 }

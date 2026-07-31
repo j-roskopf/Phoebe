@@ -2225,7 +2225,18 @@ private fun PhoebeRootStateHolder(
                 }
                 }
             } else {
-                val audioAnalysis by state.audioAnalysis.collectAsState()
+                // Analysis frames arrive ~20x/sec and rebuild PlaybackUiState on every
+                // one, so only collect them while the visualizer route is actually
+                // showing a visualizer. Mirrors the mobile gate in PhoebePlayerOverlay.
+                val collectAudioAnalysis = screen == AppScreen.Player &&
+                    appSettings.nowPlayingVisualizerPreset != NowPlayingVisualizerPreset.Artwork
+                val audioAnalysis by produceState(AudioAnalysisFrame.Empty, collectAudioAnalysis) {
+                    if (collectAudioAnalysis) {
+                        state.audioAnalysis.collect { value = it }
+                    } else {
+                        value = AudioAnalysisFrame.Empty
+                    }
+                }
                 DesktopPlayer(
                     playerFlow = state.player,
                     shellState = DesktopShellState(

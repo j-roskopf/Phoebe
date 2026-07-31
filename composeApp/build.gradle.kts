@@ -427,7 +427,9 @@ compose.desktop {
             "-XX:MinHeapFreeRatio=5",
             "-XX:MaxHeapFreeRatio=20",
             "-XX:+UseStringDeduplication",
-            "-Dskiko.gpu.resourceCacheLimit=64M",
+            // Skia's GPU resource cache limit is sized at runtime from the display
+            // (see configureSkiaGpuResourceCache in Main.kt) because a fixed budget
+            // that fits a 1080p screen thrashes on a large or HiDPI one.
         ) + aarch64C1OsrWorkaroundJvmArgs + windowsSkikoJvmArgs()
         if (System.getProperty("os.name").lowercase().contains("mac")) {
             val mediaKeysDylibPath =
