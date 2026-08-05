@@ -304,13 +304,21 @@ fun rememberTimelineBufferedPositionMs(
     }
     LaunchedEffect(track?.id, remoteDurationMs, isPlaying, isBuffering) {
         val duration = remoteDurationMs ?: return@LaunchedEffect
-        if (!isPlaying) return@LaunchedEffect
+        if (!isPlaying) {
+            estimatedRemoteBufferedPositionMs = max(positionMs, bufferedPositionMs)
+            return@LaunchedEffect
+        }
+        if (!isBuffering) {
+            estimatedRemoteBufferedPositionMs = max(positionMs, bufferedPositionMs).coerceAtMost(duration)
+            return@LaunchedEffect
+        }
         while (estimatedRemoteBufferedPositionMs < duration) {
             delay(TimelineBufferFallbackTickMs)
             val platformFloor = max(latestPositionMs, latestBufferedPositionMs)
             estimatedRemoteBufferedPositionMs = max(estimatedRemoteBufferedPositionMs, platformFloor)
                 .plus(TimelineBufferFallbackAdvanceMs)
                 .coerceAtMost(duration)
+            if (latestBufferedPositionMs > latestPositionMs + TimelineBufferFallbackAdvanceMs) break
         }
     }
     return remember(remoteDurationMs, bufferedPositionMs, estimatedRemoteBufferedPositionMs) {

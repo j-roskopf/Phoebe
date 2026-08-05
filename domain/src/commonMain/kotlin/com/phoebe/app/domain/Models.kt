@@ -2108,6 +2108,14 @@ data class PlayerTransportState(
     val volume: Float = 1f,
 )
 
+/** Progress fields for now-playing UI without queue-sized player updates. */
+data class PlayerTimelineState(
+    val positionMs: Long = 0L,
+    val bufferedPositionMs: Long = 0L,
+    val durationMs: Long = 0L,
+    val currentTrackId: String? = null,
+)
+
 /** Queue snapshot for up-next / skip UI; ignores position-only player updates. */
 data class PlayerQueueSnapshot(
     val queue: List<Track> = emptyList(),

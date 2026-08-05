@@ -179,6 +179,75 @@ class WebAudioPlayerLifecycleTest {
     }
 
     @Test
+    fun queuedWebAudioAdvancesWhenCanplayArrivesAfterInitialPlayAttempt() = runTest {
+        installMockWebAudioElement(mode = "delayed-canplay", durationSeconds = 0.2)
+        val diagnostics = RecordingPlaybackDiagnostics()
+        val player = createWebAudioPlayerForTests(diagnostics)
+        try {
+            val first = playbackTrack(
+                id = "web-delayed-canplay-first",
+                streamUrl = "https://music.example.test/delayed-canplay-first.mp3",
+                durationMs = 200L,
+            )
+            val second = playbackTrack(
+                id = "web-delayed-canplay-second",
+                streamUrl = "https://music.example.test/delayed-canplay-second.mp3",
+                durationMs = 200L,
+            )
+
+            player.play(listOf(first, second), 0)
+
+            assertTrue(
+                waitUntil(timeoutMs = 3_000L) {
+                    player.state.value.currentTrack?.id == second.id
+                },
+                "Delayed canplay should still advance to the next track; state=${player.state.value} " +
+                    "errors=${diagnostics.errors}",
+            )
+            assertTrue(
+                diagnostics.errors.isEmpty(),
+                "Delayed canplay queue advance should not surface playback errors; errors=${diagnostics.errors}",
+            )
+        } finally {
+            player.stopPlayback()
+            restoreMockWebAudioElement()
+        }
+    }
+
+    @Test
+    fun clearedSourceErrorDuringRemoteTrackTransitionDoesNotStopQueue() = runTest {
+        installMockWebAudioElement(mode = "clear-src-error-on-empty-load", durationSeconds = 0.2)
+        val diagnostics = RecordingPlaybackDiagnostics()
+        val player = createWebAudioPlayerForTests(diagnostics)
+        try {
+            val tracks = (1..4).map { index ->
+                playbackTrack(
+                    id = "web-clear-src-$index",
+                    streamUrl = "https://music.example.test/clear-src-$index.mp3",
+                    durationMs = 200L,
+                )
+            }
+
+            player.play(tracks, 0)
+
+            assertTrue(
+                waitUntil(timeoutMs = 4_000L) {
+                    player.state.value.currentTrack?.id == tracks.last().id
+                },
+                "Queue should advance past cleared-source errors; state=${player.state.value} " +
+                    "errors=${diagnostics.errors}",
+            )
+            assertTrue(
+                diagnostics.errors.isEmpty(),
+                "Cleared-source transition errors should be ignored; errors=${diagnostics.errors}",
+            )
+        } finally {
+            player.stopPlayback()
+            restoreMockWebAudioElement()
+        }
+    }
+
+    @Test
     fun queuedWebAudioAdvancesThroughSeveralTracksWithoutFailure() = runTest {
         installMockWebAudioElement(mode = "complete", durationSeconds = 0.2)
         val diagnostics = RecordingPlaybackDiagnostics()
@@ -237,6 +306,42 @@ class WebAudioPlayerLifecycleTest {
                 },
                 "Web audio should publish the completed first-track position before advancing; " +
                     "state=${player.state.value} progress=${diagnostics.progress}",
+            )
+        } finally {
+            player.stopPlayback()
+            restoreMockWebAudioElement()
+        }
+    }
+
+    @Test
+    fun queuedWebAudioAdvancesWhenOnendedNeverFires() = runTest {
+        installMockWebAudioElement(mode = "end-without-onended", durationSeconds = 0.2)
+        val diagnostics = RecordingPlaybackDiagnostics()
+        val player = createWebAudioPlayerForTests(diagnostics)
+        try {
+            val first = playbackTrack(
+                id = "web-no-onended-first",
+                streamUrl = "https://music.example.test/no-onended-first.mp3",
+                durationMs = 200L,
+            )
+            val second = playbackTrack(
+                id = "web-no-onended-second",
+                streamUrl = "https://music.example.test/no-onended-second.mp3",
+                durationMs = 200L,
+            )
+
+            player.play(listOf(first, second), 0)
+
+            assertTrue(
+                waitUntil(timeoutMs = 3_000L) {
+                    player.state.value.currentTrack?.id == second.id
+                },
+                "Position poll should advance when onended never fires; state=${player.state.value} " +
+                    "errors=${diagnostics.errors}",
+            )
+            assertTrue(
+                diagnostics.errors.isEmpty(),
+                "Missing onended should not surface playback errors; errors=${diagnostics.errors}",
             )
         } finally {
             player.stopPlayback()
@@ -481,7 +586,8 @@ class WebAudioPlayerLifecycleTest {
                     duration: Number(durationSeconds) || 0.25,
                     paused: true,
                     src: "",
-                    timer: null
+                    timer: null,
+                    playAttempts: 0,
                 };
                 stateByElement.set(audio, state);
             }
@@ -509,6 +615,12 @@ class WebAudioPlayerLifecycleTest {
             }
         });
         define("paused", { get() { return stateFor(this).paused; } });
+        define("ended", {
+            get() {
+                const state = stateFor(this);
+                return state.duration > 0 && state.currentTime >= state.duration;
+            }
+        });
         define("src", {
             get() { return stateFor(this).src; },
             set(value) { stateFor(this).src = String(value || ""); }
@@ -527,19 +639,35 @@ class WebAudioPlayerLifecycleTest {
         proto.load = function() {
             const audio = this;
             const state = stateFor(audio);
+            if (mode === "clear-src-error-on-empty-load" && !state.src) {
+                setTimeout(() => {
+                    try { audio.error = { code: 4 }; } catch (_) {}
+                    call(audio, audio.onerror, "error");
+                }, 0);
+                return;
+            }
             state.currentTime = 0;
-            setTimeout(() => {
+            const emitReady = () => {
                 call(audio, audio.onloadedmetadata, "loadedmetadata");
                 call(audio, audio.ondurationchange, "durationchange");
                 call(audio, audio.onloadeddata, "loadeddata");
                 call(audio, audio.oncanplay, "canplay");
                 call(audio, audio.oncanplaythrough, "canplaythrough");
-            }, 0);
+            };
+            if (mode === "delayed-canplay") {
+                setTimeout(emitReady, 30);
+            } else {
+                setTimeout(emitReady, 0);
+            }
         };
         proto.play = function() {
             const audio = this;
             const state = stateFor(audio);
             const playCall = ++playCalls;
+            state.playAttempts = (state.playAttempts || 0) + 1;
+            if (mode === "delayed-canplay" && state.playAttempts === 1) {
+                return Promise.resolve();
+            }
             if (mode === "reject") {
                 return Promise.reject(new Error("Mock play rejected"));
             }
@@ -582,7 +710,9 @@ class WebAudioPlayerLifecycleTest {
                     timers.delete(state.timer);
                     state.timer = null;
                     state.paused = true;
-                    call(audio, audio.onended, "ended");
+                    if (mode !== "end-without-onended") {
+                        call(audio, audio.onended, "ended");
+                    }
                 }
             }, 20);
             timers.add(state.timer);

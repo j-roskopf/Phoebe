@@ -80,6 +80,9 @@ interface AudioPlayer {
     fun setSystemVolumeScale(scale: Float) = Unit
 
     fun close() = Unit
+
+    /** Browser tab visibility; web uses this to resume queue playback after backgrounding. */
+    fun onPageVisibilityChanged(visible: Boolean) = Unit
 }
 
 private val EmptyAudioOutputDevicesState = MutableStateFlow<List<AudioOutputDevice>>(emptyList())

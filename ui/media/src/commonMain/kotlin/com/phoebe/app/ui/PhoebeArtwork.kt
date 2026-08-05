@@ -436,6 +436,8 @@ object RemoteArtworkCache {
     private const val DefaultLoadPermits = 8
     private const val DownloadModeMaxEntries = 32
     private const val DownloadModeMaxEstimatedBytes = 4L * 1024L * 1024L
+    private const val PlaybackModeMaxEntries = 4
+    private const val PlaybackModeMaxEstimatedBytes = 1L * 1024L * 1024L
 
     private data class CacheKey(
         val url: String,
@@ -492,6 +494,19 @@ object RemoteArtworkCache {
             if (enabled) {
                 maxEntries = DownloadModeMaxEntries
                 maxEstimatedBytes = minOf(platformMaxEstimatedBytes, DownloadModeMaxEstimatedBytes)
+            } else {
+                maxEntries = DefaultMaxEntries
+                maxEstimatedBytes = platformMaxEstimatedBytes
+            }
+            trimToLimitsLocked()
+        }
+    }
+
+    fun configurePlaybackMemoryMode(enabled: Boolean) {
+        withCacheLock {
+            if (enabled) {
+                maxEntries = PlaybackModeMaxEntries
+                maxEstimatedBytes = minOf(platformMaxEstimatedBytes, PlaybackModeMaxEstimatedBytes)
             } else {
                 maxEntries = DefaultMaxEntries
                 maxEstimatedBytes = platformMaxEstimatedBytes

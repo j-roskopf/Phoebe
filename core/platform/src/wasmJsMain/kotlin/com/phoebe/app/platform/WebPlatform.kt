@@ -176,11 +176,19 @@ actual fun currentTimeMs(): Long = jsDateNow().toLong()
 
 actual fun prefersReducedArtworkEffects(): Boolean = true
 
-actual fun remoteArtworkCacheMaxEstimatedBytes(): Long = 6L * 1024L * 1024L
+actual fun remoteArtworkCacheMaxEstimatedBytes(): Long = 8L * 1024L * 1024L
 
-actual fun remoteArtworkLoadParallelism(): Int = 8
+actual fun remoteArtworkLoadParallelism(): Int = 4
 
 actual fun catalogTrackIndexParallelism(): Int = 1
+
+private var webPlaybackMemoryPressureActive = false
+
+actual fun configurePlaybackMemoryPressure(active: Boolean) {
+    webPlaybackMemoryPressureActive = active
+}
+
+actual fun shouldDeferCatalogMemoryUpdates(): Boolean = webPlaybackMemoryPressureActive
 
 actual fun downloadParallelism(): Int = 3
 

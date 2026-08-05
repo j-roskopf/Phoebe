@@ -292,6 +292,10 @@ actual fun remoteArtworkLoadParallelism(): Int = 8
 
 actual fun catalogTrackIndexParallelism(): Int = 6
 
+actual fun configurePlaybackMemoryPressure(active: Boolean) = Unit
+
+actual fun shouldDeferCatalogMemoryUpdates(): Boolean = false
+
 actual fun downloadParallelism(): Int = 6
 
 actual fun schedulePlatformDownloadRunner() = Unit

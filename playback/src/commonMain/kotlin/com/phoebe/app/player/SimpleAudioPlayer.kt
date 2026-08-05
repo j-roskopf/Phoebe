@@ -508,8 +508,8 @@ abstract class SimpleAudioPlayer(
         } else {
             stopProgressTicker()
         }
-        maybeStartCrossfade(generation)
-        maybeStartGapless(generation)
+        maybeStartCrossfadeAtPosition(generation, positionMs)
+        maybeStartGaplessAtPosition(generation, positionMs)
     }
 
     protected fun publishAudioAnalysis(frame: AudioAnalysisFrame) {
@@ -750,8 +750,8 @@ abstract class SimpleAudioPlayer(
                 if (!current.isPlaying) break
                 val nextPosition = (current.positionMs + 1000L).coerceAtMost(current.durationMs)
                 mutableState.value = current.copy(positionMs = nextPosition)
-                maybeStartCrossfade(activePlayGeneration)
-                maybeStartGapless(activePlayGeneration)
+                maybeStartCrossfadeAtPosition(activePlayGeneration, nextPosition)
+                maybeStartGaplessAtPosition(activePlayGeneration, nextPosition)
                 if (nextPosition >= current.durationMs && current.durationMs > 0L) break
             }
         }
@@ -776,6 +776,10 @@ abstract class SimpleAudioPlayer(
     }
 
     private fun markPlaybackStartupTimedOut(generation: Int) {
+        onPlaybackStartupTimedOut(generation)
+    }
+
+    protected open fun onPlaybackStartupTimedOut(generation: Int) {
         if (!isPlayRequestCurrent(generation)) return
         stopPlaybackStartupWatchdog()
         val previousErrorSerial = mutableState.value.playbackErrorSerial
@@ -799,14 +803,14 @@ abstract class SimpleAudioPlayer(
     protected open val playbackStartupTimeoutMs: Long
         get() = PlaybackStartupTimeoutMs
 
-    private fun maybeStartCrossfade(generation: Int) {
+    protected fun maybeStartCrossfadeAtPosition(generation: Int, positionMs: Long) {
         val duration = crossfadeDurationMs
         if (duration <= 0L || !isPlayRequestCurrent(generation)) return
         val current = mutableState.value
         if (!current.isPlaying || current.durationMs <= 0L || current.currentIndex !in current.queue.indices) return
         if (manualSeekCrossfadeSuppression?.matches(generation, current.currentTrack?.id) == true) return
         if (current.currentIndex >= current.queue.lastIndex && current.repeat != RepeatMode.All) return
-        val remaining = current.durationMs - current.positionMs
+        val remaining = current.durationMs - positionMs
         if (remaining > duration) return
         val target = when (current.repeat) {
             RepeatMode.One -> current.currentIndex
@@ -836,7 +840,7 @@ abstract class SimpleAudioPlayer(
         return false
     }
 
-    private fun maybeStartGapless(generation: Int) {
+    protected fun maybeStartGaplessAtPosition(generation: Int, positionMs: Long) {
         if (!isGaplessConfigured || !isPlayRequestCurrent(generation)) return
         val current = mutableState.value
         if (!current.isPlaying ||
@@ -846,7 +850,7 @@ abstract class SimpleAudioPlayer(
         ) {
             return
         }
-        val remainingMs = current.durationMs - current.positionMs
+        val remainingMs = current.durationMs - positionMs
         if (remainingMs > GaplessPrepareWindowMs) return
         val targetIndex = gaplessTargetIndex(current) ?: return
         val targetTrack = current.queue.getOrNull(targetIndex)?.takeIf { it.isGaplessCandidate() } ?: return

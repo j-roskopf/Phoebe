@@ -31,6 +31,7 @@ import com.phoebe.app.domain.PlayHistoryKind
 import com.phoebe.app.domain.PlaybackQueueOrigin
 import com.phoebe.app.domain.PlayerQueueSnapshot
 import com.phoebe.app.domain.PlayerState
+import com.phoebe.app.domain.PlayerTimelineState
 import com.phoebe.app.domain.PlayerTransportState
 import com.phoebe.app.domain.ShellPlaybackState
 import com.phoebe.app.domain.PlexPin
@@ -85,6 +86,7 @@ import com.phoebe.app.domain.RecentSearchItem
 import com.phoebe.app.platform.MemoryPressureLevel
 import com.phoebe.app.platform.PhoebeAppLifecycle
 import com.phoebe.app.platform.PhoebeLog
+import com.phoebe.app.platform.shouldDeferCatalogMemoryUpdates
 import com.phoebe.app.platform.currentNetworkMeteringStatus
 import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.platform.defaultDownloadWifiOnly
@@ -210,6 +212,26 @@ class AppState(
                 shuffle = player.value.shuffle,
                 repeat = player.value.repeat,
                 volume = player.value.volume,
+            ),
+        )
+    val playerTimeline: StateFlow<PlayerTimelineState> = player
+        .map { playback ->
+            PlayerTimelineState(
+                positionMs = playback.positionMs,
+                bufferedPositionMs = playback.bufferedPositionMs,
+                durationMs = playback.durationMs,
+                currentTrackId = playback.currentTrack?.id,
+            )
+        }
+        .distinctUntilChanged()
+        .stateIn(
+            playbackScope,
+            SharingStarted.Eagerly,
+            PlayerTimelineState(
+                positionMs = player.value.positionMs,
+                bufferedPositionMs = player.value.bufferedPositionMs,
+                durationMs = player.value.durationMs,
+                currentTrackId = player.value.currentTrack?.id,
             ),
         )
     val playerQueue: StateFlow<PlayerQueueSnapshot> = combine(
@@ -1632,6 +1654,7 @@ class AppState(
     }
 
     private fun shouldDeferBackgroundPlayHistorySync(): Boolean {
+        if (shouldDeferCatalogMemoryUpdates()) return true
         if (PhoebeAppLifecycle.isUiVisible) return false
         return dependencies.audioPlayer.state.value.isPlaying
     }
@@ -1689,6 +1712,10 @@ class AppState(
     private fun cancelPlexPlayCountRefresh() {
         plexPlayCountRefreshJob?.cancel()
         plexPlayCountRefreshJob = null
+    }
+
+    internal fun onPageVisibilityChanged(visible: Boolean) {
+        dependencies.audioPlayer.onPageVisibilityChanged(visible)
     }
 
     internal fun onMemoryPressure(level: MemoryPressureLevel) {

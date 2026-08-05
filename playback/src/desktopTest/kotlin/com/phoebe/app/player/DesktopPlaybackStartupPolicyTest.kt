@@ -252,7 +252,7 @@ class DesktopPlaybackStartupPolicyTest {
                 filepath = "/music/Artist/Album/02 Track.m4a",
             )
             assertEquals(
-                "https://plex.example:32400/music/:/transcode/universal/start.mp3?path=%2Flibrary%2Fmetadata%2F124&mediaIndex=0&partIndex=0&protocol=http&format=mp3&audioCodec=mp3&directPlay=0&directStream=0&X-Plex-Token=token",
+                "https://plex.example:32400/music/:/transcode/universal/start.mp3?path=%2Flibrary%2Fmetadata%2F124&mediaIndex=0&partIndex=0&protocol=https&format=mp3&audioCodec=mp3&directPlay=0&directStream=0&X-Plex-Token=token",
                 DesktopSandboxPlayback.playbackStreamUrlForTrack(track),
             )
         } finally {

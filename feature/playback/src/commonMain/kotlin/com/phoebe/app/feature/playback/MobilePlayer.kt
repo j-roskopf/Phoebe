@@ -771,7 +771,7 @@ fun MobilePlayer(
                         FlippableSongArtwork(
                             track = t,
                             modifier = Modifier.fillMaxSize(),
-                            maxDecodeDimension = HeroArtworkMaxDecodeDimension,
+                            maxDecodeDimension = playerHeroArtworkMaxDecodeDimension(),
                             shape = artworkContentShape,
                             forceSquare = false,
                         ) {

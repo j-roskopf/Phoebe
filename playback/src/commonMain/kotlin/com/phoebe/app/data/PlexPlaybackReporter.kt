@@ -24,6 +24,7 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChangedBy
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -123,7 +124,18 @@ class PlexPlaybackReporter(
         }
 
         try {
-            combine(audioPlayer.state, session) { player, sess -> player to sess }
+            combine(
+                audioPlayer.state.distinctUntilChangedBy { player ->
+                    PlaybackReporterKey(
+                        trackId = player.currentTrack?.id,
+                        isPlaying = player.isPlaying,
+                        isBuffering = player.isBuffering,
+                        queueSize = player.queue.size,
+                        currentIndex = player.currentIndex,
+                    )
+                },
+                session,
+            ) { player, sess -> player to sess }
                 .collect { (player, sess) ->
                     if (sess != null) lastSession = sess
                     val track = player.currentTrack
@@ -383,3 +395,11 @@ class PlexPlaybackReporter(
         }
     }
 }
+
+private data class PlaybackReporterKey(
+    val trackId: String?,
+    val isPlaying: Boolean,
+    val isBuffering: Boolean,
+    val queueSize: Int,
+    val currentIndex: Int,
+)

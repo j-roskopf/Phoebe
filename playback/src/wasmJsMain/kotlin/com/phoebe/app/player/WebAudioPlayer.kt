@@ -1,6 +1,7 @@
 package com.phoebe.app.player
 
 import com.phoebe.app.domain.EqualizerProfile
+import com.phoebe.app.domain.RepeatMode
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.resolveWebDownloadObjectUrl
 import com.phoebe.app.sources.resolveWebLocalAudioUri
@@ -53,23 +54,60 @@ private class WebAudioPlayer(
     private var webGaplessHotStartRequested = false
     private var webGaplessHotStarted = false
     private var webGaplessHotStartJob: Job? = null
+    private var directStreamFallbackUri: String? = null
+    private var lastSyncedPositionMs = -1L
+    private var lastSyncedPlaying = false
+    private var lastSyncedBuffering = false
+    private var webPositionPollJob: Job? = null
+    private var remoteTrackLoadJob: Job? = null
+    private var remoteFreshAudioRetryAttempted = false
+    private var webAdvanceAfterEndGeneration = -1
 
     private var audio = createAudioElement(useCors = true)
 
+    override fun onPageVisibilityChanged(visible: Boolean) {
+        if (!visible) return
+        val generation = activePlayGeneration
+        if (!playWhenReady || !isPlayRequestCurrent(generation)) return
+        maybeAdvanceWhenWebAudioEnded(generation)
+        if (audio.paused && !isWebAudioEnded(audio) && !isWebAudioAtEnd(audio)) {
+            playWebAudio(generation)
+        } else if (!webPositionPollJobActive()) {
+            startWebPositionPoll(generation, audio)
+        }
+    }
+
+    override fun onPlaybackStartupTimedOut(generation: Int) {
+        if (isPlayRequestCurrent(generation) && state.value.isBuffering &&
+            shouldSkipToNextWebTrackAfterFailure(generation)
+        ) {
+            requestAdvanceAfterWebTrackEnded(generation)
+            return
+        }
+        super.onPlaybackStartupTimedOut(generation)
+    }
+
     override fun stopCurrentPlaybackImmediately() {
+        stopWebPositionPoll()
+        remoteTrackLoadJob?.cancel()
+        remoteTrackLoadJob = null
         retryJob?.cancel()
         stopWebCrossfade()
         stopWebGapless()
         stopWebAudioAnalysis(audio)
+        clearWebAudioEventHandlers(audio)
         cancelWebAudioPrefetch()
         resetWebAudioPrefetch()
         clearPendingReloadRestore()
+        releaseWebAudioMediaBuffers(audio)
         audio.pause()
     }
 
     override fun playTrack(track: Track) {
+        val directStreamUri = track.streamUrl.takeIf { it.isNotBlank() }
         val localUri = track.localUri?.takeIf { it.isNotBlank() }
-        val streamUri = track.streamUrl.takeIf { it.isNotBlank() }
+        val streamUri = track.webPlaybackStreamUrl().takeIf { it.isNotBlank() }
+        directStreamFallbackUri = directStreamUri?.takeIf { streamUri != null && it != streamUri }
         playUri(
             uri = localUri ?: streamUri.orEmpty(),
             fallbackUri = streamUri?.takeIf { localUri?.startsWith("web-download://") == true },
@@ -78,6 +116,12 @@ private class WebAudioPlayer(
 
     override fun playUri(uri: String) {
         playUri(uri, fallbackUri = null)
+    }
+
+    private fun webPlaybackUriForTrack(track: Track): String {
+        val localUri = track.localUri?.takeIf { it.isNotBlank() }
+        if (localUri != null) return localUri
+        return track.webPlaybackStreamUrl().takeIf { it.isNotBlank() }.orEmpty()
     }
 
     private fun playUri(uri: String, fallbackUri: String?) {
@@ -106,6 +150,9 @@ private class WebAudioPlayer(
 
     private fun playResolvedUri(playbackUri: String) {
         val generation = activePlayGeneration
+        stopWebPositionPoll()
+        remoteTrackLoadJob?.cancel()
+        remoteTrackLoadJob = null
         diagnostics.engineSelected(PlaybackEnginePath.WebAudioElement)
         currentUri = playbackUri
         retryGeneration = generation
@@ -113,15 +160,23 @@ private class WebAudioPlayer(
         stopWebCrossfade()
         stopWebGapless()
         corsFallbackAttempted = false
+        remoteFreshAudioRetryAttempted = false
+        webAdvanceAfterEndGeneration = -1
         equalizerUnavailableForCurrentStream = false
         equalizerUnavailableNoticeShown = false
         retryJob?.cancel()
         cancelWebAudioPrefetch()
         resetWebAudioPrefetch(generation)
+        lastSyncedPositionMs = -1L
+        lastSyncedPlaying = false
+        lastSyncedBuffering = false
         stopWebAudioAnalysis(audio)
+        clearWebAudioEventHandlers(audio)
         teardownWebAudioRouting(audio)
         releaseWebAudioMediaBuffers(audio)
         sourcePreparedForWebEqualizer = false
+        // Reuse the same <audio> element for remote streams. Creating a fresh element per track
+        // lets Chrome retain decoded media buffers and climbs renderer memory during shuffle.
         val needsFreshAudioElement = GraphicEqualizerProcessor.isActive(equalizerProfile.normalized()) ||
             isWebEqualizerAttached(audio)
         if (needsFreshAudioElement) {
@@ -138,14 +193,27 @@ private class WebAudioPlayer(
             audioUsesCors = true
             disposeWebAudioElement(previousAudio)
         }
-        prepareAudioElementForCurrentEqualizer()
-        setWebAudioCurrentTime(audio, 0.0)
-        installAudioEventHandlers(generation)
-        audio.src = playbackUri
-        audio.load()
-        applyCurrentEqualizer()
-        if (playWhenReady) {
-            playWebAudio(generation)
+
+        fun startPlayback() {
+            if (!isPlayRequestCurrent(generation) || currentUri != playbackUri) return
+            prepareAudioElementForCurrentEqualizer()
+            setWebAudioCurrentTime(audio, 0.0)
+            installAudioEventHandlers(generation)
+            audio.src = playbackUri
+            audio.load()
+            applyCurrentEqualizer()
+            if (playWhenReady) {
+                playWebAudio(generation)
+            }
+        }
+
+        if (playbackUri.isRemoteWebAudioUri()) {
+            remoteTrackLoadJob = scope.launch {
+                delay(WebRemoteTrackLoadDeferMs)
+                startPlayback()
+            }
+        } else {
+            startPlayback()
         }
     }
 
@@ -203,9 +271,11 @@ private class WebAudioPlayer(
         generation: Int,
     ): Boolean {
         if (targetIndex !in queue.indices || audio.paused) return false
-        val rawUri = track.localUri?.takeIf { it.isNotBlank() } ?: track.streamUrl.takeIf { it.isNotBlank() } ?: return false
+        val rawUri = webPlaybackUriForTrack(track).takeIf { it.isNotBlank() } ?: return false
         if (rawUri.startsWith("web-download://")) return false
         val playbackUri = resolveWebLocalAudioUri(rawUri)
+        // Preloading a second remote stream doubles Chrome media memory on web.
+        if (playbackUri.isRemoteWebAudioUri()) return false
         stopWebGapless()
         val prepared = createAudioElement(useCors = audioUsesCors, preload = webAudioPreloadForUri(playbackUri))
         webGaplessAudio = prepared
@@ -354,7 +424,7 @@ private class WebAudioPlayer(
         onResolved: (String) -> Unit,
     ): Boolean {
         val localUri = track.localUri?.takeIf { it.isNotBlank() }
-        val streamUri = track.streamUrl.takeIf { it.isNotBlank() }
+        val streamUri = track.webPlaybackStreamUrl().takeIf { it.isNotBlank() }
         val uri = localUri ?: streamUri.orEmpty()
         if (uri.isBlank()) return false
         if (uri.startsWith("web-download://")) {
@@ -654,6 +724,12 @@ private class WebAudioPlayer(
         applyWebEqualizer(audio, webEqualizerPayload(effectiveProfile))
     }
 
+    private fun maybeResumeWebPlaybackAfterLoad(generation: Int, eventAudio: HTMLAudioElement) {
+        if (!isPlayRequestCurrent(generation) || audio !== eventAudio || !playWhenReady) return
+        if (!eventAudio.paused || isWebAudioEnded(eventAudio)) return
+        playWebAudio(generation)
+    }
+
     private fun installAudioEventHandlers(generation: Int) {
         val eventAudio = audio
 
@@ -663,11 +739,13 @@ private class WebAudioPlayer(
         eventAudio.onloadedmetadata = {
             if (isCurrentAudioEvent()) {
                 restorePendingReloadPosition(generation)
+                maybeResumeWebPlaybackAfterLoad(generation, eventAudio)
                 syncFromAudio(generation, isBuffering = eventAudio.paused && playWhenReady)
             }
         }
         eventAudio.onloadeddata = {
             if (isCurrentAudioEvent()) {
+                maybeResumeWebPlaybackAfterLoad(generation, eventAudio)
                 syncFromAudio(generation, isBuffering = eventAudio.paused && playWhenReady)
             }
         }
@@ -681,6 +759,7 @@ private class WebAudioPlayer(
                 retryCount = 0
                 startWebAudioPrefetchIfNeeded(currentUri, generation)
                 syncFromAudio(generation, isBuffering = false)
+                startWebPositionPoll(generation, eventAudio)
                 diagnostics.platformPlaying(
                     PlaybackEnginePath.WebAudioElement,
                     (eventAudio.currentTime * 1000.0).toLong().coerceAtLeast(0L),
@@ -694,6 +773,9 @@ private class WebAudioPlayer(
         }
         eventAudio.onpause = {
             if (isCurrentAudioEvent()) {
+                if (!playWhenReady) {
+                    stopWebPositionPoll()
+                }
                 syncFromAudio(generation, isBuffering = false)
             }
         }
@@ -711,41 +793,47 @@ private class WebAudioPlayer(
         eventAudio.oncanplay = {
             if (isCurrentAudioEvent()) {
                 restorePendingReloadPosition(generation)
+                maybeResumeWebPlaybackAfterLoad(generation, eventAudio)
                 syncFromAudio(generation, isBuffering = eventAudio.paused && playWhenReady)
             }
         }
         eventAudio.oncanplaythrough = {
             if (isCurrentAudioEvent()) {
+                maybeResumeWebPlaybackAfterLoad(generation, eventAudio)
                 syncFromAudio(generation, isBuffering = eventAudio.paused && playWhenReady)
             }
         }
-        installWebAudioProgressHandler(eventAudio) {
-            if (isCurrentAudioEvent()) {
-                syncFromAudio(generation, isBuffering = eventAudio.paused && playWhenReady)
+        if (currentUri?.isRemoteWebAudioUri() != true) {
+            installWebAudioProgressHandler(eventAudio) {
+                if (isCurrentAudioEvent()) {
+                    syncFromAudio(generation, isBuffering = eventAudio.paused && playWhenReady)
+                }
             }
+        } else {
+            eventAudio.onprogress = null
         }
         eventAudio.onsuspend = {
             if (isCurrentAudioEvent()) {
                 syncFromAudio(generation, isBuffering = eventAudio.paused && playWhenReady)
             }
         }
-        eventAudio.ontimeupdate = {
-            if (isCurrentAudioEvent()) {
-                syncFromAudio(generation, isBuffering = false)
-            }
-        }
+        eventAudio.ontimeupdate = null
         eventAudio.onended = {
             if (isCurrentAudioEvent()) {
-                syncEndedPositionFromAudio(generation)
-                advanceAfterPlatformTrackEnded(generation)
+                if (webCrossfadeGeneration != generation) {
+                    requestAdvanceAfterWebTrackEnded(generation)
+                }
             }
         }
         eventAudio.onerror = { _, _, _, _, _ ->
             if (isCurrentAudioEvent()) {
                 val message = webAudioErrorMessage(eventAudio)
-                if (!shouldIgnoreBrowserPlaybackFailure(eventAudio, message)) {
+                if (!shouldIgnoreWebAudioLoadError(eventAudio, message)) {
                     clearPendingReloadRestore()
-                    if (!retryWithoutCors(generation)) {
+                    if (!retryWithFreshRemoteAudioElement(generation, message) &&
+                        !retryDirectStreamAfterTranscodeFailure(generation, message) &&
+                        !retryWithoutCors(generation)
+                    ) {
                         diagnostics.playbackError(PlaybackEnginePath.WebAudioElement, message)
                         scheduleRetry(generation, reload = true)
                     }
@@ -779,6 +867,40 @@ private class WebAudioPlayer(
     private fun clearPendingReloadRestore() {
         pendingSeekAfterLoadSeconds = null
         pendingPlayAfterLoad = false
+    }
+
+    private fun retryWithFreshRemoteAudioElement(generation: Int, message: String): Boolean {
+        val uri = currentUri ?: return false
+        if (!isPlayRequestCurrent(generation) ||
+            remoteFreshAudioRetryAttempted ||
+            !message.isUnsupportedSourceFailure() ||
+            !uri.isRemoteWebAudioUri()
+        ) {
+            return false
+        }
+        remoteFreshAudioRetryAttempted = true
+        val previousAudio = audio
+        audio = createAudioElement(useCors = audioUsesCors, preload = webAudioPreloadForUri(uri))
+        disposeWebAudioElement(previousAudio)
+        audio.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+        prepareAudioElementForCurrentEqualizer()
+        setWebAudioCurrentTime(audio, 0.0)
+        installAudioEventHandlers(generation)
+        audio.src = uri
+        audio.load()
+        applyCurrentEqualizer()
+        if (playWhenReady) {
+            playWebAudio(generation)
+        }
+        return true
+    }
+
+    private fun retryDirectStreamAfterTranscodeFailure(generation: Int, message: String): Boolean {
+        val fallbackUri = directStreamFallbackUri ?: return false
+        if (!isPlayRequestCurrent(generation) || !message.isWebTranscodePlaybackFailure()) return false
+        directStreamFallbackUri = null
+        playResolvedUri(resolveWebLocalAudioUri(fallbackUri))
+        return true
     }
 
     private fun retryWithoutCors(generation: Int): Boolean {
@@ -829,8 +951,23 @@ private class WebAudioPlayer(
             browserDurationSeconds = audio.duration,
         )
         val positionMs = (audio.currentTime * 1000.0).toLong().coerceAtLeast(0L)
+        maybeStartCrossfadeAtPosition(generation, positionMs)
+        maybeStartGaplessAtPosition(generation, positionMs)
         maybeHotStartWebGapless(generation, positionMs, durationMs)
         maybeCommitWebGaplessBoundary(generation, positionMs, durationMs)
+        val isPlaying = !audio.paused && !isBuffering
+        val positionDeltaMs = kotlin.math.abs(positionMs - lastSyncedPositionMs)
+        val shouldSyncProgress = isBuffering != lastSyncedBuffering ||
+            isPlaying != lastSyncedPlaying ||
+            lastSyncedPositionMs < 0L ||
+            positionDeltaMs >= WebProgressSyncMinStepMs
+        if (!shouldSyncProgress) {
+            maybeAdvanceWhenWebAudioEnded(generation)
+            return
+        }
+        lastSyncedPositionMs = positionMs
+        lastSyncedPlaying = isPlaying
+        lastSyncedBuffering = isBuffering
         diagnostics.playbackProgress(PlaybackEnginePath.WebAudioElement, positionMs, durationMs)
         if (!audio.paused && !isBuffering) {
             diagnostics.platformPlaying(PlaybackEnginePath.WebAudioElement, positionMs, durationMs)
@@ -843,6 +980,44 @@ private class WebAudioPlayer(
             bufferedPositionMs = bufferedPositionMs(positionMs, durationMs),
             generation = generation,
         )
+        maybeAdvanceWhenWebAudioEnded(generation)
+    }
+
+    private fun requestAdvanceAfterWebTrackEnded(generation: Int) {
+        if (!isPlayRequestCurrent(generation) || webAdvanceAfterEndGeneration == generation) return
+        webAdvanceAfterEndGeneration = generation
+        stopWebPositionPoll()
+        syncEndedPositionFromAudio(generation)
+        scope.launch {
+            advanceAfterPlatformTrackEnded(generation)
+        }
+    }
+
+    private fun maybeAdvanceWhenWebAudioEnded(generation: Int, eventAudio: HTMLAudioElement = audio): Boolean {
+        if (!isPlayRequestCurrent(generation) || audio !== eventAudio) return false
+        if (webCrossfadeGeneration == generation) return false
+        if (!isWebAudioEnded(eventAudio) && !isWebAudioAtEnd(eventAudio)) return false
+        requestAdvanceAfterWebTrackEnded(generation)
+        return true
+    }
+
+    private fun shouldSkipToNextWebTrackAfterFailure(generation: Int): Boolean {
+        if (!isPlayRequestCurrent(generation) || !playWhenReady) return false
+        val current = state.value
+        if (current.queue.isEmpty() || current.currentIndex < 0) return false
+        return when (current.repeat) {
+            RepeatMode.All -> true
+            RepeatMode.Off -> current.currentIndex < current.queue.lastIndex
+            RepeatMode.One -> false
+        }
+    }
+
+    private fun failOrAdvanceWebPlayback(generation: Int, message: String? = null) {
+        if (shouldSkipToNextWebTrackAfterFailure(generation)) {
+            requestAdvanceAfterWebTrackEnded(generation)
+            return
+        }
+        markPlaybackFailed(generation = generation, message = message)
     }
 
     private fun maybeHotStartWebGapless(
@@ -890,6 +1065,26 @@ private class WebAudioPlayer(
             return
         }
         commitPreparedGapless(generation)
+    }
+
+    private fun stopWebPositionPoll() {
+        webPositionPollJob?.cancel()
+        webPositionPollJob = null
+    }
+
+    private fun webPositionPollJobActive(): Boolean = webPositionPollJob?.isActive == true
+
+    private fun startWebPositionPoll(generation: Int, eventAudio: HTMLAudioElement) {
+        stopWebPositionPoll()
+        webPositionPollJob = scope.launch {
+            while (isPlayRequestCurrent(generation) && audio === eventAudio && playWhenReady) {
+                if (maybeAdvanceWhenWebAudioEnded(generation, eventAudio)) break
+                if (!eventAudio.paused) {
+                    syncFromAudio(generation, isBuffering = false)
+                }
+                delay(WebPositionPollIntervalMs)
+            }
+        }
     }
 
     private fun syncEndedPositionFromAudio(generation: Int) {
@@ -975,7 +1170,7 @@ private class WebAudioPlayer(
             retryCount = 0
         }
         if (retryCount >= MaxStreamRetryCount) {
-            markPlaybackFailed(generation)
+            failOrAdvanceWebPlayback(generation)
             return
         }
         retryCount++
@@ -1007,6 +1202,7 @@ private class WebAudioPlayer(
         val playbackAudio = audio
         playWebAudio(playbackAudio) { message ->
             if (shouldIgnoreBrowserPlaybackFailure(playbackAudio, message)) return@playWebAudio
+            if (shouldIgnoreWebAudioLoadError(playbackAudio, message)) return@playWebAudio
             if (!isPlayRequestCurrent(generation) || !playWhenReady) return@playWebAudio
             if (message.isBrowserAutoplayBlockedFailure()) {
                 markPlaybackWaitingForUserGesture(generation)
@@ -1015,14 +1211,25 @@ private class WebAudioPlayer(
             if (audioUsesCors && currentUri?.isRemoteWebAudioUri() == true && retryWithoutCors(generation)) {
                 return@playWebAudio
             }
+            if (retryWithFreshRemoteAudioElement(generation, message)) {
+                return@playWebAudio
+            }
             diagnostics.playbackError(PlaybackEnginePath.WebAudioElement, message)
-            markPlaybackFailed(generation = generation, message = message)
+            failOrAdvanceWebPlayback(generation, message)
         }
     }
 
     private fun shouldIgnoreBrowserPlaybackFailure(playbackAudio: HTMLAudioElement, message: String?): Boolean {
         if (audio !== playbackAudio) return true
         return message.isUnsupportedSourceFailure() && isWebAudioEnded(playbackAudio)
+    }
+
+    private fun shouldIgnoreWebAudioLoadError(playbackAudio: HTMLAudioElement, message: String?): Boolean {
+        if (shouldIgnoreBrowserPlaybackFailure(playbackAudio, message)) return true
+        if (!webAudioHasActiveSource(playbackAudio)) return true
+        val uri = currentUri ?: return message.isUnsupportedSourceFailure()
+        if (message.isUnsupportedSourceFailure() && !webAudioSourceMatchesUri(playbackAudio, uri)) return true
+        return false
     }
 
     private companion object {
@@ -1070,6 +1277,14 @@ private fun String?.isUnsupportedSourceFailure(): Boolean {
     return "no supported source" in text ||
         "src_not_supported" in text ||
         ("not supported" in text && "source" in text)
+}
+
+private fun String?.isWebTranscodePlaybackFailure(): Boolean {
+    if (isUnsupportedSourceFailure()) return true
+    val text = this?.lowercase() ?: return false
+    return "media_err_network" in text ||
+        "htmlmediaelement error 2" in text ||
+        "htmlmediaelement error 4" in text
 }
 
 private fun String?.isBrowserAutoplayBlockedFailure(): Boolean {
@@ -1136,6 +1351,9 @@ private fun org.w3c.dom.TimeRanges.toWebAudioTimeRanges(): List<WebAudioTimeRang
 }
 
 private const val WebAudioRangeStartToleranceMs = 250L
+private const val WebProgressSyncMinStepMs = 1_000L
+private const val WebPositionPollIntervalMs = 250L
+private const val WebRemoteTrackLoadDeferMs = 100L
 private const val WebAudioDurationEndToleranceMs = 750L
 private const val WebAudioPrefetchUpdateThreshold = 0.005
 private const val WebGaplessHotStartLeadMs = 90L
@@ -1149,6 +1367,44 @@ private external fun installWebAudioProgressHandler(audio: HTMLAudioElement, cal
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun("() => {}")
 private external fun cancelWebAudioPrefetch()
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun(
+    """(audio) => {
+        if (!audio) return;
+        audio.onloadedmetadata = null;
+        audio.onloadeddata = null;
+        audio.ondurationchange = null;
+        audio.onplaying = null;
+        audio.onpause = null;
+        audio.onwaiting = null;
+        audio.onstalled = null;
+        audio.oncanplay = null;
+        audio.oncanplaythrough = null;
+        audio.onprogress = null;
+        audio.onsuspend = null;
+        audio.ontimeupdate = null;
+        audio.onended = null;
+        audio.onerror = null;
+    }""",
+)
+private external fun clearWebAudioEventHandlers(audio: HTMLAudioElement)
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun("(audio) => !!(audio && audio.src)")
+private external fun webAudioHasActiveSource(audio: HTMLAudioElement): Boolean
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun(
+    """(audio, uri) => {
+        if (!audio || !uri) return false;
+        const src = String(audio.src || "");
+        const expected = String(uri || "");
+        if (!src || !expected) return false;
+        return src === expected || src.endsWith(expected) || expected.endsWith(src);
+    }""",
+)
+private external fun webAudioSourceMatchesUri(audio: HTMLAudioElement, uri: String): Boolean
 
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun(
@@ -1188,6 +1444,7 @@ private external fun teardownWebAudioRouting(audio: HTMLAudioElement)
         if (!audio) return;
         try { audio.pause(); } catch (_) {}
         audio.removeAttribute("src");
+        audio.src = "";
         try { audio.load(); } catch (_) {}
     }""",
 )
@@ -1381,6 +1638,7 @@ private external fun stopWebAudioAnalysis(audio: HTMLAudioElement)
         }
         try { audio.pause(); } catch (_) {}
         audio.removeAttribute("src");
+        audio.src = "";
         try { audio.load(); } catch (_) {}
         audio.onloadedmetadata = null;
         audio.onloadeddata = null;
@@ -1420,6 +1678,19 @@ private external fun webAudioErrorMessage(audio: HTMLAudioElement): String
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun("(audio) => !!(audio && audio.ended)")
 private external fun isWebAudioEnded(audio: HTMLAudioElement): Boolean
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun(
+    """(audio) => {
+        if (!audio) return false;
+        if (audio.ended) return true;
+        const duration = Number(audio.duration);
+        const position = Number(audio.currentTime);
+        if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(position)) return false;
+        return position + 0.25 >= duration;
+    }""",
+)
+private external fun isWebAudioAtEnd(audio: HTMLAudioElement): Boolean
 
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun(

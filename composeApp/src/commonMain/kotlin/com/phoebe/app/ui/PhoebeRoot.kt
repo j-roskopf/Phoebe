@@ -2954,7 +2954,9 @@ private fun MobilePlayerHost(
     onDragEnd: (Float) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
-    val player by appState.player.collectAsState()
+    val player by appState.playerTimeline.collectAsState()
+    val shellPlayback by appState.shellPlayback.collectAsState()
+    val playerTransport by appState.playerTransport.collectAsState()
     val appSettings by appState.appSettings.collectAsState()
     val collectAudioAnalysis = expansionFraction > 0.6f &&
         appSettings.nowPlayingVisualizerPreset != NowPlayingVisualizerPreset.Artwork
@@ -2968,7 +2970,7 @@ private fun MobilePlayerHost(
     val equalizerProfile by appState.equalizerProfile.collectAsState()
     val equalizerRemoteUnavailable by appState.equalizerRemoteUnavailable.collectAsState()
     val listenBrainzFeedbackTarget by appState.listenBrainzFeedbackTarget.collectAsState()
-    val showStartingState = playbackStarting && track?.id != player.currentTrack?.id
+    val showStartingState = playbackStarting && track?.id != player.currentTrackId
     MobilePlaybackRoute(
         state = MobilePlaybackRouteState(
             track = track,
@@ -2976,10 +2978,10 @@ private fun MobilePlayerHost(
             upNextDivider = upNextDivider,
             keepPlayingEnabled = appSettings.keepPlayingEnabled,
             previousTrack = previousTrack,
-            isPlaying = if (showStartingState) false else player.isPlaying,
-            isBuffering = player.isBuffering || showStartingState,
-            shuffle = player.shuffle,
-            repeat = player.repeat,
+            isPlaying = if (showStartingState) false else shellPlayback.isPlaying,
+            isBuffering = shellPlayback.isBuffering || showStartingState,
+            shuffle = playerTransport.shuffle,
+            repeat = playerTransport.repeat,
             positionMs = if (showStartingState) 0L else player.positionMs,
             bufferedPositionMs = if (showStartingState) 0L else player.bufferedPositionMs,
             currentIndex = currentIndex,

@@ -4,6 +4,7 @@ import com.phoebe.app.domain.Track
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class PlexTranscodeUrlsTest {
     @Test
@@ -51,8 +52,86 @@ class PlexTranscodeUrlsTest {
             audioCodec = "aac",
         )
         assertEquals(
-            "https://plex.example:32400/music/:/transcode/universal/start.mp3?path=%2Flibrary%2Fmetadata%2F124&mediaIndex=0&partIndex=0&protocol=http&format=mp3&audioCodec=mp3&directPlay=0&directStream=0&X-Plex-Token=token",
+            "https://plex.example:32400/music/:/transcode/universal/start.mp3?path=%2Flibrary%2Fmetadata%2F124&mediaIndex=0&partIndex=0&protocol=https&format=mp3&audioCodec=mp3&directPlay=0&directStream=0&X-Plex-Token=token",
             plexTrack.flatpakSandboxTranscodeUrl(),
         )
+    }
+
+    @Test
+    fun webPlaybackStreamUrlTranscodesLosslessPlexTracksForBrowser() {
+        val plexFlacTrack = Track(
+            id = "plex:456",
+            title = "Track",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 240_000,
+            streamUrl = "https://plex.example:32400/library/parts/9.flac?X-Plex-Token=token",
+            downloadUrl = "",
+            audioCodec = "flac",
+        )
+        val playbackUrl = plexFlacTrack.webPlaybackStreamUrl()
+        assertEquals(
+            "https://plex.example:32400/music/:/transcode/universal/start.mp3",
+            playbackUrl.substringBefore('?'),
+        )
+        assertTrue(
+            playbackUrl.contains("path=https%3A%2F%2Fplex.example%3A32400%2Flibrary%2Fmetadata%2F456"),
+        )
+        assertTrue(playbackUrl.contains("protocol=https"))
+        assertTrue(playbackUrl.contains("X-Plex-Client-Identifier=phoebe-compose-multiplatform"))
+        assertTrue(playbackUrl.contains("session="))
+    }
+
+    @Test
+    fun webPlaybackStreamUrlDirectPlaysPlexMp3() {
+        val plexMp3Track = Track(
+            id = "plex:124",
+            title = "Track",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 180_000,
+            streamUrl = "https://plex.example:32400/library/parts/2.mp3?X-Plex-Token=token",
+            downloadUrl = "",
+            audioCodec = "mp3",
+        )
+        assertEquals(plexMp3Track.streamUrl, plexMp3Track.webPlaybackStreamUrl())
+    }
+
+    @Test
+    fun plexWebUniversalMp3TranscodeUrlUsesAbsoluteMetadataPath() {
+        val plexFlacTrack = Track(
+            id = "plex:456",
+            title = "Track",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 240_000,
+            streamUrl = "https://plex.example:32400/library/parts/9.flac?X-Plex-Token=token",
+            downloadUrl = "",
+            audioCodec = "flac",
+        )
+        val transcodeUrl = plexFlacTrack.plexWebUniversalMp3TranscodeUrl().orEmpty()
+        assertTrue(
+            transcodeUrl.contains(
+                "path=https%3A%2F%2Fplex.example%3A32400%2Flibrary%2Fmetadata%2F456",
+            ),
+        )
+        assertTrue(transcodeUrl.contains("session="))
+        assertTrue(transcodeUrl.contains("X-Plex-Client-Identifier=phoebe-compose-multiplatform"))
+        assertTrue(!transcodeUrl.contains("Client-Profile-Extra"))
+        assertTrue(!transcodeUrl.contains("directPlay=0"))
+    }
+
+    @Test
+    fun webPlaybackStreamUrlFallsBackToDirectStreamForUnsupportedSources() {
+        val track = Track(
+            id = "remote-1",
+            title = "Track",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 180_000,
+            streamUrl = "https://music.example.test/track.mp3",
+            downloadUrl = "",
+        )
+        assertEquals(track.streamUrl, track.webPlaybackStreamUrl())
     }
 }

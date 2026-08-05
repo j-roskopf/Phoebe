@@ -76,6 +76,11 @@ expect fun remoteArtworkLoadParallelism(): Int
 /** Concurrent Plex library track-index page fetches during catalog sync. */
 expect fun catalogTrackIndexParallelism(): Int
 
+/** Web playback: skip publishing large in-memory catalog mutations while audio is active. */
+expect fun configurePlaybackMemoryPressure(active: Boolean)
+
+expect fun shouldDeferCatalogMemoryUpdates(): Boolean
+
 /** Concurrent audio downloads during offline download batches. */
 expect fun downloadParallelism(): Int
 
