@@ -376,6 +376,9 @@ private class WebAudioPlayer(
             playWebAudio(generation)
         }
         syncFromAudio(generation, isBuffering = false)
+        if (hotStarted) {
+            startWebPositionPoll(generation, incoming)
+        }
         return true
     }
 
@@ -644,6 +647,7 @@ private class WebAudioPlayer(
             incomingTrackId = queue[targetIndex].id,
         )
         syncFromAudio(generation, isBuffering = false)
+        startWebPositionPoll(generation, incoming)
         startWebAudioPrefetchIfNeeded(currentUri, generation)
     }
 
