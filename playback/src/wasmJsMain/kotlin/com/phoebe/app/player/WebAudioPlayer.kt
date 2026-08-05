@@ -127,6 +127,7 @@ private class WebAudioPlayer(
             sourcePreparedForWebEqualizer = false
             disposeWebAudioElement(previousAudio)
         }
+        releaseWebAudioMediaBuffers(audio)
         audio.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
         prepareAudioElementForCurrentEqualizer()
         setWebAudioCurrentTime(audio, 0.0)
@@ -199,7 +200,7 @@ private class WebAudioPlayer(
         if (rawUri.startsWith("web-download://")) return false
         val playbackUri = resolveWebLocalAudioUri(rawUri)
         stopWebGapless()
-        val prepared = createAudioElement(useCors = audioUsesCors)
+        val prepared = createAudioElement(useCors = audioUsesCors, preload = "auto")
         webGaplessAudio = prepared
         webGaplessGeneration = generation
         webGaplessTrackId = track.id
@@ -385,7 +386,7 @@ private class WebAudioPlayer(
         allowCorsFallback: Boolean,
     ) {
         if (!isWebCrossfadeCurrent(generation, outgoing)) return
-        val incoming = createAudioElement(useCors = useCors)
+        val incoming = createAudioElement(useCors = useCors, preload = "auto")
         webCrossfadeIncoming?.let { previous ->
             if (previous !== incoming) disposeWebAudioElement(previous)
         }
@@ -1071,9 +1072,9 @@ private fun webEqualizerPayload(profile: EqualizerProfile): String {
     return """{"enabled":${normalized.enabled},"bandCount":${normalized.bandCount},"bands":$bands,"gains":$gains}"""
 }
 
-private fun createAudioElement(useCors: Boolean): HTMLAudioElement =
+private fun createAudioElement(useCors: Boolean, preload: String = "metadata"): HTMLAudioElement =
     (document.createElement("audio") as HTMLAudioElement).apply {
-        preload = "auto"
+        this.preload = preload
         if (useCors) {
             crossOrigin = "anonymous"
         }
@@ -1182,44 +1183,25 @@ private external fun installWebAudioProgressHandler(audio: HTMLAudioElement, cal
         const controller = new AbortController();
         globalThis.__phoebeAudioPrefetchController = controller;
         (async () => {
-            let completed = false;
             try {
+                // Only probe size; the <audio> element owns streaming/buffering.
+                // Downloading the full response duplicated large media files in memory.
                 const response = await fetch(uri, {
+                    method: "HEAD",
                     signal: controller.signal,
                     cache: "default",
                     credentials: "omit"
                 });
-                if (!response || !response.ok) {
-                    throw new Error("prefetch failed: " + (response ? response.status : "no response"));
+                const total = Number(response?.headers?.get("Content-Length")) || 0;
+                if (response?.ok && total > 0) {
+                    onProgress(0, total);
                 }
-                const total = Number(response.headers.get("Content-Length")) || 0;
-                if (response.body && typeof response.body.getReader === "function") {
-                    const reader = response.body.getReader();
-                    let loaded = 0;
-                    while (true) {
-                        const chunk = await reader.read();
-                        if (chunk.done) break;
-                        loaded += chunk.value ? chunk.value.byteLength : 0;
-                        if (total > 0) {
-                            onProgress(loaded, total);
-                        }
-                    }
-                    completed = true;
-                } else {
-                    const blob = await response.blob();
-                    const size = blob?.size || total;
-                    if (size > 0) {
-                        onProgress(size, size);
-                    }
-                    completed = true;
-                }
-            } catch (error) {
-                completed = false;
+            } catch (_) {
             } finally {
                 if (globalThis.__phoebeAudioPrefetchController === controller) {
                     globalThis.__phoebeAudioPrefetchController = null;
                 }
-                try { onComplete(completed); } catch (_) {}
+                try { onComplete(false); } catch (_) {}
             }
         })();
     }""",
@@ -1469,6 +1451,17 @@ private external fun stopWebAudioAnalysis(audio: HTMLAudioElement)
 @JsFun(
     """(audio) => {
         if (!audio) return;
+        try { audio.pause(); } catch (_) {}
+        audio.removeAttribute("src");
+        try { audio.load(); } catch (_) {}
+    }""",
+)
+private external fun releaseWebAudioMediaBuffers(audio: HTMLAudioElement)
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun(
+    """(audio) => {
+        if (!audio) return;
         const analyses = globalThis.__phoebeAudioAnalyses;
         const analysis = analyses?.get(audio);
         if (analysis) {
@@ -1477,6 +1470,8 @@ private external fun stopWebAudioAnalysis(audio: HTMLAudioElement)
             analyses.delete(audio);
         }
         try { audio.pause(); } catch (_) {}
+        audio.removeAttribute("src");
+        try { audio.load(); } catch (_) {}
         audio.onloadedmetadata = null;
         audio.onloadeddata = null;
         audio.ondurationchange = null;
