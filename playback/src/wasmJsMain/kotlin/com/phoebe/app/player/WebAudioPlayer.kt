@@ -1,7 +1,5 @@
 package com.phoebe.app.player
 
-import com.phoebe.app.domain.AudioAnalysisFrame
-import com.phoebe.app.domain.AudioAnalysisSource
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.resolveWebDownloadObjectUrl
@@ -120,14 +118,11 @@ private class WebAudioPlayer(
         retryJob?.cancel()
         cancelWebAudioPrefetch()
         resetWebAudioPrefetch(generation)
-        if (!audioUsesCors) {
-            val previousAudio = audio
-            audio = createAudioElement(useCors = true)
-            audioUsesCors = true
-            sourcePreparedForWebEqualizer = false
-            disposeWebAudioElement(previousAudio)
-        }
-        releaseWebAudioMediaBuffers(audio)
+        val previousAudio = audio
+        stopWebAudioAnalysis(previousAudio)
+        audio = createAudioElement(useCors = audioUsesCors)
+        sourcePreparedForWebEqualizer = false
+        disposeWebAudioElement(previousAudio)
         audio.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
         prepareAudioElementForCurrentEqualizer()
         setWebAudioCurrentTime(audio, 0.0)
@@ -135,7 +130,6 @@ private class WebAudioPlayer(
         audio.src = playbackUri
         audio.load()
         applyCurrentEqualizer()
-        startAudioAnalysisForCurrentElement()
         if (playWhenReady) {
             playWebAudio(generation)
         }
@@ -186,7 +180,6 @@ private class WebAudioPlayer(
             prepareAudioElementForCurrentEqualizer()
         }
         applyCurrentEqualizer()
-        startAudioAnalysisForCurrentElement()
     }
 
     override fun startGaplessPrepareOnPlatform(
@@ -294,7 +287,6 @@ private class WebAudioPlayer(
         prepareAudioElementForCurrentEqualizer()
         applyCurrentEqualizer()
         setOutputVolume(effectiveOutputVolume())
-        startAudioAnalysisForCurrentElement()
         disposeWebAudioElement(outgoing)
         if (playWhenReady && !hotStarted) {
             playWebAudio(generation)
@@ -646,24 +638,6 @@ private class WebAudioPlayer(
             normalized
         }
         applyWebEqualizer(audio, webEqualizerPayload(effectiveProfile))
-    }
-
-    private fun startAudioAnalysisForCurrentElement() {
-        val currentAudio = audio
-        startWebAudioAnalysis(currentAudio) { amplitude, bandsCsv, timestampMs ->
-            if (currentAudio !== audio || !isPlayRequestCurrent(activePlayGeneration)) return@startWebAudioAnalysis
-            val bands = bandsCsv
-                .split(',')
-                .mapNotNull { it.toFloatOrNull()?.coerceIn(0f, 1f) }
-            publishAudioAnalysis(
-                AudioAnalysisFrame(
-                    amplitude = amplitude.toFloat().coerceIn(0f, 1f),
-                    bands = bands,
-                    timestampMs = timestampMs.toLong().coerceAtLeast(0L),
-                    source = AudioAnalysisSource.WebAudio,
-                ),
-            )
-        }
     }
 
     private fun installAudioEventHandlers(generation: Int) {
@@ -1362,101 +1336,17 @@ private external fun setWebAudioOutputGain(audio: HTMLAudioElement, gain: Double
 
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun(
-    """(audio, callback) => {
-        if (!audio) return;
-        const Ctx = globalThis.AudioContext || globalThis.webkitAudioContext;
-        if (!Ctx) return;
-        let analyses = globalThis.__phoebeAudioAnalyses;
-        if (!analyses) {
-            analyses = new Map();
-            globalThis.__phoebeAudioAnalyses = analyses;
-        }
-        const previous = analyses.get(audio);
-        if (previous) {
-            try { clearInterval(previous.timer); } catch (_) {}
-            try { previous.input.disconnect(previous.analyser); } catch (_) {}
-        }
-        try {
-            let eq = globalThis.__phoebeEqualizer;
-            if (!eq || eq.audio !== audio || !eq.source) {
-                const context = eq?.context || new Ctx();
-                let source;
-                try {
-                    source = context.createMediaElementSource(audio);
-                } catch (error) {
-                    return;
-                }
-                const gain = context.createGain();
-                const gainValue = Number.isFinite(Number(audio.volume)) ? Number(audio.volume) : 1;
-                try { gain.gain.setValueAtTime(gainValue, context.currentTime || 0); } catch (_) {
-                    gain.gain.value = gainValue;
-                }
-                source.connect(gain);
-                gain.connect(context.destination);
-                audio.volume = 1;
-                eq = { audio, context, source, nodes: [], gain, gainValue };
-                globalThis.__phoebeEqualizer = eq;
-            }
-            const context = eq.context;
-            const input = eq.gain || eq.source;
-            const analyser = context.createAnalyser();
-            analyser.fftSize = 256;
-            analyser.smoothingTimeConstant = 0.72;
-            input.connect(analyser);
-            const data = new Uint8Array(analyser.frequencyBinCount);
-            const timer = setInterval(() => {
-                try {
-                    context.resume?.();
-                    analyser.getByteFrequencyData(data);
-                    let sum = 0;
-                    const bands = [];
-                    const bandCount = 128;
-                    const group = Math.max(1, Math.floor(data.length / bandCount));
-                    for (let i = 0; i < bandCount; i++) {
-                        let peak = 0;
-                        const start = i * group;
-                        const end = i === bandCount - 1 ? data.length : Math.min(data.length, start + group);
-                        for (let j = start; j < end; j++) peak = Math.max(peak, data[j] || 0);
-                        const v = Math.max(0, Math.min(1, peak / 255));
-                        bands.push(v);
-                        sum += v * v;
-                    }
-                    const amplitude = Math.sqrt(sum / Math.max(1, bands.length));
-                    callback(amplitude, bands.join(","), Date.now());
-                } catch (_) {}
-            }, 50);
-            analyses.set(audio, { timer, analyser, input });
-        } catch (_) {}
-    }""",
-)
-private external fun startWebAudioAnalysis(
-    audio: HTMLAudioElement,
-    callback: (Double, String, Double) -> Unit,
-)
-
-@OptIn(ExperimentalWasmJsInterop::class)
-@JsFun(
     """(audio) => {
         const analyses = globalThis.__phoebeAudioAnalyses;
         const entry = analyses?.get(audio);
         if (!entry) return;
         try { clearInterval(entry.timer); } catch (_) {}
         try { entry.input.disconnect(entry.analyser); } catch (_) {}
+        try { entry.analyser.disconnect(); } catch (_) {}
         analyses.delete(audio);
     }""",
 )
 private external fun stopWebAudioAnalysis(audio: HTMLAudioElement)
-
-@OptIn(ExperimentalWasmJsInterop::class)
-@JsFun(
-    """(audio) => {
-        if (!audio) return;
-        try { audio.pause(); } catch (_) {}
-        audio.removeAttribute("src");
-        try { audio.load(); } catch (_) {}
-    }""",
-)
-private external fun releaseWebAudioMediaBuffers(audio: HTMLAudioElement)
 
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun(
@@ -1467,6 +1357,7 @@ private external fun releaseWebAudioMediaBuffers(audio: HTMLAudioElement)
         if (analysis) {
             try { clearInterval(analysis.timer); } catch (_) {}
             try { analysis.input.disconnect(analysis.analyser); } catch (_) {}
+            try { analysis.analyser.disconnect(); } catch (_) {}
             analyses.delete(audio);
         }
         try { audio.pause(); } catch (_) {}

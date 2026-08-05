@@ -179,6 +179,39 @@ class WebAudioPlayerLifecycleTest {
     }
 
     @Test
+    fun queuedWebAudioAdvancesThroughSeveralTracksWithoutFailure() = runTest {
+        installMockWebAudioElement(mode = "complete", durationSeconds = 0.2)
+        val diagnostics = RecordingPlaybackDiagnostics()
+        val player = createWebAudioPlayerForTests(diagnostics)
+        try {
+            val tracks = (1..5).map { index ->
+                playbackTrack(
+                    id = "web-queue-$index",
+                    streamUrl = "https://music.example.test/queue-$index.mp3",
+                    durationMs = 200L,
+                )
+            }
+
+            player.play(tracks, 0)
+
+            assertTrue(
+                waitUntil(timeoutMs = 2_500L) {
+                    player.state.value.currentTrack?.id == tracks.last().id
+                },
+                "Web audio should advance through a shuffled-length queue; state=${player.state.value} " +
+                    "errors=${diagnostics.errors}",
+            )
+            assertTrue(
+                diagnostics.errors.isEmpty(),
+                "Sequential web track advances should not surface playback errors; errors=${diagnostics.errors}",
+            )
+        } finally {
+            player.stopPlayback()
+            restoreMockWebAudioElement()
+        }
+    }
+
+    @Test
     fun queuedWebAudioPublishesEndedPositionBeforeAdvancing() = runTest {
         installMockWebAudioElement(mode = "ended-without-final-timeupdate", durationSeconds = 0.25)
         val diagnostics = RecordingPlaybackDiagnostics()
