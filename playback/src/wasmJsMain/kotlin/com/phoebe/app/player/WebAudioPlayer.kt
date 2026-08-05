@@ -118,12 +118,26 @@ private class WebAudioPlayer(
         retryJob?.cancel()
         cancelWebAudioPrefetch()
         resetWebAudioPrefetch(generation)
-        val previousAudio = audio
-        stopWebAudioAnalysis(previousAudio)
-        audio = createAudioElement(useCors = audioUsesCors)
+        stopWebAudioAnalysis(audio)
+        teardownWebAudioRouting(audio)
+        releaseWebAudioMediaBuffers(audio)
         sourcePreparedForWebEqualizer = false
-        disposeWebAudioElement(previousAudio)
+        val needsFreshAudioElement = GraphicEqualizerProcessor.isActive(equalizerProfile.normalized()) ||
+            isWebEqualizerAttached(audio)
+        if (needsFreshAudioElement) {
+            val previousAudio = audio
+            audio = createAudioElement(useCors = audioUsesCors, preload = webAudioPreloadForUri(playbackUri))
+            disposeWebAudioElement(previousAudio)
+        } else {
+            audio.preload = webAudioPreloadForUri(playbackUri)
+        }
         audio.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+        if (!audioUsesCors) {
+            val previousAudio = audio
+            audio = createAudioElement(useCors = true, preload = webAudioPreloadForUri(playbackUri))
+            audioUsesCors = true
+            disposeWebAudioElement(previousAudio)
+        }
         prepareAudioElementForCurrentEqualizer()
         setWebAudioCurrentTime(audio, 0.0)
         installAudioEventHandlers(generation)
@@ -193,7 +207,7 @@ private class WebAudioPlayer(
         if (rawUri.startsWith("web-download://")) return false
         val playbackUri = resolveWebLocalAudioUri(rawUri)
         stopWebGapless()
-        val prepared = createAudioElement(useCors = audioUsesCors, preload = "auto")
+        val prepared = createAudioElement(useCors = audioUsesCors, preload = webAudioPreloadForUri(playbackUri))
         webGaplessAudio = prepared
         webGaplessGeneration = generation
         webGaplessTrackId = track.id
@@ -378,7 +392,7 @@ private class WebAudioPlayer(
         allowCorsFallback: Boolean,
     ) {
         if (!isWebCrossfadeCurrent(generation, outgoing)) return
-        val incoming = createAudioElement(useCors = useCors, preload = "auto")
+        val incoming = createAudioElement(useCors = useCors, preload = webAudioPreloadForUri(playbackUri))
         webCrossfadeIncoming?.let { previous ->
             if (previous !== incoming) disposeWebAudioElement(previous)
         }
@@ -907,23 +921,9 @@ private class WebAudioPlayer(
         )
     }
 
-    private fun startWebAudioPrefetch(uri: String, generation: Int) {
-        if (!uri.startsWith("http://", ignoreCase = true) && !uri.startsWith("https://", ignoreCase = true)) return
-        startWebAudioPrefetch(
-            uri,
-            { loadedBytes, totalBytes -> handleWebAudioPrefetchProgress(generation, loadedBytes, totalBytes) },
-            { completed -> handleWebAudioPrefetchComplete(generation, completed) },
-        )
-    }
+    private fun startWebAudioPrefetchIfNeeded(uri: String?, generation: Int) = Unit
 
-    private fun startWebAudioPrefetchIfNeeded(uri: String?, generation: Int) {
-        if (uri.isNullOrBlank() || prefetchStartedGeneration == generation) return
-        val track = state.value.queue.find { it.streamUrl == uri || it.localUri == uri }
-            ?: state.value.currentTrack?.takeIf { it.streamUrl == uri || it.localUri == uri }
-        if (track?.id?.startsWith("radio:") == true || track?.durationMs == 0L) return
-        prefetchStartedGeneration = generation
-        startWebAudioPrefetch(uri, generation)
-    }
+    private fun startWebAudioPrefetch(uri: String, generation: Int) = Unit
 
     private fun handleWebAudioPrefetchProgress(generation: Int, loadedBytes: Double, totalBytes: Double) {
         if (generation != prefetchGeneration || !isPlayRequestCurrent(generation)) return
@@ -1054,6 +1054,9 @@ private fun createAudioElement(useCors: Boolean, preload: String = "metadata"): 
         }
     }
 
+internal fun webAudioPreloadForUri(uri: String): String =
+    if (uri.isRemoteWebAudioUri()) "none" else "metadata"
+
 data class WebAudioTimeRange(
     val startMs: Long,
     val endMs: Long,
@@ -1144,59 +1147,51 @@ private const val WebGaplessHotStartPollMs = 20L
 private external fun installWebAudioProgressHandler(audio: HTMLAudioElement, callback: () -> Unit)
 
 @OptIn(ExperimentalWasmJsInterop::class)
-@JsFun(
-    """(uri, onProgress, onComplete) => {
-        const previous = globalThis.__phoebeAudioPrefetchController;
-        if (previous) {
-            try { previous.abort(); } catch (_) {}
-        }
-        if (!uri || !/^https?:\/\//i.test(String(uri))) {
-            try { onComplete(false); } catch (_) {}
-            return;
-        }
-        const controller = new AbortController();
-        globalThis.__phoebeAudioPrefetchController = controller;
-        (async () => {
-            try {
-                // Only probe size; the <audio> element owns streaming/buffering.
-                // Downloading the full response duplicated large media files in memory.
-                const response = await fetch(uri, {
-                    method: "HEAD",
-                    signal: controller.signal,
-                    cache: "default",
-                    credentials: "omit"
-                });
-                const total = Number(response?.headers?.get("Content-Length")) || 0;
-                if (response?.ok && total > 0) {
-                    onProgress(0, total);
-                }
-            } catch (_) {
-            } finally {
-                if (globalThis.__phoebeAudioPrefetchController === controller) {
-                    globalThis.__phoebeAudioPrefetchController = null;
-                }
-                try { onComplete(false); } catch (_) {}
-            }
-        })();
-    }""",
-)
-private external fun startWebAudioPrefetch(
-    uri: String,
-    onProgress: (Double, Double) -> Unit,
-    onComplete: (Boolean) -> Unit,
-)
+@JsFun("() => {}")
+private external fun cancelWebAudioPrefetch()
 
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun(
-    """() => {
-        const controller = globalThis.__phoebeAudioPrefetchController;
-        if (controller) {
-            try { controller.abort(); } catch (_) {}
-            globalThis.__phoebeAudioPrefetchController = null;
+    """(audio) => {
+        if (!audio) return;
+        const eq = globalThis.__phoebeEqualizer;
+        if (eq && eq.audio === audio) {
+            try { eq.source.disconnect(); } catch (_) {}
+            for (const node of eq.nodes || []) {
+                try { node.disconnect(); } catch (_) {}
+            }
+            if (eq.gain) {
+                try { eq.gain.disconnect(); } catch (_) {}
+            }
+            if (eq.context && typeof eq.context.close === "function") {
+                try { eq.context.close(); } catch (_) {}
+            }
+            globalThis.__phoebeEqualizer = null;
+        }
+        const gains = globalThis.__phoebeCrossfadeGains;
+        const entry = gains?.get(audio);
+        if (entry) {
+            try { entry.source.disconnect(); } catch (_) {}
+            try { entry.gain.disconnect(); } catch (_) {}
+            if (entry.context && typeof entry.context.close === "function") {
+                try { entry.context.close(); } catch (_) {}
+            }
+            gains.delete(audio);
         }
     }""",
 )
-private external fun cancelWebAudioPrefetch()
+private external fun teardownWebAudioRouting(audio: HTMLAudioElement)
+
+@OptIn(ExperimentalWasmJsInterop::class)
+@JsFun(
+    """(audio) => {
+        if (!audio) return;
+        try { audio.pause(); } catch (_) {}
+        audio.removeAttribute("src");
+        try { audio.load(); } catch (_) {}
+    }""",
+)
+private external fun releaseWebAudioMediaBuffers(audio: HTMLAudioElement)
 
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun(
@@ -1360,6 +1355,30 @@ private external fun stopWebAudioAnalysis(audio: HTMLAudioElement)
             try { analysis.analyser.disconnect(); } catch (_) {}
             analyses.delete(audio);
         }
+        const eq = globalThis.__phoebeEqualizer;
+        if (eq && eq.audio === audio) {
+            try { eq.source.disconnect(); } catch (_) {}
+            for (const node of eq.nodes || []) {
+                try { node.disconnect(); } catch (_) {}
+            }
+            if (eq.gain) {
+                try { eq.gain.disconnect(); } catch (_) {}
+            }
+            if (eq.context && typeof eq.context.close === "function") {
+                try { eq.context.close(); } catch (_) {}
+            }
+            globalThis.__phoebeEqualizer = null;
+        }
+        const gains = globalThis.__phoebeCrossfadeGains;
+        const entry = gains?.get(audio);
+        if (entry) {
+            try { entry.source.disconnect(); } catch (_) {}
+            try { entry.gain.disconnect(); } catch (_) {}
+            if (entry.context && typeof entry.context.close === "function") {
+                try { entry.context.close(); } catch (_) {}
+            }
+            gains.delete(audio);
+        }
         try { audio.pause(); } catch (_) {}
         audio.removeAttribute("src");
         try { audio.load(); } catch (_) {}
@@ -1377,24 +1396,6 @@ private external fun stopWebAudioAnalysis(audio: HTMLAudioElement)
         audio.ontimeupdate = null;
         audio.onended = null;
         audio.onerror = null;
-        const eq = globalThis.__phoebeEqualizer;
-        if (eq && eq.audio === audio) {
-            try { eq.source.disconnect(); } catch (_) {}
-            for (const node of eq.nodes || []) {
-                try { node.disconnect(); } catch (_) {}
-            }
-            if (eq.gain) {
-                try { eq.gain.disconnect(); } catch (_) {}
-            }
-            globalThis.__phoebeEqualizer = { context: eq.context, audio: null, source: null, nodes: [], gain: null, gainValue: 1 };
-        }
-        const gains = globalThis.__phoebeCrossfadeGains;
-        const entry = gains?.get(audio);
-        if (entry) {
-            try { entry.source.disconnect(); } catch (_) {}
-            try { entry.gain.disconnect(); } catch (_) {}
-            gains.delete(audio);
-        }
     }""",
 )
 private external fun disposeWebAudioElement(audio: HTMLAudioElement)
@@ -1439,18 +1440,9 @@ private external fun setWebAudioCurrentTime(audio: HTMLAudioElement, seconds: Do
 @JsFun(
     """(audio, onFailure) => {
         try {
-            const Ctx = globalThis.AudioContext || globalThis.webkitAudioContext;
-            if (Ctx) {
-                let eq = globalThis.__phoebeEqualizer;
-                if (!eq || !eq.context) {
-                    eq = { context: new Ctx(), audio: null, source: null, nodes: [] };
-                    globalThis.__phoebeEqualizer = eq;
-                }
+            const eq = globalThis.__phoebeEqualizer;
+            if (eq && eq.audio === audio && eq.source) {
                 eq.context?.resume?.();
-            }
-            const activeEq = globalThis.__phoebeEqualizer;
-            if (activeEq && activeEq.audio === audio) {
-                activeEq.context?.resume?.();
             }
             const playResult = audio.play();
             if (playResult && typeof playResult.catch === "function") {

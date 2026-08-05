@@ -44,6 +44,13 @@ class WebAudioBufferedPositionTest {
     }
 
     @Test
+    fun remoteStreamsUseMinimalPreload() {
+        assertEquals("none", webAudioPreloadForUri("https://plex.example/track.mp3"))
+        assertEquals("metadata", webAudioPreloadForUri("blob:https://music.example/local-file"))
+        assertEquals("metadata", webAudioPreloadForUri("phoebe-test://music/alpha.mp3"))
+    }
+
+    @Test
     fun remoteUriDetectionOnlyTreatsHttpStreamsAsRemote() {
         assertEquals(true, "https://music.example/track.mp3".isRemoteWebAudioUri())
         assertEquals(true, "http://music.example/track.mp3".isRemoteWebAudioUri())

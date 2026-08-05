@@ -176,7 +176,7 @@ actual fun currentTimeMs(): Long = jsDateNow().toLong()
 
 actual fun prefersReducedArtworkEffects(): Boolean = true
 
-actual fun remoteArtworkCacheMaxEstimatedBytes(): Long = 10L * 1024L * 1024L
+actual fun remoteArtworkCacheMaxEstimatedBytes(): Long = 6L * 1024L * 1024L
 
 actual fun remoteArtworkLoadParallelism(): Int = 8
 
