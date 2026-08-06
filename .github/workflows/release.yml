@@ -141,6 +141,7 @@ jobs:
         run: |
           set -euo pipefail
           vercel pull --yes --environment=production --token "${VERCEL_TOKEN}"
+          scripts/prune-phoebe-backend-vcr-images.sh --keep 10 --token "${VERCEL_TOKEN}"
           scripts/validate-phoebe-backend-production-env.sh --vercel-production
           deploy_log="${RUNNER_TEMP}/vercel-phoebe-backend-deploy.log"
           scripts/deploy-phoebe-backend-vercel.sh --prod --yes --token "${VERCEL_TOKEN}" | tee "${deploy_log}"
@@ -703,7 +704,7 @@ jobs:
     needs:
       - version
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       MACOS_KEYCHAIN_PASSWORD: ${{ secrets.MACOS_KEYCHAIN_PASSWORD }}
       PHOEBE_GOOGLE_MAPS_IOS_API_KEY: ${{ secrets.PHOEBE_GOOGLE_MAPS_IOS_API_KEY }}
