@@ -184,17 +184,20 @@
 /* Begin PBXShellScriptBuildPhase section */
 		05E104082A8AADF800D11C3D /* Compile Kotlin */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 0;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/../composeApp/build/ios-kotlin-input-fingerprint",
 			);
 			name = "Compile Kotlin";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(SRCROOT)/../composeApp/build/xcode-frameworks/$(CONFIGURATION)/$(SDK_NAME)/ComposeApp.framework",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
@@ -202,6 +205,7 @@
 		};
 		CP02RS032600AC8F00CF470E /* Copy Google Cast Resources */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 0;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -214,10 +218,11 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/.google-cast-resources.stamp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "set -e\nRESOURCE_DIR=\"$SRCROOT/Vendor/GoogleCastSDK/Resources\"\nDEST_DIR=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\nif [ -d \"$RESOURCE_DIR\" ]; then\n  mkdir -p \"$DEST_DIR\"\n  for bundle in \"$RESOURCE_DIR\"/*.bundle; do\n    [ -e \"$bundle\" ] || continue\n    cp -R \"$bundle\" \"$DEST_DIR\"\n  done\nelse\n  echo \"Google Cast resources not installed at $RESOURCE_DIR. Run scripts/install-ios-google-cast-sdk.sh.\"\nfi\n";
+			shellScript = "set -e\nRESOURCE_DIR=\"$SRCROOT/Vendor/GoogleCastSDK/Resources\"\nDEST_DIR=\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\"\nif [ -d \"$RESOURCE_DIR\" ]; then\n  mkdir -p \"$DEST_DIR\"\n  for bundle in \"$RESOURCE_DIR\"/*.bundle; do\n    [ -e \"$bundle\" ] || continue\n    cp -R \"$bundle\" \"$DEST_DIR\"\n  done\n  touch \"$DEST_DIR/.google-cast-resources.stamp\"\nelse\n  echo \"Google Cast resources not installed at $RESOURCE_DIR. Run scripts/install-ios-google-cast-sdk.sh.\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

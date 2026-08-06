@@ -5,6 +5,7 @@ import org.gradle.api.tasks.Sync
 import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import java.io.File
+import java.security.MessageDigest
 import java.time.Duration
 
 val phoebeVersionName = providers.gradleProperty("phoebe.versionName")
@@ -500,6 +501,53 @@ compose.desktop {
             }
         }
     }
+}
+
+val recordIosKotlinInputFingerprint = tasks.register("recordIosKotlinInputFingerprint") {
+    val fingerprintFile = layout.buildDirectory.file("ios-kotlin-input-fingerprint")
+    outputs.file(fingerprintFile)
+
+    val rootDirectory = rootProject.layout.projectDirectory
+    val trackedFiles = rootProject.layout.files(
+        rootDirectory.file("gradle/libs.versions.toml"),
+        rootDirectory.file("gradle.properties"),
+        rootDirectory.file("settings.gradle.kts"),
+        layout.projectDirectory.file("build.gradle.kts"),
+    )
+
+    doLast {
+        val digest = MessageDigest.getInstance("SHA-256")
+        trackedFiles.files
+            .filter { it.isFile }
+            .sortedBy { it.relativeTo(rootDirectory.asFile).path }
+            .forEach { file ->
+                digest.update(file.relativeTo(rootDirectory.asFile).path.toByteArray())
+                digest.update(file.readBytes())
+            }
+
+        rootDirectory.asFile.walkTopDown()
+            .onEnter { directory ->
+                !directory.name.startsWith(".") &&
+                    directory.name !in setOf("build", "node_modules", ".gradle", "iosApp")
+            }
+            .filter { file ->
+                file.isFile &&
+                    file.extension in setOf("kt", "kts") &&
+                    file.path.contains("${File.separator}src${File.separator}")
+            }
+            .sortedBy { it.relativeTo(rootDirectory.asFile).path }
+            .forEach { file ->
+                digest.update(file.relativeTo(rootDirectory.asFile).path.toByteArray())
+                digest.update(file.readBytes())
+            }
+
+        fingerprintFile.get().asFile.parentFile.mkdirs()
+        fingerprintFile.get().asFile.writeText(digest.digest().joinToString("") { "%02x".format(it) })
+    }
+}
+
+tasks.matching { it.name == "embedAndSignAppleFrameworkForXcode" }.configureEach {
+    dependsOn(recordIosKotlinInputFingerprint)
 }
 
 val compileMacMediaKeysNative = tasks.register<Exec>("compileMacMediaKeysNative") {
