@@ -72,12 +72,10 @@ list_images_json() {
   vercel_cmd vcr image ls "${repository}" --format json --limit 100 "$@"
 }
 
-image_ids_to_delete=()
-while IFS= read -r image_id; do
-  [[ -n "${image_id}" ]] || continue
-  image_ids_to_delete+=("${image_id}")
-done < <(
-  LIST_IMAGES_JSON="$(list_images_json)" \
+list_images_json="$(list_images_json)"
+
+node_output="$(
+  LIST_IMAGES_JSON="${list_images_json}" \
   KEEP_COUNT="${keep_count}" \
   node <<'NODE'
 const payload = JSON.parse(process.env.LIST_IMAGES_JSON || "{}");
@@ -102,7 +100,15 @@ for (const image of toDelete) {
   process.stdout.write(`${image.id}\n`);
 }
 NODE
-)
+)"
+
+image_ids_to_delete=()
+if [[ -n "${node_output}" ]]; then
+  while IFS= read -r image_id; do
+    [[ -n "${image_id}" ]] || continue
+    image_ids_to_delete+=("${image_id}")
+  done <<< "${node_output}"
+fi
 
 if ((${#image_ids_to_delete[@]} == 0)); then
   exit 0
