@@ -115,6 +115,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 7555FFA5242A565B00829871 /* Build configuration list for PBXNativeTarget "iosApp" */;
 			buildPhases = (
+				RKIF1NG2A8AADF800D11C3D /* Record Kotlin Input Fingerprint */,
 				05E104082A8AADF800D11C3D /* Compile Kotlin */,
 				7555FF77242A565900829871 /* Sources */,
 				7555FF79242A565900829871 /* Resources */,
@@ -182,6 +183,26 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		RKIF1NG2A8AADF800D11C3D /* Record Kotlin Input Fingerprint */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Record Kotlin Input Fingerprint";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/../composeApp/build/ios-kotlin-input-fingerprint",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "cd \"$SRCROOT/..\"\nif [ -z \"$JAVA_HOME\" ] || [ ! -d \"$JAVA_HOME\" ]; then\n  if [ -d \"$HOME/.sdkman/candidates/java/current\" ]; then\n    export JAVA_HOME=\"$HOME/.sdkman/candidates/java/current\"\n  elif /usr/libexec/java_home -v 21 >/dev/null 2>&1; then\n    export JAVA_HOME=$(/usr/libexec/java_home -v 21)\n  fi\nfi\nif [ -n \"$JAVA_HOME\" ]; then\n  export PATH=\"$JAVA_HOME/bin:$PATH\"\nfi\n./gradlew :composeApp:recordIosKotlinInputFingerprint --quiet\n";
+		};
 		05E104082A8AADF800D11C3D /* Compile Kotlin */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 0;

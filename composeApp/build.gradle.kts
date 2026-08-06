@@ -541,8 +541,12 @@ val recordIosKotlinInputFingerprint = tasks.register("recordIosKotlinInputFinger
                 digest.update(file.readBytes())
             }
 
-        fingerprintFile.get().asFile.parentFile.mkdirs()
-        fingerprintFile.get().asFile.writeText(digest.digest().joinToString("") { "%02x".format(it) })
+        val fingerprint = digest.digest().joinToString("") { "%02x".format(it) }
+        val outputFile = fingerprintFile.get().asFile
+        outputFile.parentFile.mkdirs()
+        if (!outputFile.exists() || outputFile.readText() != fingerprint) {
+            outputFile.writeText(fingerprint)
+        }
     }
 }
 
