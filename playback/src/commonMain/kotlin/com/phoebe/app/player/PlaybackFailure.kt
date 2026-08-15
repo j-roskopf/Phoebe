@@ -69,10 +69,14 @@ data class PlaybackFailure(
     fun logLine(): String = buildString {
         append("playback failed: ")
         append(kind.name)
-        message.takeIf { it.isNotBlank() }?.let { append(" message=").append(it) }
+        message.takeIf { it.isNotBlank() }?.let {
+            append(" message=").append(PlaybackFailureClassifier.redactSensitiveText(it))
+        }
         statusCode?.let { append(" status=").append(it) }
         streamUri?.let { append(" uri=").append(PlaybackFailureClassifier.redactStreamUri(it)) }
-        cause?.takeIf { it.isNotBlank() }?.let { append(" cause=").append(it) }
+        cause?.takeIf { it.isNotBlank() }?.let {
+            append(" cause=").append(PlaybackFailureClassifier.redactSensitiveText(it))
+        }
     }
 }
 
@@ -191,7 +195,8 @@ object PlaybackFailureClassifier {
                 } else {
                     PlaybackFailureKind.Unknown
                 }
-            haystack.contains("source error") -> PlaybackFailureKind.Unreachable
+            haystack.contains("source error") ->
+                if (looksLikeHttpUri(streamUri)) PlaybackFailureKind.Unreachable else PlaybackFailureKind.Unknown
             haystack.contains("503") || haystack.contains("502") || haystack.contains("500")
                 -> PlaybackFailureKind.Transient
             else -> PlaybackFailureKind.Unknown
@@ -206,13 +211,19 @@ object PlaybackFailureClassifier {
     }
 
     fun redactStreamUri(uri: String): String {
-        val withoutQuery = uri.substringBefore('?')
+        val withoutQuery = redactSensitiveText(uri).substringBefore('?')
         return if (withoutQuery.length <= 240) withoutQuery else withoutQuery.take(240)
     }
+
+    fun redactSensitiveText(text: String): String =
+        text.replace(Regex("""(https?://[^\s"'<>?]+)(\?[^\s"'<>]*)""", RegexOption.IGNORE_CASE)) { match ->
+            match.groupValues[1]
+        }
 
     private fun kindForHttpStatus(statusCode: Int?): PlaybackFailureKind = when (statusCode) {
         401, 403 -> PlaybackFailureKind.Unauthorized
         404, 410 -> PlaybackFailureKind.NotFound
+        408, 429 -> PlaybackFailureKind.Transient
         in 500..599 -> PlaybackFailureKind.Transient
         in 400..499 -> PlaybackFailureKind.Unauthorized
         else -> PlaybackFailureKind.Transient
@@ -227,7 +238,12 @@ object PlaybackFailureClassifier {
 
     private fun statusCodeFromMessage(message: String?): Int? {
         if (message.isNullOrBlank()) return null
-        val match = Regex("""\b(401|403|404|410|500|502|503)\b""").find(message) ?: return null
+        val labeled = Regex(
+            """(?:failed\s*\(|response code:?\s*|status(?: code)?:?\s*)([4-5]\d{2})\b""",
+            RegexOption.IGNORE_CASE,
+        ).find(message)
+        if (labeled != null) return labeled.groupValues[1].toInt()
+        val match = Regex("""\b(401|403|404|408|410|429|500|502|503|504)\b""").find(message) ?: return null
         return match.groupValues[1].toInt()
     }
 }

@@ -109,6 +109,55 @@ class PlaybackFailureTest {
     }
 
     @Test
+    fun exceptionTextIsLoggedWithoutQuerySecrets() {
+        val failure = PlaybackFailure(
+            kind = PlaybackFailureKind.Unauthorized,
+            message = "HttpDataSourceException: https://plex.example/library/parts/1?X-Plex-Token=s3cret",
+            statusCode = 401,
+            streamUri = "https://plex.example/library/parts/1?X-Plex-Token=s3cret",
+            cause = "InvalidResponseCodeException: https://plex.example/library/parts/1?X-Plex-Token=s3cret",
+        )
+
+        val line = failure.logLine()
+        assertTrue(line.contains("https://plex.example/library/parts/1"))
+        assertFalse(line.contains("s3cret"))
+        assertFalse(line.contains("X-Plex-Token"))
+        assertFalse(line.contains("?"))
+    }
+
+    @Test
+    fun gatewayAndRateLimitStatusesAreInfrastructureFailures() {
+        val gateway = PlaybackFailureClassifier.fromMessage(
+            "Plex stream request failed (504)",
+            streamUri = "https://plex.example/library/parts/1",
+        )
+        val rateLimited = PlaybackFailureClassifier.fromMessage(
+            "Plex stream request failed (429)",
+            streamUri = "https://plex.example/library/parts/1",
+        )
+
+        assertEquals(PlaybackFailureKind.Transient, gateway.kind)
+        assertEquals(504, gateway.statusCode)
+        assertTrue(gateway.isInfrastructureFailure)
+        assertEquals(PlaybackFailureKind.Transient, rateLimited.kind)
+        assertEquals(429, rateLimited.statusCode)
+        assertTrue(rateLimited.isInfrastructureFailure)
+    }
+
+    @Test
+    fun localSourceErrorIsNotTreatedAsAnUnreachableServer() {
+        val failure = PlaybackFailureClassifier.fromMedia3(
+            errorCode = PlaybackFailureClassifier.Media3IoUnspecified,
+            message = "Source error",
+            streamUri = "file:///music/track.flac",
+        )
+
+        assertEquals(PlaybackFailureKind.Unknown, failure.kind)
+        assertFalse(failure.isInfrastructureFailure)
+        assertFalse(failure.shouldRetry)
+    }
+
+    @Test
     fun javaFxCouldNotCreatePlayerStaysACodecProblem() {
         val failure = PlaybackFailureClassifier.fromMessage(
             "com.sun.media.jfxmedia.MediaException: Could not create player!",
