@@ -1,3 +1,5 @@
+@file:androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+
 package com.phoebe.app.player
 
 import android.content.ComponentName
@@ -8,6 +10,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.datasource.HttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
@@ -132,6 +135,7 @@ class AndroidAudioPlayer(
     private var retryCount = 0
     private var pendingAutoplayGeneration = -1
     private var pendingAutoplayStartedAtMs = 0L
+    private var holdQueueOnInfrastructureFailure = false
     private val controllerMutex = Mutex()
     private var loadedPlatformQueue: LoadedPlatformQueue? = null
     private var appControllerMutationInProgress = false
@@ -158,8 +162,6 @@ class AndroidAudioPlayer(
         }
 
         override fun onPlayerError(error: PlaybackException) {
-            PhoebeLog.d("AndroidAudioPlayer") { "playback failed: ${error.message}" }
-            diagnostics.playbackError(PlaybackEnginePath.Media3, error.message)
             pendingControllerTarget = null
             stopBufferingTimeout()
             schedulePlaybackRetry(error, activePlayGeneration)
@@ -328,6 +330,7 @@ class AndroidAudioPlayer(
     }
 
     override fun resume() {
+        holdQueueOnInfrastructureFailure = false
         scope.launch {
             val ownedPlayer = ownedCrossfadePlayer()
             if (ownedPlayer != null) {
@@ -337,6 +340,9 @@ class AndroidAudioPlayer(
             } else {
                 controllerMutex.withLock {
                     activeLocalPlayer()?.run {
+                        if (playbackState == Player.STATE_IDLE || playerError != null) {
+                            prepare()
+                        }
                         markPendingAutoplay(activePlayGeneration)
                         volume = effectiveOutputVolume()
                         play()
@@ -678,7 +684,9 @@ class AndroidAudioPlayer(
 
     private fun handlePlatformPlaybackEnded() {
         if (shouldIgnoreAndroidServiceEndedCallback(crossfadeOwnedTrackId, crossfadePlayer != null)) return
+        if (holdQueueOnInfrastructureFailure) return
         val player = activeLocalPlayer()?.takeIf { it.playbackState == Player.STATE_ENDED } ?: return
+        if (player.playerError != null) return
         val endedAppIndex = endedPlatformAppIndex(player)
         if (endedAppIndex != null) {
             val queue = state.value.queue
@@ -1016,11 +1024,13 @@ class AndroidAudioPlayer(
             } catch (e: CancellationException) {
                 throw e
             } catch (error: Throwable) {
-                PhoebeLog.d("AndroidAudioPlayer") { "platform load failed: ${error.message}" }
+                val failure = PlaybackFailureClassifier.fromThrowable(error, currentStreamUri())
+                PhoebeLog.d("AndroidAudioPlayer") { "platform load failed: ${failure.logLine()}" }
                 pendingControllerTarget = null
                 clearPendingAutoplay()
                 stopBufferingTimeout()
-                markPlaybackFailed(generation)
+                holdQueueOnFailure(failure)
+                publishPlaybackFailure(failure, generation)
             }
         }
     }
@@ -1059,6 +1069,7 @@ class AndroidAudioPlayer(
             firstAppIndex = windowStartIndex,
             itemCount = windowTracks.size,
         )
+        holdQueueOnInfrastructureFailure = false
         queue.getOrNull(targetIndex)?.let { updateOptimisticLocalBufferedPosition(it, generation) }
         if (shouldPlay && playWhenReady) {
             markPendingAutoplay(generation)
@@ -1134,6 +1145,7 @@ class AndroidAudioPlayer(
             appControllerIndex >= 0 &&
             appControllerIndex != appState.currentIndex
         ) {
+            if (holdQueueOnInfrastructureFailure) return
             if (appControllerMutationInProgress) return
             val queueIds = appState.queue.map { it.id }
             if (loaded?.queueIds == queueIds && appControllerIndex in appState.queue.indices) {
@@ -1258,6 +1270,7 @@ class AndroidAudioPlayer(
         if (player.isPlaying && playWhenReady) {
             stopBufferingTimeout()
             resetRetries(generation)
+            holdQueueOnInfrastructureFailure = false
             startPositionSyncLoop(generation)
         } else {
             if (buffering && playWhenReady) {
@@ -1427,8 +1440,13 @@ class AndroidAudioPlayer(
         bufferingTimeoutJob = scope.launch {
             delay(PlaybackBufferingTimeoutMs)
             if (!isPlayRequestCurrent(generation) || !state.value.isBuffering) return@launch
-            PhoebeLog.d("AndroidAudioPlayer") { "playback timed out while buffering" }
-            schedulePlaybackRetry(null, generation)
+            handleClassifiedPlaybackFailure(
+                PlaybackFailureClassifier.fromMessage(
+                    "playback timed out while buffering",
+                    currentStreamUri(),
+                ),
+                generation,
+            )
         }
     }
 
@@ -1438,23 +1456,62 @@ class AndroidAudioPlayer(
     }
 
     private fun schedulePlaybackRetry(error: PlaybackException?, generation: Int) {
+        if (error != null) {
+            handleClassifiedPlaybackFailure(error.toPlaybackFailure(currentStreamUri()), generation)
+            return
+        }
         if (!isPlayRequestCurrent(generation) || !playWhenReady) return
-        if (error != null && !error.isRecoverableStreamError()) {
-            clearPendingAutoplay()
-            markPlaybackFailed(generation)
+        if (retryGeneration != generation) {
+            retryGeneration = generation
+            retryCount = 0
+        }
+        if (retryCount >= MaxStreamRetryCount) {
+            handleClassifiedPlaybackFailure(
+                PlaybackFailureClassifier.fromMessage("stream retry exhausted", currentStreamUri()),
+                generation,
+            )
+            return
+        }
+        retryCount++
+        retryCurrentStream(generation)
+    }
+
+    private fun handleClassifiedPlaybackFailure(failure: PlaybackFailure, generation: Int) {
+        if (!isPlayRequestCurrent(generation)) return
+        PhoebeLog.d("AndroidAudioPlayer") { failure.logLine() }
+        diagnostics.playbackError(PlaybackEnginePath.Media3, failure.logLine())
+        if (failure.holdsQueue) {
+            holdQueueOnInfrastructureFailure = true
+        }
+        if (!playWhenReady) {
+            holdQueueOnFailure(failure)
+            return
+        }
+        if (!failure.shouldRetry) {
+            holdQueueOnFailure(failure)
+            publishPlaybackFailure(failure, generation)
             return
         }
         if (retryGeneration != generation) {
             retryGeneration = generation
             retryCount = 0
         }
-        if (retryCount >= MaxStreamRetryCount) {
-            PhoebeLog.d("AndroidAudioPlayer") { "stream retry exhausted" }
-            clearPendingAutoplay()
-            markPlaybackFailed(generation)
+        val maxRetries = if (failure.kind == PlaybackFailureKind.Unreachable) {
+            MaxUnreachableRetryCount
+        } else {
+            MaxStreamRetryCount
+        }
+        if (retryCount >= maxRetries) {
+            PhoebeLog.d("AndroidAudioPlayer") { "stream retry exhausted kind=${failure.kind}" }
+            holdQueueOnFailure(failure)
+            publishPlaybackFailure(failure, generation)
             return
         }
         retryCount++
+        retryCurrentStream(generation)
+    }
+
+    private fun retryCurrentStream(generation: Int) {
         retryJob?.cancel()
         val delayMs = StreamRetryBaseDelayMs * retryCount
         retryJob = scope.launch {
@@ -1480,6 +1537,45 @@ class AndroidAudioPlayer(
             }
             syncFromController(generation)
         }
+    }
+
+    private fun holdQueueOnFailure(failure: PlaybackFailure) {
+        clearPendingAutoplay()
+        holdQueueOnInfrastructureFailure = failure.holdsQueue
+        if (failure.holdsQueue) {
+            cancelPlayIntent()
+            scope.launch {
+                controllerMutex.withLock {
+                    activeLocalPlayer()?.pause()
+                }
+            }
+        }
+    }
+
+    private fun currentStreamUri(): String? {
+        val track = state.value.currentTrack
+        return track?.localUri?.takeIf { it.isNotBlank() }
+            ?: track?.streamUrl?.takeIf { it.isNotBlank() }
+    }
+
+    private fun PlaybackException.toPlaybackFailure(streamUri: String?): PlaybackFailure {
+        val httpError = generateSequence(this as Throwable) { it.cause }
+            .filterIsInstance<HttpDataSource.InvalidResponseCodeException>()
+            .firstOrNull()
+        val causeChain = generateSequence(this as Throwable) { it.cause }
+            .drop(1)
+            .map { throwable ->
+                listOfNotNull(throwable::class.simpleName, throwable.message).joinToString(": ")
+            }
+            .filter { it.isNotBlank() }
+            .toList()
+        return PlaybackFailureClassifier.fromMedia3(
+            errorCode = errorCode,
+            message = message,
+            causeChain = causeChain,
+            httpStatus = httpError?.responseCode,
+            streamUri = httpError?.dataSpec?.uri?.toString() ?: streamUri,
+        )
     }
 
     private fun resetRetries(generation: Int) {
@@ -1524,12 +1620,6 @@ class AndroidAudioPlayer(
         AndroidPlaybackBridge.onLocalMediaSessionState?.invoke(null)
     }
 
-    private fun PlaybackException.isRecoverableStreamError(): Boolean =
-        errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED ||
-            errorCode == PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ||
-            errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS ||
-            errorCode == PlaybackException.ERROR_CODE_IO_UNSPECIFIED
-
     private fun reportPlaybackDiagnostics(
         engine: PlaybackEnginePath,
         positionMs: Long,
@@ -1561,6 +1651,7 @@ class AndroidAudioPlayer(
         const val PlaybackBufferingTimeoutMs = 30_000L
         const val AutoplayStartRetryMs = 2_000L
         const val MaxStreamRetryCount = 5
+        const val MaxUnreachableRetryCount = 1
         const val StreamRetryBaseDelayMs = 1_000L
         const val SeekSettleTimeoutMs = 1_500L
         const val SeekSettlePollMs = 50L

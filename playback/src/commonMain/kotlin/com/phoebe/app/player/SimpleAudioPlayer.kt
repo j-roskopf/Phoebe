@@ -14,7 +14,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 internal const val PlaybackReadyBufferedAheadMs = 2_000L
@@ -580,8 +579,26 @@ abstract class SimpleAudioPlayer(
         }
     }
 
-    protected fun markPlaybackFailed(generation: Int = playGeneration, message: String? = null) {
+    protected fun publishPlaybackFailure(
+        failure: PlaybackFailure,
+        generation: Int = playGeneration,
+    ) {
+        markPlaybackFailed(
+            generation = generation,
+            message = failure.userMessage(mutableState.value.currentTrack?.title),
+            cancelPlayIntent = failure.holdsQueue,
+        )
+    }
+
+    protected fun markPlaybackFailed(
+        generation: Int = playGeneration,
+        message: String? = null,
+        cancelPlayIntent: Boolean = false,
+    ) {
         if (!isPlayRequestCurrent(generation)) return
+        if (cancelPlayIntent) {
+            playWhenReady = false
+        }
         stopPlaybackStartupWatchdog()
         val current = mutableState.value
         mutableState.value = current.copy(
@@ -678,6 +695,7 @@ abstract class SimpleAudioPlayer(
     protected open fun cancelGaplessPrepareOnPlatform(generation: Int) = Unit
 
     protected fun advanceAfterPlatformTrackEnded(generation: Int = playGeneration) {
+        if (!playWhenReady) return
         if (commitPreparedGapless(generation)) return
         advanceNext(allowCrossfade = false)
     }
@@ -781,23 +799,17 @@ abstract class SimpleAudioPlayer(
 
     protected open fun onPlaybackStartupTimedOut(generation: Int) {
         if (!isPlayRequestCurrent(generation)) return
-        stopPlaybackStartupWatchdog()
-        val previousErrorSerial = mutableState.value.playbackErrorSerial
-        mutableState.update { current ->
-            if (!isPlayRequestCurrent(generation) || !current.isBuffering) {
-                current
-            } else {
-                current.copy(
-                    isBuffering = false,
-                    isPlaying = false,
-                    playbackErrorSerial = current.playbackErrorSerial + 1,
-                    playbackErrorMessage = "Playback took too long to start.",
-                )
-            }
+        if (!mutableState.value.isBuffering) {
+            stopPlaybackStartupWatchdog()
+            return
         }
-        if (mutableState.value.playbackErrorSerial != previousErrorSerial) {
-            stopProgressTicker()
-        }
+        val track = mutableState.value.currentTrack
+        val streamUri = track?.localUri?.takeIf { it.isNotBlank() }
+            ?: track?.streamUrl?.takeIf { it.isNotBlank() }
+        publishPlaybackFailure(
+            PlaybackFailureClassifier.fromMessage("Playback took too long to start.", streamUri),
+            generation,
+        )
     }
 
     protected open val playbackStartupTimeoutMs: Long

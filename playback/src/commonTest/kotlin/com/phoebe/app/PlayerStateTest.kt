@@ -4,6 +4,8 @@ import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.RepeatMode
+import com.phoebe.app.player.PlaybackFailure
+import com.phoebe.app.player.PlaybackFailureClassifier
 import com.phoebe.app.player.SimpleAudioPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -92,7 +94,11 @@ class PlayerStateTest {
         runCurrent()
         assertFalse(player.state.value.isPlaying)
         assertEquals(1, player.state.value.playbackErrorSerial)
-        assertEquals("Playback took too long to start.", player.state.value.playbackErrorMessage)
+        assertEquals(
+            "Can't reach the music server. Check your connection and try again.",
+            player.state.value.playbackErrorMessage,
+        )
+        assertFalse(player.playIntentActive())
     }
 
     @Test
@@ -466,6 +472,31 @@ class PlayerStateTest {
 
         assertEquals(1, player.state.value.playbackErrorSerial)
         assertEquals(null, player.state.value.playbackErrorMessage)
+    }
+
+    @Test
+    fun infrastructureFailureStopsPlayIntentAndDoesNotAdvanceQueue() {
+        val player = PlatformStateTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+            Track("t2", "Two", "Artist", "Album", 90_000, "http://b", ""),
+        )
+
+        player.play(tracks, 0)
+        val failure = PlaybackFailureClassifier.fromMessage(
+            "ConnectException: Connection refused",
+            streamUri = tracks[0].streamUrl,
+        )
+        player.publishFailure(failure)
+
+        assertEquals(tracks[0], player.state.value.currentTrack)
+        assertFalse(player.state.value.isPlaying)
+        assertFalse(player.playIntentActive())
+        assertEquals("Can't reach the music server. Check your connection and try again.", player.state.value.playbackErrorMessage)
+
+        player.endCurrentTrack()
+
+        assertEquals(tracks[0], player.state.value.currentTrack)
     }
 
     @Test
@@ -985,6 +1016,8 @@ private open class SlowTestPlayer(
         resumeCalls++
     }
 
+    fun playIntentActive(): Boolean = playWhenReady
+
     override fun playQueueOnPlatform(queue: List<Track>, startIndex: Int, track: Track, generation: Int) {
         pendingLoads += generation
     }
@@ -1134,8 +1167,18 @@ private class PlatformStateTestPlayer : SimpleAudioPlayer() {
         adoptPlatformPlayIntent(playWhenReady)
     }
 
-    fun failPlayback(message: String? = null) {
-        markPlaybackFailed(message = message)
+    fun failPlayback(message: String? = null, cancelPlayIntent: Boolean = false) {
+        markPlaybackFailed(message = message, cancelPlayIntent = cancelPlayIntent)
+    }
+
+    fun playIntentActive(): Boolean = playWhenReady
+
+    fun publishFailure(failure: PlaybackFailure) {
+        publishPlaybackFailure(failure)
+    }
+
+    fun endCurrentTrack() {
+        advanceAfterPlatformTrackEnded()
     }
 }
 
