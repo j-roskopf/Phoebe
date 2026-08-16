@@ -1585,6 +1585,7 @@ class DesktopAudioPlayer(
             finishPlaybackFailed(failure, generation)
             return
         }
+        disposeJavaFxBlocking()
         if (failure.shouldTryAlternateEngine) {
             PhoebeLog.d("DesktopAudioPlayer") {
                 "trying alternate engine after JavaFX startup failure"
@@ -1782,14 +1783,14 @@ class DesktopAudioPlayer(
                         failStartup(javaFxErrorFailure(media.error, uri))
                     }
                     mediaPlayer.setOnPlaying {
-                        if (!isPlayRequestCurrent(generation)) return@setOnPlaying
+                        if (startupFailed.get() || !isPlayRequestCurrent(generation)) return@setOnPlaying
                         diagnostics.playbackStartupEvent(PlaybackEnginePath.JavaFxMediaPlayer, "playing")
                         playingStarted.set(true)
                         playingWatchdogStop.set(true)
                         cancelJavaFxStartupWatchdog()
                         syncJavaFxPlayback(mediaPlayer, generation, isBuffering = false)
                         playbackExecutor.execute {
-                            if (!isPlayRequestCurrent(generation)) return@execute
+                            if (startupFailed.get() || !isPlayRequestCurrent(generation)) return@execute
                             applyVolumesFromState()
                             finishPlaybackReady(generation = generation)
                         }
@@ -1798,7 +1799,7 @@ class DesktopAudioPlayer(
                         syncJavaFxPlayback(mediaPlayer, generation, isBuffering = true)
                     }
                     mediaPlayer.setOnReady {
-                        if (!isPlayRequestCurrent(generation)) return@setOnReady
+                        if (startupFailed.get() || !isPlayRequestCurrent(generation)) return@setOnReady
                         diagnostics.playbackStartupEvent(PlaybackEnginePath.JavaFxMediaPlayer, "ready")
                         mediaReady.set(true)
                         cancelJavaFxStartupWatchdog()
