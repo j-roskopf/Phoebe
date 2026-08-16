@@ -26,11 +26,23 @@ data class PlaybackFailure(
         get() = kind == PlaybackFailureKind.Unreachable || kind == PlaybackFailureKind.Transient
 
     /**
-     * Only codec / player-creation problems are worth trying a different engine against
-     * the same URI. Connection, auth, and HTML-instead-of-audio failures will fail again.
+     * Codec / player-creation problems, and JavaFX startup watchdogs, are worth trying a
+     * different engine against the same URI. Connection, auth, and HTML-instead-of-audio
+     * failures will fail again on every engine.
+     *
+     * JavaFX "did not become ready" is not proof the music server is down: desktop JavaFX
+     * uses its own HTTP/TLS stack, which can stall on Windows while the Java HTTP client
+     * (and web playback) still reach the same stream.
      */
     val shouldTryAlternateEngine: Boolean
-        get() = kind == PlaybackFailureKind.Unsupported
+        get() = kind == PlaybackFailureKind.Unsupported || isPlayerEngineTimeout
+
+    val isPlayerEngineTimeout: Boolean
+        get() {
+            val haystack = message.lowercase()
+            return haystack.contains("did not become ready") ||
+                haystack.contains("never started playing")
+        }
 
     /** Server / network problems that must not walk the queue or retry every engine. */
     val isInfrastructureFailure: Boolean

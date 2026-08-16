@@ -170,7 +170,7 @@ class PlaybackFailureTest {
     }
 
     @Test
-    fun remoteStartupTimeoutsAreUnreachableAndDoNotTryAnotherEngine() {
+    fun remoteJavaFxStartupTimeoutsFallBackToAnotherEngineWithoutSkipping() {
         val timeout = PlaybackFailureClassifier.fromMessage(
             "JavaFX media did not become ready in 3000ms",
             streamUri = "https://music.example/Audio/1/stream",
@@ -183,8 +183,23 @@ class PlaybackFailureTest {
         assertEquals(PlaybackFailureKind.Unreachable, timeout.kind)
         assertEquals(PlaybackFailureKind.Unreachable, playingTimeout.kind)
         assertTrue(timeout.holdsQueue)
-        assertFalse(timeout.shouldTryAlternateEngine)
+        assertTrue(timeout.shouldTryAlternateEngine)
+        assertTrue(playingTimeout.shouldTryAlternateEngine)
+        assertTrue(timeout.isPlayerEngineTimeout)
         assertTrue(timeout.isInfrastructureFailure)
+    }
+
+    @Test
+    fun overallPlaybackStartupWatchdogStillStopsWithoutTryingAnotherEngine() {
+        val failure = PlaybackFailureClassifier.fromMessage(
+            "Playback took too long to start.",
+            streamUri = "https://music.example/Audio/1/stream",
+        )
+
+        assertEquals(PlaybackFailureKind.Unreachable, failure.kind)
+        assertTrue(failure.holdsQueue)
+        assertFalse(failure.shouldTryAlternateEngine)
+        assertFalse(failure.isPlayerEngineTimeout)
     }
 
     @Test

@@ -1580,10 +1580,15 @@ class DesktopAudioPlayer(
     ) {
         PhoebeLog.d("DesktopAudioPlayer") { failure.logLine() }
         diagnostics.playbackError(PlaybackEnginePath.JavaFxMediaPlayer, failure.logLine())
-        if (failure.isInfrastructureFailure) {
+        if (failure.isInfrastructureFailure && !failure.shouldTryAlternateEngine) {
             pendingPlaybackFailure = failure
             finishPlaybackFailed(failure, generation)
             return
+        }
+        if (failure.shouldTryAlternateEngine) {
+            PhoebeLog.d("DesktopAudioPlayer") {
+                "trying alternate engine after JavaFX startup failure"
+            }
         }
         if (!continuePlaybackAfterJavaFxFailure(
                 activeUri = activeUri,
