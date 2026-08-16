@@ -273,11 +273,13 @@ class DesktopAudioPlayer(
         startIndex: Int,
         track: Track,
         generation: Int,
+        startPositionMs: Long,
     ) {
         playTrack(
             track = track,
             preferJavaFxForLocalStreaming = shouldPreferJavaFxForCrossfade(queue, startIndex, track),
         )
+        if (startPositionMs > 0L) seek(startPositionMs)
         scheduleCrossfadePrefetchAfterLoad(queue, startIndex, generation)
     }
 

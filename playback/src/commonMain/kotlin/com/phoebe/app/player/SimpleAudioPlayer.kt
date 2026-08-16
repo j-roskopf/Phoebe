@@ -656,8 +656,10 @@ abstract class SimpleAudioPlayer(
         startIndex: Int,
         track: Track,
         generation: Int = activePlayGeneration,
+        startPositionMs: Long = 0L,
     ) {
         playTrack(track)
+        if (startPositionMs > 0L) seek(startPositionMs)
     }
 
     private fun tracksMatch(left: List<Track>, right: List<Track>): Boolean {
@@ -846,14 +848,22 @@ abstract class SimpleAudioPlayer(
         val current = mutableState.value
         val track = current.currentTrack ?: return false
         val index = current.currentIndex.takeIf { it in current.queue.indices } ?: return false
+        val resumePositionMs = current.positionMs.coerceAtLeast(0L)
         mutableState.value = current.copy(
             isBuffering = true,
             isPlaying = false,
+            positionMs = resumePositionMs,
             playbackErrorMessage = null,
         )
-        PhoebeLog.d("AudioPlayer") { "playback failover uri=$next" }
+        PhoebeLog.d("AudioPlayer") { "playback failover uri=$next positionMs=$resumePositionMs" }
         startPlaybackStartupWatchdog(generation)
-        playQueueOnPlatform(mutableState.value.queue, index, track.copy(streamUrl = next), generation)
+        playQueueOnPlatform(
+            queue = mutableState.value.queue,
+            startIndex = index,
+            track = track.copy(streamUrl = next),
+            generation = generation,
+            startPositionMs = resumePositionMs,
+        )
         return true
     }
 

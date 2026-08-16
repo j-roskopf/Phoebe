@@ -270,9 +270,17 @@ class AndroidAudioPlayer(
         startIndex: Int,
         track: Track,
         generation: Int,
+        startPositionMs: Long,
     ) {
         runPlatformLoad(generation) { player ->
-            loadQueueOnPlayer(player, queue, startIndex.coerceIn(queue.indices), queue.map { it.id }, generation)
+            loadQueueOnPlayer(
+                player = player,
+                queue = queue,
+                targetIndex = startIndex.coerceIn(queue.indices),
+                queueIds = queue.map { it.id },
+                generation = generation,
+                startPositionMs = startPositionMs.coerceAtLeast(0L),
+            )
         }
     }
 

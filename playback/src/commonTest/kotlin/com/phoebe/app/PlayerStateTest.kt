@@ -1050,7 +1050,13 @@ private open class SlowTestPlayer(
 
     fun playIntentActive(): Boolean = playWhenReady
 
-    override fun playQueueOnPlatform(queue: List<Track>, startIndex: Int, track: Track, generation: Int) {
+    override fun playQueueOnPlatform(
+        queue: List<Track>,
+        startIndex: Int,
+        track: Track,
+        generation: Int,
+        startPositionMs: Long,
+    ) {
         pendingLoads += generation
     }
 
@@ -1086,7 +1092,13 @@ private class QueueAwareTestPlayer : SimpleAudioPlayer() {
 
     override fun playUri(uri: String) = Unit
 
-    override fun playQueueOnPlatform(queue: List<Track>, startIndex: Int, track: Track, generation: Int) {
+    override fun playQueueOnPlatform(
+        queue: List<Track>,
+        startIndex: Int,
+        track: Track,
+        generation: Int,
+        startPositionMs: Long,
+    ) {
         fullLoads++
     }
 
@@ -1120,7 +1132,13 @@ private class EndedReplayTestPlayer : SimpleAudioPlayer() {
 
     override fun playUri(uri: String) = Unit
 
-    override fun playQueueOnPlatform(queue: List<Track>, startIndex: Int, track: Track, generation: Int) {
+    override fun playQueueOnPlatform(
+        queue: List<Track>,
+        startIndex: Int,
+        track: Track,
+        generation: Int,
+        startPositionMs: Long,
+    ) {
         fullLoads++
         markPlaybackReady(generation = generation)
     }
@@ -1160,7 +1178,13 @@ private class PositionTrackingTestPlayer : SimpleAudioPlayer() {
         markPlaybackReady(generation = generation)
     }
 
-    override fun playQueueOnPlatform(queue: List<Track>, startIndex: Int, track: Track, generation: Int) {
+    override fun playQueueOnPlatform(
+        queue: List<Track>,
+        startIndex: Int,
+        track: Track,
+        generation: Int,
+        startPositionMs: Long,
+    ) {
         lastSeekPositionMs = 0L
         markPlaybackReady(generation = generation)
     }
