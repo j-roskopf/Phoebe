@@ -1535,6 +1535,10 @@ class DesktopAudioPlayer(
     }
 
     private fun finishPlaybackFailed(failure: PlaybackFailure, generation: Int = activePlayGeneration) {
+        if (failure.shouldRetry && replayWithFailoverUri(generation, failure.streamUri ?: currentStreamUri())) {
+            pendingPlaybackFailure = null
+            return
+        }
         DesktopInlineRadioMapCoordinator.endLiveRadioStartup()
         reloadOnResume = failure.holdsQueue
         publishPlaybackFailure(failure, generation)

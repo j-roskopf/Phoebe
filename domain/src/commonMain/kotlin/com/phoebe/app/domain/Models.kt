@@ -535,6 +535,11 @@ data class Track(
     val artistSort: String? = null,
     val albumSort: String? = null,
     val radioNowPlayingSource: RadioNowPlayingSource? = null,
+    /**
+     * Alternate stream origins to try when the primary URL times out or the music-server
+     * connection used at catalog time is no longer reachable. Ephemeral; not persisted.
+     */
+    val playbackFallbackUrls: List<String> = emptyList(),
 )
 
 fun List<Track>.mergeDownloadCopiesById(): List<Track> {

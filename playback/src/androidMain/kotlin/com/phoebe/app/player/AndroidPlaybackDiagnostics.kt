@@ -13,11 +13,14 @@ import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
+import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.audio.AudioSink
 import androidx.media3.exoplayer.audio.DefaultAudioSink
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.platform.PhoebeAppLifecycle
 import java.nio.ByteBuffer
@@ -33,6 +36,10 @@ internal object AndroidPlaybackDiagnostics {
         engine: PlaybackEnginePath,
     ): ExoPlayer.Builder {
         diagnostics.engineSelected(engine)
+        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
+            .setAllowCrossProtocolRedirects(true)
+            .setConnectTimeoutMs(15_000)
+            .setReadTimeoutMs(20_000)
         return ExoPlayer.Builder(
             context,
             PhoebeRenderersFactory(
@@ -40,6 +47,8 @@ internal object AndroidPlaybackDiagnostics {
                 diagnostics = diagnostics,
                 engine = engine,
             ),
+        ).setMediaSourceFactory(
+            DefaultMediaSourceFactory(DefaultDataSource.Factory(context, httpDataSourceFactory)),
         ).setLoadControl(
             PhoebeLoadControlConfig.create(
                 engine = engine,

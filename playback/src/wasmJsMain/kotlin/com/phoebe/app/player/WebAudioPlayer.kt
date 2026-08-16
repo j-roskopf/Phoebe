@@ -78,6 +78,7 @@ private class WebAudioPlayer(
     }
 
     override fun onPlaybackStartupTimedOut(generation: Int) {
+        if (replayWithFailoverUri(generation, currentUri ?: state.value.currentTrack?.streamUrl)) return
         if (isPlayRequestCurrent(generation) && state.value.isBuffering &&
             shouldSkipToNextWebTrackAfterFailure(generation)
         ) {
@@ -1174,6 +1175,7 @@ private class WebAudioPlayer(
             retryCount = 0
         }
         if (retryCount >= MaxStreamRetryCount) {
+            if (replayWithFailoverUri(generation, currentUri)) return
             failOrAdvanceWebPlayback(generation)
             return
         }

@@ -686,6 +686,7 @@ private class IosAudioPlayer(
             retryCount = 0
         }
         if (retryCount >= MaxStreamRetryCount) {
+            if (replayWithFailoverUri(generation, currentUri)) return
             markPlaybackFailed(generation)
             return
         }

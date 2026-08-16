@@ -1,10 +1,12 @@
 package com.phoebe.app
 
 import com.phoebe.app.domain.MediaProviderType
+import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.PlexSession
 import com.phoebe.app.domain.Track
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 class PlaybackUrlRefreshTest {
     @Test
@@ -25,6 +27,41 @@ class PlaybackUrlRefreshTest {
         assertEquals(
             "https://plex.example/library/parts/1/file.mp3?download=1&X-Plex-Token=fresh",
             refreshed.downloadUrl,
+        )
+    }
+
+    @Test
+    fun plexPlaybackUrlsRebaseStaleRelayHostsOntoTheLiveServerOrigin() {
+        val track = playbackTrack(
+            streamUrl = "https://23-239-17-63.abc.plex.direct:8443/library/parts/36576/file.mp3?X-Plex-Token=old",
+            downloadUrl = "https://23-239-17-63.abc.plex.direct:8443/library/parts/36576/file.mp3?download=1&X-Plex-Token=old",
+        )
+        val live = "https://45-79-210-225.abc.plex.direct:8443"
+        val session = PlexSession(
+            token = "fresh",
+            providerType = MediaProviderType.Plex,
+            selectedServer = PlexServer(
+                id = "plex",
+                name = "Plex",
+                uri = live,
+                owned = true,
+                connectionUris = listOf(live, "https://23-239-17-63.abc.plex.direct:8443"),
+                advertisedConnectionUris = listOf(live, "https://23-239-17-63.abc.plex.direct:8443"),
+            ),
+        )
+
+        val refreshed = listOf(track).withFreshPlaybackUrls(session, live).single()
+
+        assertEquals(
+            "$live/library/parts/36576/file.mp3?X-Plex-Token=fresh",
+            refreshed.streamUrl,
+        )
+        assertEquals(
+            "$live/library/parts/36576/file.mp3?download=1&X-Plex-Token=fresh",
+            refreshed.downloadUrl,
+        )
+        assertTrue(
+            refreshed.playbackFallbackUrls.any { it.contains("23-239-17-63") && it.contains("X-Plex-Token=fresh") },
         )
     }
 

@@ -1501,40 +1501,54 @@ class AndroidAudioPlayer(
         } else {
             MaxStreamRetryCount
         }
-        if (retryCount >= maxRetries) {
-            PhoebeLog.d("AndroidAudioPlayer") { "stream retry exhausted kind=${failure.kind}" }
-            holdQueueOnFailure(failure)
-            publishPlaybackFailure(failure, generation)
+        if (retryCount < maxRetries) {
+            retryCount++
+            retryCurrentStream(generation)
             return
         }
-        retryCount++
-        retryCurrentStream(generation)
+        if (replayWithFailoverUri(generation, failure.streamUri ?: currentStreamUri())) {
+            retryCount = 0
+            return
+        }
+        PhoebeLog.d("AndroidAudioPlayer") { "stream retry exhausted kind=${failure.kind}" }
+        holdQueueOnFailure(failure)
+        publishPlaybackFailure(failure, generation)
     }
 
     private fun retryCurrentStream(generation: Int) {
         retryJob?.cancel()
         val delayMs = StreamRetryBaseDelayMs * retryCount
         retryJob = scope.launch {
-            val player = activeLocalPlayer() ?: return@launch
-            val positionMs = player.currentPosition.coerceAtLeast(0L)
+            delay(delayMs)
+            if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
+            val uri = currentStreamUri() ?: return@launch
+            val positionMs = controllerMutex.withLock {
+                activeLocalPlayer()?.currentPosition?.coerceAtLeast(0L) ?: 0L
+            }
             applyPlatformPlayback(
                 positionMs = positionMs,
-                durationMs = player.duration.coerceAtLeast(0L),
+                durationMs = state.value.durationMs,
                 isPlaying = false,
                 isBuffering = true,
-                bufferedPositionMs = player.bufferedPosition.coerceAtLeast(positionMs).coerceAtLeast(0L),
+                bufferedPositionMs = state.value.bufferedPositionMs.coerceAtLeast(positionMs),
                 generation = generation,
                 forceBuffering = true,
             )
-            delay(delayMs)
-            if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
+            stopBufferingTimeout()
             controllerMutex.withLock {
                 val retryPlayer = activeLocalPlayer() ?: return@withLock
-                retryPlayer.seekTo(positionMs)
+                val track = state.value.currentTrack
+                val mediaItem = if (track != null) {
+                    playbackMediaItem(track.copy(streamUrl = uri), inAppPlayback = true)
+                } else {
+                    MediaItem.Builder().setUri(uri).build()
+                }
+                retryPlayer.setMediaItem(mediaItem, positionMs)
                 retryPlayer.prepare()
                 markPendingAutoplay(generation)
                 retryPlayer.play()
             }
+            startBufferingTimeout(generation)
             syncFromController(generation)
         }
     }

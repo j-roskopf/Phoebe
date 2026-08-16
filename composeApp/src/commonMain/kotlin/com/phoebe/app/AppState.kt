@@ -82,6 +82,8 @@ import com.phoebe.app.playlists.PlaylistExportFormat
 import com.phoebe.app.player.MusicAssistantRemotePlayback
 import com.phoebe.app.player.asPlayerState
 import com.phoebe.app.player.isPlaybackActive
+import com.phoebe.app.player.playbackOriginCandidates
+import com.phoebe.app.player.withPlaybackOrigins
 import com.phoebe.app.domain.RecentSearchItem
 import com.phoebe.app.platform.MemoryPressureLevel
 import com.phoebe.app.platform.PhoebeAppLifecycle
@@ -846,7 +848,7 @@ class AppState(
                 allowWeakFallback = nativeCandidates.isEmpty(),
             ) ?: return@withContext emptyList()
             plan.tracks
-                .withFreshPlaybackUrls(session.value)
+                .withFreshPlaybackUrls(session.value, currentPlaybackOrigin())
                 .let { tracks -> if (shuffle) tracks.shuffled() else tracks }
         }
         if (additions.isEmpty()) {
@@ -2631,6 +2633,14 @@ class AppState(
         mutableDecadeMixNotice.value = null
     }
 
+    private fun currentPlaybackOrigin(): String? {
+        val server = session.value?.selectedServer ?: return null
+        return dependencies.appGraph.plexClient.mediaBaseUrl(server)
+            .trimEnd('/')
+            .ifBlank { server.uri.trimEnd('/') }
+            .takeIf { it.isNotBlank() }
+    }
+
     fun playTracks(
         tracks: List<Track>,
         index: Int = 0,
@@ -2641,7 +2651,7 @@ class AppState(
         preserveQueueContext: Boolean = false,
     ): Boolean {
         collectionMixGeneration++
-        val playbackTracks = tracks.withFreshPlaybackUrls(session.value)
+        val playbackTracks = tracks.withFreshPlaybackUrls(session.value, currentPlaybackOrigin())
         if (playbackTracks.isEmpty()) return false
         val startIndex = index.coerceIn(playbackTracks.indices)
         val track = playbackTracks[startIndex]
@@ -3962,24 +3972,41 @@ private fun PlexSession?.topTracksMixSessionSignature(): String? {
     return "$serverId:$libraryKey"
 }
 
-internal fun List<Track>.withFreshPlaybackUrls(session: PlexSession?): List<Track> {
+internal fun List<Track>.withFreshPlaybackUrls(
+    session: PlexSession?,
+    liveOrigin: String? = null,
+): List<Track> {
     if (session == null || isEmpty()) return this
     var changed = false
     val refreshed = map { track ->
-        val next = track.withFreshPlaybackUrls(session)
+        val next = track.withFreshPlaybackUrls(session, liveOrigin)
         if (next !== track) changed = true
         next
     }
     return if (changed) refreshed else this
 }
 
-internal fun Track.withFreshPlaybackUrls(session: PlexSession): Track {
-    val refreshedStreamUrl = streamUrl.withFreshPlaybackAuth(session)
-    val refreshedDownloadUrl = downloadUrl.withFreshPlaybackAuth(session)
-    if (refreshedStreamUrl == streamUrl && refreshedDownloadUrl == downloadUrl) return this
-    return copy(
+internal fun Track.withFreshPlaybackUrls(
+    session: PlexSession,
+    liveOrigin: String? = null,
+): Track {
+    val origins = playbackOriginCandidates(session.selectedServer, liveOrigin)
+    val withOrigins = if (origins.isEmpty()) this else withPlaybackOrigins(origins.first(), origins.drop(1))
+    val refreshedStreamUrl = withOrigins.streamUrl.withFreshPlaybackAuth(session)
+    val refreshedDownloadUrl = withOrigins.downloadUrl.withFreshPlaybackAuth(session)
+    val refreshedFallbacks = withOrigins.playbackFallbackUrls.map { url ->
+        url.withFreshPlaybackAuth(session)
+    }.filter { it.isNotBlank() && it != refreshedStreamUrl }.distinct()
+    if (refreshedStreamUrl == streamUrl &&
+        refreshedDownloadUrl == downloadUrl &&
+        refreshedFallbacks == playbackFallbackUrls
+    ) {
+        return this
+    }
+    return withOrigins.copy(
         streamUrl = refreshedStreamUrl,
         downloadUrl = refreshedDownloadUrl,
+        playbackFallbackUrls = refreshedFallbacks,
     )
 }
 
