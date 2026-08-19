@@ -53,6 +53,12 @@ fun nextCastLoadRetryItemCount(failedReceiverItemCount: Int): Int? {
     return (failedReceiverItemCount / 2).coerceAtLeast(1)
 }
 
+fun mediaErrorRetryCountFor(
+    currentTrackId: String?,
+    previousTrackId: String?,
+    previousCount: Int,
+): Int = if (currentTrackId != null && currentTrackId == previousTrackId) previousCount else 0
+
 fun shrinkCastReceiverQueueItemCount(
     tailSize: Int,
     maxItems: Int = CAST_MAX_RECEIVER_QUEUE_ITEMS,

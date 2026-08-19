@@ -76,6 +76,7 @@ private class AndroidCastController : CastController {
     private var loadRequestId = 0L
     private var lastLoadReceiverQueueSize = 0
     private var mediaErrorRetryCount = 0
+    private var mediaErrorTrackId: String? = null
     private var endingSessionIntentionally = false
     private var lastLoggedRemoteState: String? = null
 
@@ -333,7 +334,7 @@ private class AndroidCastController : CastController {
         val decision = decideCastSkipAction(
             targetIndex = targetIndex,
             queueSize = current.queue.size,
-            targetAlreadyOnReceiver = receiverQueueItem(current.queue.getOrNull(targetIndex)) != null,
+            targetAlreadyOnReceiver = receiverQueueItemForAppIndex(current.queue, targetIndex) != null,
         )
         PhoebeLog.d(TAG) {
             "skip to=$targetIndex from=${current.currentIndex} decision=$decision connected=${current.isConnected}"
@@ -354,7 +355,7 @@ private class AndroidCastController : CastController {
                     )
                 }
                 suspendLocalPlayback()
-                if (!jumpToReceiverTrack(target)) {
+                if (!jumpToReceiverAppIndex(current.queue, targetIndex)) {
                     loadQueueInternal(current.queue, targetIndex)
                 }
             }
@@ -528,14 +529,20 @@ private class AndroidCastController : CastController {
         }
         val playerState = status?.playerState ?: CAST_PLAYER_STATE_UNKNOWN
         val idleReason = status?.idleReason ?: CAST_IDLE_REASON_NONE
-        val nextTrack = queue.getOrNull(currentIndex + 1)
+        val currentTrackId = queue.getOrNull(currentIndex)?.id
+        mediaErrorRetryCount = mediaErrorRetryCountFor(
+            currentTrackId = currentTrackId,
+            previousTrackId = mediaErrorTrackId,
+            previousCount = mediaErrorRetryCount,
+        )
+        mediaErrorTrackId = currentTrackId
         val idleDecision = decideCastIdleAction(
             playerState = playerState,
             idleReason = idleReason,
             hasPendingHandoff = pendingHandoff != null,
             currentIndex = currentIndex,
             lastAppIndex = queue.lastIndex,
-            nextItemAlreadyOnReceiver = receiverQueueItem(nextTrack, queueItems) != null,
+            nextItemAlreadyOnReceiver = receiverQueueItemForAppIndex(queue, currentIndex + 1, queueItems) != null,
             currentErrorRetryCount = mediaErrorRetryCount,
         )
         val remoteState = "player=${castPlayerStateName(playerState)} idle=${castIdleReasonName(idleReason)} index=$currentIndex playing=$isPlaying buffering=$isBuffering localPlaying=${audioPlayer?.state?.value?.isPlaying == true} servicePlaying=${AndroidPlaybackBridge.isServicePlaybackActive()} decision=$idleDecision"
@@ -543,20 +550,20 @@ private class AndroidCastController : CastController {
             lastLoggedRemoteState = remoteState
             PhoebeLog.d(TAG) { "remote $remoteState" }
         }
-        if (playerState != CAST_PLAYER_STATE_IDLE || idleReason != CAST_IDLE_REASON_ERROR) {
+        if (playerState == CAST_PLAYER_STATE_PLAYING &&
+            client.approximateStreamPosition > 2_000L
+        ) {
             mediaErrorRetryCount = 0
         }
         when (idleDecision) {
             CastIdleDecision.Ignore -> Unit
             CastIdleDecision.AdvanceReceiverQueue -> {
-                if (nextTrack != null && jumpToReceiverTrack(nextTrack, queueItems)) {
+                if (jumpToReceiverAppIndex(queue, currentIndex + 1, queueItems)) {
                     rememberAppQueue(queue, currentIndex + 1)
                     return
                 }
-                if (nextTrack != null) {
-                    loadQueueInternal(queue, currentIndex + 1)
-                    return
-                }
+                loadQueueInternal(queue, currentIndex + 1)
+                return
             }
             is CastIdleDecision.LoadNextWindow -> {
                 loadQueueInternal(queue, idleDecision.startIndex)
@@ -671,7 +678,7 @@ private class AndroidCastController : CastController {
         if (positionMs > 0L) {
             localPlayer.seekTo(positionMs)
         }
-        if (shouldPlay && !localPlayer.state.value.isPlaying) {
+        if (!shouldPlay && (localPlayer.state.value.isPlaying || localPlayer.state.value.isBuffering)) {
             localPlayer.togglePlayPause()
         }
     }
@@ -682,11 +689,16 @@ private class AndroidCastController : CastController {
             delay(CAST_UNEXPECTED_DISCONNECT_RECONNECT_MS)
             if (remoteMediaClient() != null) return@launch
             PhoebeLog.d(TAG) { "cast reconnect timed out; leaving local playback paused" }
+            appQueueSnapshot = null
             mutableState.update {
                 it.copy(
                     isConnected = false,
+                    queue = emptyList(),
+                    currentIndex = -1,
                     isPlaying = false,
                     isBuffering = false,
+                    positionMs = 0L,
+                    durationMs = 0L,
                     message = "Lost Chromecast connection. The speaker may still be playing.",
                 )
             }
@@ -821,28 +833,50 @@ private class AndroidCastController : CastController {
         loadQueueInternal(queue, index, positionMs)
     }
 
-    private fun receiverQueueItem(
-        track: Track?,
+    private fun receiverQueueItemForAppIndex(
+        queue: List<Track>,
+        appIndex: Int,
         queueItems: List<MediaQueueItem>? = remoteMediaClient()?.mediaStatus?.queueItems,
     ): MediaQueueItem? {
-        if (track == null) return null
-        return queueItems.orEmpty().firstOrNull { item ->
-            val media = item.media ?: return@firstOrNull false
-            track.matchesCastMedia(media.toTrack(), media.contentId)
+        val target = queue.getOrNull(appIndex) ?: return null
+        val items = queueItems.orEmpty()
+        if (items.isEmpty()) return null
+        val firstMedia = items.first().media ?: return null
+        val windowStart = queue.indexOfFirst { track ->
+            track.matchesCastMedia(firstMedia.toTrack(), firstMedia.contentId)
         }
+        if (windowStart >= 0) {
+            val receiverIndex = appIndex - windowStart
+            items.getOrNull(receiverIndex)?.let { item ->
+                val media = item.media ?: return@let null
+                if (target.matchesCastMedia(media.toTrack(), media.contentId)) return item
+            }
+        }
+        val matchingAppIndexes = queue.indices.filter { index ->
+            queue[index].matchesCastMedia(target, target.toCastMediaDescriptor().castUrl)
+        }
+        if (matchingAppIndexes.size == 1) {
+            return items.firstOrNull { item ->
+                val media = item.media ?: return@firstOrNull false
+                target.matchesCastMedia(media.toTrack(), media.contentId)
+            }
+        }
+        return null
     }
 
-    private fun jumpToReceiverTrack(
-        track: Track,
+    private fun jumpToReceiverAppIndex(
+        queue: List<Track>,
+        appIndex: Int,
         queueItems: List<MediaQueueItem>? = remoteMediaClient()?.mediaStatus?.queueItems,
     ): Boolean {
-        val client = remoteMediaClient() ?: return false
-        val item = receiverQueueItem(track, queueItems) ?: return false
-        PhoebeLog.d(TAG) { "jumping receiver queue itemId=${item.itemId} id=${track.id}" }
+        val item = receiverQueueItemForAppIndex(queue, appIndex, queueItems) ?: return false
+        val track = queue.getOrNull(appIndex) ?: return false
+        PhoebeLog.d(TAG) { "jumping receiver queue itemId=${item.itemId} appIndex=$appIndex id=${track.id}" }
         loadTimeoutJob?.cancel()
         loadTimeoutJob = null
         pendingHandoff = null
         expectedRemoteHandoff = null
+        val client = remoteMediaClient() ?: return false
         return runCatching {
             client.queueJumpToItem(item.itemId, null as JSONObject?)
             true

@@ -106,6 +106,26 @@ class CastPlaybackPolicyTest {
     }
 
     @Test
+    fun mediaErrorRetriesSurviveBufferingAndPlayingOnTheSameTrack() {
+        assertEquals(
+            1,
+            mediaErrorRetryCountFor(
+                currentTrackId = "plex:1",
+                previousTrackId = "plex:1",
+                previousCount = 1,
+            ),
+        )
+        assertEquals(
+            0,
+            mediaErrorRetryCountFor(
+                currentTrackId = "plex:2",
+                previousTrackId = "plex:1",
+                previousCount = 1,
+            ),
+        )
+    }
+
+    @Test
     fun idleErrorRetriesThenSkipsInsteadOfSilentlyStopping() {
         assertEquals(
             CastIdleDecision.RetryCurrent,
