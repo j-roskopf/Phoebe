@@ -3,9 +3,7 @@ package com.phoebe.app.feature.search
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.phoebe.app.domain.Album
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.CatalogSnapshot
@@ -49,11 +47,10 @@ fun SearchDesktopRoute(
     LaunchedEffect(catalog, catalogRefreshing) {
         viewModel.updateCatalog(catalog, catalogRefreshing)
     }
-    val state by viewModel.state.collectAsStateWithLifecycle()
     SearchDesktopRoute(
         state = SearchDesktopRouteState(
-            catalog = state.catalog,
-            catalogRefreshing = state.catalogRefreshing,
+            catalog = catalog,
+            catalogRefreshing = catalogRefreshing,
             query = searchQuery,
         ),
         actions = actions,
@@ -118,11 +115,10 @@ fun SearchMobileRoute(
     LaunchedEffect(catalog, catalogRefreshing) {
         viewModel.updateCatalog(catalog, catalogRefreshing)
     }
-    val state by viewModel.state.collectAsStateWithLifecycle()
     SearchMobileRoute(
         state = SearchDesktopRouteState(
-            catalog = state.catalog,
-            catalogRefreshing = state.catalogRefreshing,
+            catalog = catalog,
+            catalogRefreshing = catalogRefreshing,
             query = searchQuery,
         ),
         actions = actions,
