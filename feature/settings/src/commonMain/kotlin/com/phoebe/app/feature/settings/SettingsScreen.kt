@@ -5,6 +5,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -54,6 +56,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -1041,22 +1044,27 @@ private fun StreamingQualitySelector(
     val optionShape = RoundedCornerShape(
         if (PhoebeUi.design == PhoebeDesignSystem.Brutalist) 0.dp else if (compact) 8.dp else 9.dp,
     )
-    Row(
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(containerShape)
             .background(PhoebeUi.subtleFill)
             .border(BorderStroke(1.dp, PhoebeUi.border), containerShape)
+            .selectableGroup()
             .padding(if (compact) 4.dp else 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         StreamingQuality.Options.forEach { quality ->
             val isSelected = quality == selected
             Column(
                 modifier = Modifier
-                    .weight(1f)
+                    .fillMaxWidth()
                     .clip(optionShape)
-                    .clickable { onSelected(quality) }
+                    .selectable(
+                        selected = isSelected,
+                        onClick = { onSelected(quality) },
+                        role = Role.RadioButton,
+                    )
                     .testTag("settings:streamingQuality:${quality.name}")
                     .background(if (isSelected) PhoebeUi.accent.copy(alpha = 0.16f) else Color.Transparent)
                     .border(
@@ -1066,23 +1074,18 @@ private fun StreamingQualitySelector(
                         ),
                         optionShape,
                     )
-                    .padding(horizontal = 8.dp, vertical = if (compact) 8.dp else 10.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
+                    .padding(horizontal = 12.dp, vertical = if (compact) 8.dp else 10.dp),
             ) {
                 Text(
                     quality.label,
                     color = if (isSelected) PhoebeUi.accentLight else PhoebeUi.primaryText,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
                 Text(
                     quality.subtitle,
                     color = PhoebeUi.mutedText,
-                    fontSize = 11.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 12.sp,
                 )
             }
         }

@@ -178,4 +178,21 @@ class PlaybackUrlOriginsTest {
             ),
         )
     }
+
+    @Test
+    fun transcodeFailureFallsBackToOriginalPartUrl() {
+        val original = "https://23-92-30-53.abc.plex.direct:8443/library/parts/9.flac?X-Plex-Token=token"
+        val transcode =
+            "https://23-92-30-53.abc.plex.direct:8443/music/:/transcode/universal/start.mp3?path=%2Flibrary%2Fmetadata%2F456"
+        val lan = "http://172.16.1.2:32400/library/parts/9.flac?X-Plex-Token=token"
+        assertTrue(transcode.isPlexUniversalTranscodeUrl())
+        assertEquals(
+            original,
+            nextPlaybackFailoverCandidate(
+                candidates = listOf(original, lan),
+                tried = setOf(transcode),
+                failedUri = transcode,
+            ),
+        )
+    }
 }

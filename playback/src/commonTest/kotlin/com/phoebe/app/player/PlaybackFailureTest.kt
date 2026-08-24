@@ -85,6 +85,22 @@ class PlaybackFailureTest {
     }
 
     @Test
+    fun plexTranscodeBadRequestIsNotTreatedAsUnauthorized() {
+        val failure = PlaybackFailureClassifier.fromMedia3(
+            errorCode = PlaybackFailureClassifier.Media3IoBadHttpStatus,
+            message = "Source error status=400",
+            httpStatus = 400,
+            streamUri = "https://plex.example/music/:/transcode/universal/start.mp3",
+        )
+
+        assertEquals(PlaybackFailureKind.Unknown, failure.kind)
+        assertEquals(400, failure.statusCode)
+        assertEquals("Couldn't play Song.", failure.userMessage("Song"))
+        assertFalse(failure.shouldRetry)
+        assertTrue(failure.holdsQueue)
+    }
+
+    @Test
     fun bufferingTimeoutIsUnreachable() {
         val failure = PlaybackFailureClassifier.fromMessage("playback timed out while buffering")
 

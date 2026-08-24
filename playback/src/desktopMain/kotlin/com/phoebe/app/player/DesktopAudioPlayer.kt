@@ -1537,7 +1537,7 @@ class DesktopAudioPlayer(
     }
 
     private fun finishPlaybackFailed(failure: PlaybackFailure, generation: Int = activePlayGeneration) {
-        if (failure.shouldRetry && replayWithFailoverUri(generation, failure.streamUri ?: currentStreamUri())) {
+        if (replayWithFailoverUri(generation, failure.streamUri ?: currentStreamUri())) {
             pendingPlaybackFailure = null
             return
         }
@@ -1547,9 +1547,10 @@ class DesktopAudioPlayer(
     }
 
     private fun currentStreamUri(): String? {
-        val track = state.value.currentTrack
-        return track?.localUri?.takeIf { it.isNotBlank() }
-            ?: track?.streamUrl?.takeIf { it.isNotBlank() }
+        val track = state.value.currentTrack ?: return null
+        return StreamingPlaybackPolicyHolder.resolvePlaybackUri(track).takeIf { it.isNotBlank() }
+            ?: track.localUri?.takeIf { it.isNotBlank() }
+            ?: track.streamUrl.takeIf { it.isNotBlank() }
     }
 
     private fun rememberPlaybackFailure(error: Throwable, streamUri: String?): PlaybackFailure {

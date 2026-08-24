@@ -235,6 +235,7 @@ object PlaybackFailureClassifier {
     private fun kindForHttpStatus(statusCode: Int?): PlaybackFailureKind = when (statusCode) {
         401, 403 -> PlaybackFailureKind.Unauthorized
         404, 410 -> PlaybackFailureKind.NotFound
+        400 -> PlaybackFailureKind.Unknown
         408, 429 -> PlaybackFailureKind.Transient
         in 500..599 -> PlaybackFailureKind.Transient
         in 400..499 -> PlaybackFailureKind.Unauthorized

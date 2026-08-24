@@ -1496,6 +1496,9 @@ class AndroidAudioPlayer(
             return
         }
         if (!failure.shouldRetry) {
+            if (replayWithFailoverUri(generation, failure.streamUri ?: currentStreamUri())) {
+                return
+            }
             holdQueueOnFailure(failure)
             publishPlaybackFailure(failure, generation)
             return

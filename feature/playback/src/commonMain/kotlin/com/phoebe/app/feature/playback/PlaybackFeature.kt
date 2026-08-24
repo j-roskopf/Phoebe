@@ -10,6 +10,7 @@ import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.RepeatMode
+import com.phoebe.app.domain.StreamingQuality
 import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.UpNextDividerMarker
 import com.phoebe.app.player.CastState
@@ -44,6 +45,7 @@ data class MobilePlaybackRouteState(
     val handleSystemBack: Boolean = true,
     val initialUpNextExpanded: Boolean = false,
     val expansionFraction: Float = 0f,
+    val effectiveStreamingQuality: StreamingQuality = StreamingQuality.Original,
 )
 
 class MobilePlaybackRouteActions(
@@ -173,6 +175,7 @@ fun MobilePlaybackRoute(
         onDragStart = actions.onDragStart,
         onDrag = actions.onDrag,
         onDragEnd = actions.onDragEnd,
+        effectiveStreamingQuality = state.effectiveStreamingQuality,
         modifier = modifier,
     )
 }

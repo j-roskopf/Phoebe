@@ -1,5 +1,6 @@
 package com.phoebe.app.player
 
+import com.phoebe.app.data.isLocalOnlyServerOrigin
 import com.phoebe.app.data.reachableBaseUris
 import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.Track
@@ -112,42 +113,7 @@ internal fun nextPlaybackFailoverCandidate(
     }
 }
 
-internal fun isLocalOnlyPlaybackOrigin(url: String): Boolean {
-    if (url.isBlank()) return false
-    val parsed = runCatching { Url(url) }.getOrNull() ?: return false
-    val host = parsed.host.lowercase()
-    if (host == "localhost" || host.endsWith(".local")) return true
-    val ip = when {
-        isDottedIpv4(host) -> host
-        else -> decodedIpv4FromPlexDirectHost(host)
-    } ?: return false
-    return isPrivateOrLoopbackIpv4(ip)
-}
-
-private fun isDottedIpv4(host: String): Boolean {
-    val parts = host.split('.')
-    return parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 }
-}
-
-private fun decodedIpv4FromPlexDirectHost(host: String): String? {
-    if (!host.endsWith(".plex.direct")) return null
-    val dashed = host.substringBefore('.')
-    val parts = dashed.split('-')
-    if (parts.size != 4 || parts.any { it.toIntOrNull() !in 0..255 }) return null
-    return parts.joinToString(".")
-}
-
-private fun isPrivateOrLoopbackIpv4(ip: String): Boolean {
-    val parts = ip.split('.').mapNotNull { it.toIntOrNull() }
-    if (parts.size != 4) return false
-    val a = parts[0]
-    val b = parts[1]
-    return a == 10 ||
-        a == 127 ||
-        (a == 192 && b == 168) ||
-        (a == 172 && b in 16..31) ||
-        (a == 169 && b == 254)
-}
+internal fun isLocalOnlyPlaybackOrigin(url: String): Boolean = isLocalOnlyServerOrigin(url)
 
 fun Track.withPlaybackOrigins(
     preferredOrigin: String?,

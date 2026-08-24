@@ -830,6 +830,7 @@ abstract class SimpleAudioPlayer(
     protected fun resetPlaybackUriFailover(generation: Int) {
         failoverGeneration = generation
         triedPlaybackUris.clear()
+        StreamingPlaybackPolicyHolder.clearDirectStreamPreference()
     }
 
     protected fun notePlaybackUri(uri: String, generation: Int) {
@@ -852,6 +853,10 @@ abstract class SimpleAudioPlayer(
     protected fun replayWithFailoverUri(generation: Int, failedUri: String?): Boolean {
         if (!isPlayRequestCurrent(generation) || !playWhenReady) return false
         val next = nextPlaybackFailoverUri(generation, failedUri) ?: return false
+        val trackId = mutableState.value.currentTrack?.id
+        if (!failedUri.isNullOrBlank() && failedUri.isPlexUniversalTranscodeUrl() && !trackId.isNullOrBlank()) {
+            StreamingPlaybackPolicyHolder.preferDirectStreamFor(trackId)
+        }
         notePlaybackUri(next, generation)
         adoptFailoverStreamUrl(next)
         val current = mutableState.value

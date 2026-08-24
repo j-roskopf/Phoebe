@@ -3,6 +3,8 @@ package com.phoebe.app.player
 import com.phoebe.app.domain.StreamingPolicySettings
 import com.phoebe.app.domain.StreamingQuality
 import com.phoebe.app.domain.Track
+import com.phoebe.app.domain.isLosslessAudioSource
+import com.phoebe.app.domain.keepsOriginalStreamFor
 import io.ktor.http.URLBuilder
 import io.ktor.http.Url
 import io.ktor.http.takeFrom
@@ -19,11 +21,26 @@ object StreamingPlaybackPolicyHolder {
     @Volatile
     var networkIsConstrainedProvider: () -> Boolean = { false }
 
+    @Volatile
+    private var directStreamTrackId: String? = null
+
     fun effectiveQuality(): StreamingQuality =
         settings.effectiveQuality(networkIsConstrainedProvider())
 
-    fun resolvePlaybackUri(track: Track): String =
-        track.resolvedPlaybackUri(effectiveQuality())
+    fun preferDirectStreamFor(trackId: String) {
+        directStreamTrackId = trackId.takeIf { it.isNotBlank() }
+    }
+
+    fun clearDirectStreamPreference() {
+        directStreamTrackId = null
+    }
+
+    fun resolvePlaybackUri(track: Track): String {
+        if (track.id == directStreamTrackId) {
+            return track.localUri?.takeIf { it.isNotBlank() } ?: track.streamUrl
+        }
+        return track.resolvedPlaybackUri(effectiveQuality())
+    }
 }
 
 fun Track.resolvedPlaybackUri(
@@ -38,37 +55,16 @@ fun Track.resolvedPlaybackUri(
 }
 
 fun Track.qualityAwareStreamUrl(quality: StreamingQuality): String {
-    if (streamUrl.isBlank() || quality == StreamingQuality.Original) return streamUrl
+    if (streamUrl.isBlank() || keepsOriginalStreamFor(quality)) return streamUrl
     val maxKbps = quality.maxAudioBitrateKbps ?: return streamUrl
-    if (alreadyWithinBitrateBudget(maxKbps)) return streamUrl
-    return plexWebUniversalMp3TranscodeUrl(maxAudioBitrateKbps = maxKbps)
+    return plexBitrateLimitedMp3TranscodeUrl(maxKbps)
         ?: plexUniversalMp3TranscodeUrl(maxAudioBitrateKbps = maxKbps)
         ?: jellyfinFamilyMp3TranscodeUrl(maxAudioBitrateKbps = maxKbps)
         ?: subsonicBitrateLimitedStreamUrl(maxKbps)
         ?: streamUrl
 }
 
-internal fun Track.alreadyWithinBitrateBudget(maxKbps: Int): Boolean {
-    if (isLosslessAudioCodec()) return false
-    val bitrate = bitrateKbps
-    if (bitrate != null && bitrate > 0) return bitrate <= maxKbps
-    // Unknown lossy bitrate: keep the direct stream for High, but try to transcode for Data saver.
-    return maxKbps >= StreamingQuality.High.maxAudioBitrateKbps!!
-}
-
-internal fun Track.isLosslessAudioCodec(): Boolean {
-    val codec = audioCodec?.lowercase()
-    if (codec != null) {
-        when (codec) {
-            "flac", "alac", "wav", "aiff", "aif", "pcm", "dsd" -> return true
-        }
-    }
-    val path = filepath ?: streamUrl.substringBefore('?').substringBefore('#')
-    return when (path.substringAfterLast('.', missingDelimiterValue = "").lowercase()) {
-        "flac", "alac", "wav", "aiff", "aif" -> true
-        else -> false
-    }
-}
+internal fun Track.isLosslessAudioCodec(): Boolean = isLosslessAudioSource()
 
 internal fun Track.subsonicBitrateLimitedStreamUrl(maxKbps: Int): String? {
     val parsed = runCatching { Url(streamUrl) }.getOrNull() ?: return null

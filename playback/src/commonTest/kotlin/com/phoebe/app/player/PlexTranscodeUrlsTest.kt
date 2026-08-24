@@ -77,7 +77,7 @@ class PlexTranscodeUrlsTest {
         assertTrue(
             playbackUrl.contains("path=https%3A%2F%2Fplex.example%3A32400%2Flibrary%2Fmetadata%2F456"),
         )
-        assertTrue(playbackUrl.contains("protocol=https"))
+        assertTrue(playbackUrl.contains("protocol=http"))
         assertTrue(playbackUrl.contains("X-Plex-Client-Identifier=phoebe-compose-multiplatform"))
         assertTrue(playbackUrl.contains("session="))
     }
@@ -95,6 +95,31 @@ class PlexTranscodeUrlsTest {
             audioCodec = "mp3",
         )
         assertEquals(plexMp3Track.streamUrl, plexMp3Track.webPlaybackStreamUrl())
+    }
+
+    @Test
+    fun plexBitrateLimitedTranscodeUrlUsesRelativePathAndHttpProtocol() {
+        val plexFlacTrack = Track(
+            id = "plex:456",
+            title = "Track",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 240_000,
+            streamUrl = "https://45-79-202-250.example.plex.direct:8443/library/parts/9.flac?X-Plex-Token=token",
+            downloadUrl = "",
+            audioCodec = "flac",
+        )
+        val transcodeUrl = plexFlacTrack.plexBitrateLimitedMp3TranscodeUrl(128).orEmpty()
+        assertTrue(transcodeUrl.contains("/music/:/transcode/universal/start.mp3"))
+        assertTrue(transcodeUrl.contains("path=%2Flibrary%2Fmetadata%2F456"))
+        assertTrue(transcodeUrl.contains("protocol=http"))
+        assertTrue(transcodeUrl.contains("maxAudioBitrate=128"))
+        assertTrue(transcodeUrl.contains("musicBitrate=128"))
+        assertTrue(transcodeUrl.contains("X-Plex-Platform=Chrome"))
+        assertTrue(transcodeUrl.contains("hasMDE=1"))
+        assertTrue(!transcodeUrl.contains("path=https%3A"))
+        assertTrue(!transcodeUrl.contains("directPlay=0"))
+        assertTrue(!transcodeUrl.contains("format=mp3"))
     }
 
     @Test

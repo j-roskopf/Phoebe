@@ -15,7 +15,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.phoebe.app.domain.StreamingQuality
 import com.phoebe.app.domain.Track
+import com.phoebe.app.domain.keepsOriginalStreamFor
 
 @Composable
 fun AudioQualityBadge(
@@ -23,8 +25,9 @@ fun AudioQualityBadge(
     modifier: Modifier = Modifier,
     compact: Boolean = false,
     onArtwork: Boolean = false,
+    playingQuality: StreamingQuality = StreamingQuality.Original,
 ) {
-    val badge = rememberAudioQualityBadge(track) ?: return
+    val badge = audioQualityBadgeLabel(track, playingQuality) ?: return
     val shape = RoundedCornerShape(999.dp)
     Row(
         modifier
@@ -38,7 +41,7 @@ fun AudioQualityBadge(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
-            badge.label,
+            badge,
             color = AudioQualityGold,
             fontSize = if (compact) 9.sp else 10.sp,
             fontWeight = FontWeight.Black,
@@ -52,10 +55,11 @@ fun AudioQualityText(
     track: Track?,
     modifier: Modifier = Modifier,
     compact: Boolean = false,
+    playingQuality: StreamingQuality = StreamingQuality.Original,
 ) {
-    val badge = rememberAudioQualityBadge(track) ?: return
+    val badge = audioQualityBadgeLabel(track, playingQuality) ?: return
     Text(
-        badge.label,
+        badge,
         modifier = modifier,
         color = AudioQualityGold,
         fontSize = if (compact) 9.sp else 10.sp,
@@ -64,13 +68,24 @@ fun AudioQualityText(
     )
 }
 
-private data class AudioQualityBadgeModel(val label: String)
-
 private val AudioQualityGold = Color(0xFFD6A84A)
 private val AudioQualityBackdrop = Color(0xD90F0D08)
 
-private fun rememberAudioQualityBadge(track: Track?): AudioQualityBadgeModel? {
+internal fun audioQualityBadgeLabel(
+    track: Track?,
+    playingQuality: StreamingQuality = StreamingQuality.Original,
+): String? {
     track ?: return null
+    val presented = if (track.keepsOriginalStreamFor(playingQuality)) {
+        track
+    } else {
+        val bitrate = playingQuality.maxAudioBitrateKbps ?: return sourceAudioQualityBadgeLabel(track)
+        track.copy(audioCodec = "mp3", bitrateKbps = bitrate, filepath = "stream.mp3")
+    }
+    return sourceAudioQualityBadgeLabel(presented)
+}
+
+private fun sourceAudioQualityBadgeLabel(track: Track): String? {
     val bitrate = track.bitrateKbps?.takeIf { it > 0 }
     val codec = track.audioCodec.orEmpty().trim().lowercase()
     val extension = track.filepath
@@ -80,23 +95,23 @@ private fun rememberAudioQualityBadge(track: Track?): AudioQualityBadgeModel? {
         .orEmpty()
     val isFlac = codec.contains("flac") || codec.contains("alac") || extension == "flac" || extension == "alac"
     val isMp3 = codec.contains("mp3") || codec.contains("mpeg") || extension == "mp3"
-    val label = when {
+    return when {
         isFlac && bitrate == null -> if (extension == "alac" || codec.contains("alac")) "ALAC" else "FLAC"
-        isFlac -> when (val qualityBitrate = bitrate ?: return null) {
+        isFlac -> when (bitrate ?: return null) {
             in 1500..Int.MAX_VALUE -> "HI-RES QUALITY"
             in 700..Int.MAX_VALUE -> "CD QUALITY"
             in 320..Int.MAX_VALUE -> "LOSSLESS QUALITY"
             else -> "LOSSLESS LOW"
         }
         isMp3 && bitrate == null -> "MP3"
-        isMp3 -> when (val qualityBitrate = bitrate ?: return null) {
+        isMp3 -> when (bitrate ?: return null) {
             in 320..Int.MAX_VALUE -> "EXCELLENT QUALITY"
             in 256..Int.MAX_VALUE -> "HIGH QUALITY"
             in 192..Int.MAX_VALUE -> "STANDARD QUALITY"
             in 128..Int.MAX_VALUE -> "BASIC QUALITY"
             else -> "LOW QUALITY"
         }
-        bitrate == null -> return null
+        bitrate == null -> null
         bitrate >= 1500 -> "HI-RES QUALITY"
         bitrate >= 700 -> "CD QUALITY"
         bitrate >= 320 -> "EXCELLENT QUALITY"
@@ -105,5 +120,4 @@ private fun rememberAudioQualityBadge(track: Track?): AudioQualityBadgeModel? {
         bitrate >= 128 -> "BASIC QUALITY"
         else -> "LOW QUALITY"
     }
-    return AudioQualityBadgeModel(label)
 }

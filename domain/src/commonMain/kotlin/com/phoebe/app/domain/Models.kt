@@ -1423,6 +1423,35 @@ data class StreamingPolicySettings(
     }
 }
 
+fun Track.isLosslessAudioSource(): Boolean {
+    val codec = audioCodec?.lowercase()
+    if (codec != null) {
+        when (codec) {
+            "flac", "alac", "wav", "aiff", "aif", "pcm", "dsd" -> return true
+        }
+    }
+    val path = filepath ?: streamUrl.substringBefore('?').substringBefore('#')
+    return when (path.substringAfterLast('.', missingDelimiterValue = "").lowercase()) {
+        "flac", "alac", "wav", "aiff", "aif" -> true
+        else -> false
+    }
+}
+
+fun Track.alreadyWithinBitrateBudget(maxKbps: Int): Boolean {
+    if (isLosslessAudioSource()) return false
+    val bitrate = bitrateKbps
+    if (bitrate != null && bitrate > 0) return bitrate <= maxKbps
+    return maxKbps >= (StreamingQuality.High.maxAudioBitrateKbps ?: 320)
+}
+
+fun Track.keepsOriginalStreamFor(quality: StreamingQuality): Boolean {
+    if (quality == StreamingQuality.Original) return true
+    if (!localUri.isNullOrBlank()) return true
+    if (id.startsWith("radio:")) return true
+    val maxKbps = quality.maxAudioBitrateKbps ?: return true
+    return alreadyWithinBitrateBudget(maxKbps)
+}
+
 @Serializable
 data class AudioProcessingSettings(
     val gaplessEnabled: Boolean = false,

@@ -85,14 +85,46 @@ internal fun decodedIpFromPlexDirect(uri: String): String? {
 }
 
 internal fun connectionPriority(uri: String): Int {
-    if (uri.contains(".plex.direct", ignoreCase = true)) return 100
     val port = uri.substringAfter("://").substringAfter(':', "32400").substringBefore('/').toIntOrNull() ?: 32400
     val secure = uri.startsWith("https://")
+    val local = isLocalOnlyServerOrigin(uri)
+    val plexDirect = uri.contains(".plex.direct", ignoreCase = true)
     return when {
-        !secure && port == 32400 -> 0
-        secure && port == 32400 -> 10
+        local && !secure && port == 32400 -> 0
+        plexDirect && secure && (port == 443 || port == 8443) && !local -> 5
+        local -> 25
         secure && port == 8443 -> 20
-        !secure -> 30
-        else -> 40
+        !secure && port == 32400 -> 30
+        secure && port == 32400 -> 80
+        plexDirect -> 90
+        !secure -> 40
+        else -> 50
     }
+}
+
+/**
+ * Origins that only work on the server's LAN. Plex advertises these next to public relays;
+ * probing them from cellular (or the wrong Wi-Fi) burns seconds per URL.
+ */
+fun isLocalOnlyServerOrigin(uri: String): Boolean {
+    if (uri.isBlank()) return false
+    val host = uri.substringAfter("://").substringBefore(':').substringBefore('/').lowercase()
+    if (host.isBlank() || host == "localhost" || host.endsWith(".local")) return true
+    val ip = when {
+        host.split('.').let { parts -> parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 } } -> host
+        else -> decodedIpFromPlexDirect(uri)
+    } ?: return false
+    return isPrivateOrLoopbackIpv4(ip)
+}
+
+private fun isPrivateOrLoopbackIpv4(ip: String): Boolean {
+    val parts = ip.split('.').mapNotNull { it.toIntOrNull() }
+    if (parts.size != 4) return false
+    val a = parts[0]
+    val b = parts[1]
+    return a == 10 ||
+        a == 127 ||
+        (a == 192 && b == 168) ||
+        (a == 172 && b in 16..31) ||
+        (a == 169 && b == 254)
 }

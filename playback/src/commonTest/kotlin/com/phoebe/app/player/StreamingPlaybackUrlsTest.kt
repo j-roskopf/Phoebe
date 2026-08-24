@@ -14,6 +14,7 @@ class StreamingPlaybackUrlsTest {
     fun resetPolicyHolder() {
         StreamingPlaybackPolicyHolder.settings = StreamingPolicySettings()
         StreamingPlaybackPolicyHolder.networkIsConstrainedProvider = { false }
+        StreamingPlaybackPolicyHolder.clearDirectStreamPreference()
     }
 
     @Test
@@ -27,6 +28,13 @@ class StreamingPlaybackUrlsTest {
         val url = plexFlacTrack().qualityAwareStreamUrl(StreamingQuality.DataSaver)
         assertTrue(url.contains("/music/:/transcode/universal/start.mp3"))
         assertTrue(url.contains("maxAudioBitrate=128"))
+        assertTrue(url.contains("musicBitrate=128"))
+        assertTrue(url.contains("path=%2Flibrary%2Fmetadata%2F456"))
+        assertTrue(url.contains("protocol=http"))
+        assertTrue(url.contains("X-Plex-Platform=Chrome"))
+        assertFalse(url.contains("path=https%3A"))
+        assertFalse(url.contains("directPlay=0"))
+        assertFalse(url.contains("format=mp3"))
     }
 
     @Test
@@ -123,6 +131,18 @@ class StreamingPlaybackUrlsTest {
         assertEquals(StreamingQuality.DataSaver, StreamingPlaybackPolicyHolder.effectiveQuality())
         val url = StreamingPlaybackPolicyHolder.resolvePlaybackUri(plexFlacTrack())
         assertTrue(url.contains("maxAudioBitrate=128"))
+    }
+
+    @Test
+    fun preferDirectStreamSkipsQualityTranscodeAfterCellularFailure() {
+        StreamingPlaybackPolicyHolder.settings = StreamingPolicySettings(
+            quality = StreamingQuality.Original,
+            useDataSaverOnCellular = true,
+        )
+        StreamingPlaybackPolicyHolder.networkIsConstrainedProvider = { true }
+        val track = plexFlacTrack()
+        StreamingPlaybackPolicyHolder.preferDirectStreamFor(track.id)
+        assertEquals(track.streamUrl, StreamingPlaybackPolicyHolder.resolvePlaybackUri(track))
     }
 
     @Test

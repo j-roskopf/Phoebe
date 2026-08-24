@@ -25,6 +25,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.phoebe.app.data.ListenBrainzFeedbackScore
 import com.phoebe.app.data.ListenBrainzFeedbackTarget
+import com.phoebe.app.domain.StreamingQuality
 import com.phoebe.app.domain.Track
 
 fun lerp(start: Float, stop: Float, fraction: Float): Float {
@@ -111,11 +112,13 @@ fun BoxScope.MobileNowPlayingOverlayActions(
     listenBrainzFeedbackTarget: ListenBrainzFeedbackTarget,
     onListenBrainzFeedback: (ListenBrainzFeedbackScore) -> Unit,
     alpha: Float = 1f,
+    playingQuality: StreamingQuality = StreamingQuality.Original,
 ) {
     if (showAudioQualityBadge && alpha > 0f) {
         AudioQualityBadge(
             track = track,
             onArtwork = true,
+            playingQuality = playingQuality,
             modifier = Modifier
                 .align(Alignment.BottomEnd)
                 .padding(12.dp)

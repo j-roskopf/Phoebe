@@ -282,6 +282,7 @@ import com.phoebe.app.domain.UpNextDividerMarker
 import com.phoebe.app.domain.providerTypeFromCatalogId
 import com.phoebe.app.player.CastState
 import com.phoebe.app.platform.createPlatformHttpClient
+import com.phoebe.app.platform.currentNetworkMeteringStatus
 import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.platform.isDesktopPlatform
 import com.phoebe.app.platform.isDebugBuild
@@ -3001,6 +3002,9 @@ private fun MobilePlayerHost(
             audioAnalysis = audioAnalysis,
             handleSystemBack = handleSystemBack,
             expansionFraction = expansionFraction,
+            effectiveStreamingQuality = appSettings.streamingPolicy.effectiveQuality(
+                currentNetworkMeteringStatus().let { it.isMetered || it.isCellular },
+            ),
         ),
         actions = MobilePlaybackRouteActions(
             onToggle = onToggle,

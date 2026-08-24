@@ -55,6 +55,31 @@ internal fun Track.plexUniversalMp3TranscodeUrl(maxAudioBitrateKbps: Int? = null
     )
 
 /**
+ * Bitrate-capped Plex transcode for Android/iOS/desktop data saver.
+ *
+ * Plex Web's absolute `path=` plus `protocol=https` makes current PMS builds return 400 on
+ * `*.plex.direct` relays. Progressive `start.mp3` wants a relative metadata path and `protocol=http`
+ * even when the request itself is HTTPS. Skip `directPlay=0`; that knob also 400s on some PMS builds.
+ */
+internal fun Track.plexBitrateLimitedMp3TranscodeUrl(maxAudioBitrateKbps: Int): String? {
+    val bitrate = maxAudioBitrateKbps.coerceAtLeast(32).toString()
+    return buildPlexUniversalMp3TranscodeUrl(
+        extraParameters = buildMap {
+            put("maxAudioBitrate", bitrate)
+            put("musicBitrate", bitrate)
+            put("hasMDE", "1")
+            put("fastSeek", "1")
+            put("session", randomPlexTranscodeSession())
+            put("offset", "0")
+            putAll(plexTranscodeClientProfileParams())
+        },
+        includeDirectPlayFlags = false,
+        includeFormatParams = false,
+        transcodeProtocol = "http",
+    )
+}
+
+/**
  * Plex Web uses a slimmer query than Chromecast/Flatpak. Extra transcode knobs such as
  * `directPlay=0` or `X-Plex-Client-Profile-Extra` can make current PMS builds return 400.
  */
@@ -80,16 +105,13 @@ internal fun Track.plexWebUniversalMp3TranscodeUrl(maxAudioBitrateKbps: Int = 32
                 parameters.append("mediaIndex", "0")
                 parameters.append("partIndex", "0")
                 parameters.append("maxAudioBitrate", maxAudioBitrateKbps.coerceAtLeast(32).toString())
-                parameters.append("protocol", parsed.protocol.name)
+                parameters.append("protocol", "http")
                 parameters.append("session", randomPlexTranscodeSession())
                 parameters.append("offset", "0")
                 parameters.append("X-Plex-Token", token)
-                parameters.append("X-Plex-Client-Identifier", PlexClient.ClientIdentifier)
-                parameters.append("X-Plex-Product", "Phoebe")
-                parameters.append("X-Plex-Version", "0.1.0")
-                parameters.append("X-Plex-Platform", "Chrome")
-                parameters.append("X-Plex-Device", "Web")
-                parameters.append("X-Plex-Device-Name", "Phoebe Web")
+                plexTranscodeClientProfileParams().forEach { (key, value) ->
+                    parameters.append(key, value)
+                }
             }
             .buildString()
     }.getOrNull()
@@ -97,6 +119,9 @@ internal fun Track.plexWebUniversalMp3TranscodeUrl(maxAudioBitrateKbps: Int = 32
 
 private fun Track.buildPlexUniversalMp3TranscodeUrl(
     extraParameters: Map<String, String> = emptyMap(),
+    includeDirectPlayFlags: Boolean = true,
+    includeFormatParams: Boolean = true,
+    transcodeProtocol: String? = null,
 ): String? {
     val ratingKey = plexRatingKey() ?: return null
     val parsed = runCatching { Url(streamUrl) }.getOrNull() ?: return null
@@ -111,17 +136,34 @@ private fun Track.buildPlexUniversalMp3TranscodeUrl(
                 parameters.append("path", "/library/metadata/$ratingKey")
                 parameters.append("mediaIndex", "0")
                 parameters.append("partIndex", "0")
-                parameters.append("protocol", parsed.protocol.name)
-                parameters.append("format", "mp3")
-                parameters.append("audioCodec", "mp3")
-                parameters.append("directPlay", "0")
-                parameters.append("directStream", "0")
+                parameters.append("protocol", transcodeProtocol ?: parsed.protocol.name)
+                if (includeFormatParams) {
+                    parameters.append("format", "mp3")
+                    parameters.append("audioCodec", "mp3")
+                }
+                if (includeDirectPlayFlags) {
+                    parameters.append("directPlay", "0")
+                    parameters.append("directStream", "0")
+                }
                 parameters.append("X-Plex-Token", token)
                 extraParameters.forEach { (key, value) -> parameters.append(key, value) }
             }
             .buildString()
     }.getOrNull()
 }
+
+/**
+ * PMS universal transcode 400s when it cannot match a client profile (`platform=` empty).
+ * Chrome's built-in music profile is what Plex Web uses for `start.mp3`.
+ */
+private fun plexTranscodeClientProfileParams(): Map<String, String> = mapOf(
+    "X-Plex-Client-Identifier" to PlexClient.ClientIdentifier,
+    "X-Plex-Product" to "Phoebe",
+    "X-Plex-Version" to "0.1.0",
+    "X-Plex-Platform" to "Chrome",
+    "X-Plex-Device" to "Web",
+    "X-Plex-Device-Name" to "Phoebe",
+)
 
 private fun randomPlexTranscodeSession(): String =
     buildString(16) {
@@ -196,5 +238,7 @@ internal fun Track.webPlaybackStreamUrl(
     return plexWebUniversalMp3TranscodeUrl() ?: jellyfinFamilyMp3TranscodeUrl() ?: streamUrl
 }
 
-internal fun String.isPlexWebTranscodeUrl(): Boolean =
+internal fun String.isPlexUniversalTranscodeUrl(): Boolean =
     contains("/music/:/transcode/universal/start.mp3", ignoreCase = true)
+
+internal fun String.isPlexWebTranscodeUrl(): Boolean = isPlexUniversalTranscodeUrl()

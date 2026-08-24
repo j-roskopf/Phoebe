@@ -37,7 +37,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
-import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.CancellationException
@@ -128,7 +128,7 @@ class PlexClient(
     suspend fun musicLibraries(
         server: PlexServer,
         token: String,
-        baseTimeoutMs: Long = PlexSetupRequestTimeoutMs,
+        baseTimeoutMs: Long = PlexRemoteSetupRequestTimeoutMs,
     ): List<MusicLibrary> {
         val response = plexGetSetup<PlexMediaContainerResponse>(
             server = server,
@@ -144,7 +144,7 @@ class PlexClient(
     suspend fun resolveApiServer(
         server: PlexServer,
         token: String,
-        timeoutMs: Long = PlexSetupRequestTimeoutMs,
+        timeoutMs: Long = PlexRemoteSetupRequestTimeoutMs,
     ): PlexServer {
         val winner = resolveFastestBase(server, token, timeoutMs)?.trimEnd('/') ?: return server
         val current = server.uri.trimEnd('/')
@@ -155,25 +155,37 @@ class PlexClient(
         )
     }
 
-    suspend fun resolveFastestBase(server: PlexServer, token: String, timeoutMs: Long = 1_500L): String? = coroutineScope {
+    suspend fun resolveFastestBase(
+        server: PlexServer,
+        token: String,
+        timeoutMs: Long = PlexRemoteSetupRequestTimeoutMs,
+    ): String? = coroutineScope {
         val candidates = server.reachableBaseUris(apiBaseCache[server.id])
         if (candidates.isEmpty()) return@coroutineScope null
-        val results = Channel<String>(capacity = candidates.size)
-        candidates.forEach { base ->
+        val result = CompletableDeferred<String>()
+        val jobs = candidates.map { base ->
             launch {
-                val ok = withTimeoutOrNull(timeoutMs) {
+                val ok = withTimeoutOrNull(plexBaseProbeTimeoutMs(base, timeoutMs)) {
                     runCatching {
                         val response = httpClient.get("$base/identity") {
                             plexServerAuth(token)
                             header(HttpHeaders.Accept, "application/json")
                         }
                         response.status.isSuccess()
-                    }.getOrDefault(false)
+                    }.getOrElse { error ->
+                        if (error is CancellationException) throw error
+                        false
+                    }
                 } == true
-                if (ok) results.trySend(base)
+                if (ok) result.complete(base)
             }
         }
-        val winner = withTimeoutOrNull(timeoutMs + 250L) { results.receive() }
+        val overall = candidates.maxOf { plexBaseProbeTimeoutMs(it, timeoutMs) } + 250L
+        val winner = try {
+            withTimeoutOrNull(overall) { result.await() }
+        } finally {
+            jobs.forEach { it.cancel() }
+        }
         if (winner != null) apiBaseCache[server.id] = winner
         winner
     }
@@ -1922,7 +1934,8 @@ class PlexClient(
         var lastError: Throwable? = null
         val bases = server.reachableBaseUris(apiBaseCache[server.id])
         for (base in bases) {
-            val outcome = withTimeoutOrNull(baseTimeoutMs) {
+            val probeTimeoutMs = minOf(baseTimeoutMs, plexBaseProbeTimeoutMs(base))
+            val outcome = withTimeoutOrNull(probeTimeoutMs) {
                 runCatching {
                     val response = httpClient.get("$base$path") {
                         plexServerAuth(token)
@@ -1936,9 +1949,9 @@ class PlexClient(
                 }
             }
             if (outcome == null) {
-                lastError = IllegalStateException("Plex GET $path timed out after ${baseTimeoutMs}ms via $base")
+                lastError = IllegalStateException("Plex GET $path timed out after ${probeTimeoutMs}ms via $base")
                 PhoebeLog.d("PlexClient") {
-                    "setup GET $path timed out after ${baseTimeoutMs}ms via $base; trying next base"
+                    "setup GET $path timed out after ${probeTimeoutMs}ms via $base; trying next base"
                 }
                 continue
             }
@@ -1954,6 +1967,15 @@ class PlexClient(
             }
         }
         throw lastError ?: IllegalStateException("Could not reach Plex server '${server.name}' for $path")
+    }
+
+    private fun plexBaseProbeTimeoutMs(
+        base: String,
+        remoteTimeoutMs: Long = PlexRemoteSetupRequestTimeoutMs,
+    ): Long = if (isLocalOnlyServerOrigin(base)) {
+        minOf(PlexLocalSetupRequestTimeoutMs, remoteTimeoutMs)
+    } else {
+        remoteTimeoutMs
     }
 
     private suspend fun metadataDetails(server: PlexServer, ratingKey: String, token: String): List<PlexMetadataDto> {
@@ -2216,7 +2238,8 @@ class PlexClient(
         private const val PlexArtistType = 8
         private const val PlexAlbumType = 9
         private const val PlexTrackType = 10
-        private const val PlexSetupRequestTimeoutMs = 4_000L
+        private const val PlexLocalSetupRequestTimeoutMs = 800L
+        private const val PlexRemoteSetupRequestTimeoutMs = 8_000L
         private const val MusicStationsHubContext = "hub.music.stations"
         private const val MusicStationsHubIdentifier = "music.stations"
         val PlexJson = Json {

@@ -2,10 +2,12 @@ package com.phoebe.app
 
 import com.phoebe.app.data.decodedIpFromPlexDirect
 import com.phoebe.app.data.expandConnectionUris
+import com.phoebe.app.data.isLocalOnlyServerOrigin
 import com.phoebe.app.data.reachableBaseUris
 import com.phoebe.app.domain.PlexServer
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class PlexServerConnectionsTest {
@@ -72,6 +74,34 @@ class PlexServerConnectionsTest {
             advertisedConnectionUris = advertised,
         )
         assertEquals("http://reachable.example:32400", server.reachableBaseUris().first())
+    }
+
+    @Test
+    fun localOnlyServerOriginDetectsLanAndPrivatePlexDirect() {
+        assertTrue(isLocalOnlyServerOrigin("https://172-16-1-2.abc.plex.direct:32400"))
+        assertTrue(isLocalOnlyServerOrigin("http://192.168.1.9:32400"))
+        assertFalse(isLocalOnlyServerOrigin("https://45-79-202-250.abc.plex.direct:8443"))
+        assertFalse(isLocalOnlyServerOrigin("https://72-58-82-53.abc.plex.direct:32400"))
+    }
+
+    @Test
+    fun reachableBaseUrisPrefersRemoteRelayOverPublicLanPort() {
+        val lanDirect = "https://172-16-1-2.abc.plex.direct:32400"
+        val remoteRelay = "https://45-79-202-250.abc.plex.direct:8443"
+        val closedWan = "https://72-58-82-53.abc.plex.direct:32400"
+        val server = PlexServer(
+            id = "s1",
+            name = "plex",
+            uri = lanDirect,
+            owned = true,
+            connectionUris = expandConnectionUris(listOf(lanDirect, remoteRelay, closedWan)),
+            advertisedConnectionUris = listOf(lanDirect, remoteRelay, closedWan),
+            localConnectionUris = listOf(lanDirect),
+            httpsRequired = true,
+        )
+        val ordered = server.reachableBaseUris()
+        assertTrue(ordered.indexOf(remoteRelay) < ordered.indexOf(closedWan))
+        assertTrue(ordered.indexOf(remoteRelay) < ordered.indexOf("https://72.58.82.53:32400"))
     }
 
     @Test
