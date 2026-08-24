@@ -1032,9 +1032,14 @@ private fun PhoebeRootStateHolder(
             homePosterActionScope.launch {
                 homePosterLoading = homePosterLoading.copy(popularMix = true)
                 val loadingStartedAtMs = currentTimeMs()
+                val playJob = state.playPopularMix()
                 try {
-                    withTimeoutOrNull(HomePosterMixLoadTimeoutMs) {
-                        state.playPopularMix().join()
+                    val completed = withTimeoutOrNull(HomePosterMixLoadTimeoutMs) {
+                        playJob.join()
+                        true
+                    }
+                    if (completed != true) {
+                        playJob.cancel()
                     }
                 } finally {
                     val remainingLoadingMs = HomePosterLoadingMinDurationMs - (currentTimeMs() - loadingStartedAtMs)
@@ -1052,9 +1057,14 @@ private fun PhoebeRootStateHolder(
             homePosterActionScope.launch {
                 homePosterLoading = homePosterLoading.copy(topTracksMix = true)
                 val loadingStartedAtMs = currentTimeMs()
+                val playJob = state.playTopTracksMix()
                 try {
-                    withTimeoutOrNull(HomePosterMixLoadTimeoutMs) {
-                        state.playTopTracksMix().join()
+                    val completed = withTimeoutOrNull(HomePosterMixLoadTimeoutMs) {
+                        playJob.join()
+                        true
+                    }
+                    if (completed != true) {
+                        playJob.cancel()
                     }
                 } finally {
                     val remainingLoadingMs = HomePosterLoadingMinDurationMs - (currentTimeMs() - loadingStartedAtMs)

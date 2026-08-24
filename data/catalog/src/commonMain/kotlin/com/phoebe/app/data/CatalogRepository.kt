@@ -3763,6 +3763,7 @@ class CatalogRepository(
                 "${track.title.trim().lowercase()}|${track.artist.trim().lowercase()}"
             }
         if (tracks.isNotEmpty()) {
+            enqueueCatalogDbWrite { persistTrackBatch(tracks) }
             persistenceScope.launch {
                 runCatching { publishIndexedPlexTracks(tracks) }
                     .onFailure { error ->
@@ -3771,7 +3772,6 @@ class CatalogRepository(
                             "popular songs catalog publish failed: ${error.message}"
                         }
                     }
-                enqueueCatalogDbWrite { persistTrackBatch(tracks) }
             }
         }
         tracks
