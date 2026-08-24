@@ -6,6 +6,7 @@ import com.phoebe.app.domain.Track
 import io.ktor.http.URLBuilder
 import io.ktor.http.Url
 import io.ktor.http.takeFrom
+import kotlin.concurrent.Volatile
 
 /**
  * Process-wide streaming quality policy used when building playback URIs.
