@@ -224,7 +224,7 @@ private class IosAudioPlayer(
         generation: Int,
     ): Boolean {
         if (targetIndex !in queue.indices || player == null) return false
-        val uri = track.localUri?.takeIf { it.isNotBlank() } ?: track.streamUrl.takeIf { it.isNotBlank() } ?: return false
+        val uri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track).takeIf { it.isNotBlank() } ?: return false
         val url = NSURL.URLWithString(uri) ?: return false
         stopIosGapless()
         gaplessGeneration = generation
@@ -256,7 +256,7 @@ private class IosAudioPlayer(
         val incoming = gaplessPlayer ?: return false
         val item = gaplessItem ?: return false
         val asset = gaplessAsset ?: return false
-        val uri = track.localUri?.takeIf { it.isNotBlank() } ?: track.streamUrl.takeIf { it.isNotBlank() } ?: return false
+        val uri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track).takeIf { it.isNotBlank() } ?: return false
         clearObservers()
         player?.pause()
         player?.replaceCurrentItemWithPlayerItem(null)
@@ -300,7 +300,7 @@ private class IosAudioPlayer(
         if (crossfadeGeneration == generation) return true
         if (targetIndex !in queue.indices) return false
         val outgoing = player ?: return false
-        val uri = track.localUri?.takeIf { it.isNotBlank() } ?: track.streamUrl.takeIf { it.isNotBlank() } ?: return false
+        val uri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track).takeIf { it.isNotBlank() } ?: return false
         val url = NSURL.URLWithString(uri) ?: return false
         crossfadeGeneration = generation
         crossfadeJob?.cancel()

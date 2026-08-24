@@ -92,7 +92,8 @@ class StreamingPlaybackUrlsTest {
         )
         val url = track.qualityAwareStreamUrl(StreamingQuality.DataSaver)
         assertTrue(url.contains("/stream.mp3"))
-        assertTrue(url.contains("audioBitRate=128"))
+        assertTrue(url.contains("audioBitRate=128000"))
+        assertTrue(url.contains("static=false"))
     }
 
     @Test

@@ -33,9 +33,11 @@ internal fun Track.jellyfinFamilyMp3TranscodeUrl(maxAudioBitrateKbps: Int? = nul
             .apply {
                 encodedPath = "/Audio/$itemId/stream.mp3"
                 parameters.clear()
-                parameters.append("static", "true")
+                val bitrateKbps = maxAudioBitrateKbps?.takeIf { it > 0 }
+                // Jellyfin `audioBitRate` is bits/sec. `static=true` skips transcoding.
+                parameters.append("static", if (bitrateKbps != null) "false" else "true")
                 parameters.append("audioCodec", "mp3")
-                maxAudioBitrateKbps?.takeIf { it > 0 }?.let { parameters.append("audioBitRate", it.toString()) }
+                bitrateKbps?.let { parameters.append("audioBitRate", (it * 1_000).toString()) }
                 parameters.append("api_key", token)
             }
             .buildString()

@@ -129,7 +129,9 @@ abstract class SimpleAudioPlayer(
         setOutputVolume(effectiveOutputVolume())
         if (track != null) {
             resetPlaybackUriFailover(generation)
-            track.playbackUriCandidates().firstOrNull()?.let { notePlaybackUri(it, generation) }
+            val initialUri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
+                .ifBlank { track.playbackUriCandidates().firstOrNull().orEmpty() }
+            if (initialUri.isNotBlank()) notePlaybackUri(initialUri, generation)
             startPlaybackStartupWatchdog(generation)
             if (sameQueue) {
                 skipToInQueueOnPlatform(queue, index, track, generation)
