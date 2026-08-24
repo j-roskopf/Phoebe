@@ -31,6 +31,12 @@ object StreamingPlaybackPolicyHolder {
         directStreamTrackId = trackId.takeIf { it.isNotBlank() }
     }
 
+    fun prefersDirectStreamFor(trackId: String): Boolean =
+        trackId.isNotBlank() && trackId == directStreamTrackId
+
+    fun artworkQuality(trackId: String, requested: StreamingQuality): StreamingQuality =
+        if (prefersDirectStreamFor(trackId)) StreamingQuality.Original else requested
+
     fun clearDirectStreamPreference() {
         directStreamTrackId = null
     }

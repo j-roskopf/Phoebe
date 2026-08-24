@@ -66,6 +66,7 @@ import com.phoebe.app.domain.canTogglePlexLike
 import com.phoebe.app.feature.playback.EqualizerDialog
 import com.phoebe.app.platform.isDesktopPlatform
 import com.phoebe.app.player.CastState
+import com.phoebe.app.player.StreamingPlaybackPolicyHolder
 import kotlin.math.abs
 import androidx.compose.ui.unit.IntOffset
 import kotlinx.coroutines.Job
@@ -783,7 +784,10 @@ fun MobilePlayer(
                             MobileNowPlayingOverlayActions(
                                 track = t,
                                 showAudioQualityBadge = true,
-                                playingQuality = effectiveStreamingQuality,
+                                playingQuality = StreamingPlaybackPolicyHolder.artworkQuality(
+                                    t.id,
+                                    effectiveStreamingQuality,
+                                ),
                                 showFeedbackActions = showFeedbackActions,
                                 showLikeControl = showLikeControl,
                                 likeActions = likeActions,

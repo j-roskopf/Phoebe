@@ -143,6 +143,10 @@ class StreamingPlaybackUrlsTest {
         val track = plexFlacTrack()
         StreamingPlaybackPolicyHolder.preferDirectStreamFor(track.id)
         assertEquals(track.streamUrl, StreamingPlaybackPolicyHolder.resolvePlaybackUri(track))
+        assertEquals(
+            StreamingQuality.Original,
+            StreamingPlaybackPolicyHolder.artworkQuality(track.id, StreamingQuality.DataSaver),
+        )
     }
 
     @Test
