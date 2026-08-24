@@ -1095,6 +1095,7 @@ data class AppSettings(
     val listenBrainz: ListenBrainzSettings = ListenBrainzSettings(),
     val lastFm: LastFmSettings = LastFmSettings(),
     val downloadPolicy: DownloadPolicySettings = DownloadPolicySettings(),
+    val streamingPolicy: StreamingPolicySettings = StreamingPolicySettings(),
     val audioProcessing: AudioProcessingSettings = AudioProcessingSettings(),
     val events: EventSettings = EventSettings(),
 ) {
@@ -1110,6 +1111,7 @@ data class AppSettings(
             listenBrainz = listenBrainz.normalized(),
             lastFm = lastFm.normalized(),
             downloadPolicy = downloadPolicy.normalized(),
+            streamingPolicy = streamingPolicy.normalized(),
             audioProcessing = normalizedAudioProcessing,
             events = events.normalized(),
         )
@@ -1369,6 +1371,56 @@ data class DownloadPolicySettings(
 @Serializable
 enum class DownloadQuality {
     Original,
+}
+
+@Serializable
+enum class StreamingQuality {
+    Original,
+    High,
+    DataSaver,
+    ;
+
+    val maxAudioBitrateKbps: Int?
+        get() = when (this) {
+            Original -> null
+            High -> 320
+            DataSaver -> 128
+        }
+
+    val label: String
+        get() = when (this) {
+            Original -> "Original"
+            High -> "High"
+            DataSaver -> "Data saver"
+        }
+
+    val subtitle: String
+        get() = when (this) {
+            Original -> "Stream the library file as stored"
+            High -> "Cap remote streams around 320 kbps"
+            DataSaver -> "Cap remote streams around 128 kbps"
+        }
+
+    companion object {
+        val Options: List<StreamingQuality> = entries
+    }
+}
+
+@Serializable
+data class StreamingPolicySettings(
+    val quality: StreamingQuality = StreamingQuality.Original,
+    val useDataSaverOnCellular: Boolean = true,
+) {
+    fun normalized(): StreamingPolicySettings = copy(quality = quality)
+
+    fun effectiveQuality(networkConstrained: Boolean): StreamingQuality {
+        val normalized = normalized()
+        return if (networkConstrained && normalized.useDataSaverOnCellular) {
+            StreamingQuality.DataSaver
+        } else {
+            normalized.quality
+        }
+    }
 }
 
 @Serializable

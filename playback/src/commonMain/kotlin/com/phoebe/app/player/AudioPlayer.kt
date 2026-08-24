@@ -7,6 +7,7 @@ import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.PlayerState
 import com.phoebe.app.domain.RepeatMode
+import com.phoebe.app.domain.StreamingPolicySettings
 import com.phoebe.app.domain.Track
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -58,6 +59,7 @@ interface AudioPlayer {
     fun setCrossfadeDurationMs(durationMs: Long)
     fun setEqualizer(profile: EqualizerProfile)
     fun setAudioProcessing(settings: AudioProcessingSettings) = Unit
+    fun setStreamingPolicy(settings: StreamingPolicySettings) = Unit
     fun setOutputDevice(id: String?) = Unit
 
     /**

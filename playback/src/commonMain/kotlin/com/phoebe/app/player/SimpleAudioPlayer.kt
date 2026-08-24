@@ -6,6 +6,7 @@ import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.PlayerState
 import com.phoebe.app.domain.RepeatMode
+import com.phoebe.app.domain.StreamingPolicySettings
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.currentTimeMs
@@ -416,6 +417,10 @@ abstract class SimpleAudioPlayer(
         cancelGaplessPrepare()
     }
 
+    override fun setStreamingPolicy(settings: StreamingPolicySettings) {
+        StreamingPlaybackPolicyHolder.settings = settings.normalized()
+    }
+
     override fun setEqualizer(profile: EqualizerProfile) {
         val normalized = profile.normalized()
         if (equalizerProfile == normalized) return
@@ -668,7 +673,7 @@ abstract class SimpleAudioPlayer(
     }
 
     protected open fun playTrack(track: Track) {
-        playUri(track.localUri ?: track.streamUrl)
+        playUri(StreamingPlaybackPolicyHolder.resolvePlaybackUri(track))
     }
     protected open fun pause() = Unit
     protected open fun resume() = Unit
@@ -835,9 +840,11 @@ abstract class SimpleAudioPlayer(
     protected fun nextPlaybackFailoverUri(generation: Int, failedUri: String?): String? {
         notePlaybackUri(failedUri.orEmpty(), generation)
         val track = mutableState.value.currentTrack ?: return null
-        return track.playbackUriCandidates().firstOrNull { candidate ->
-            candidate.isNotBlank() && candidate !in triedPlaybackUris
-        }
+        return nextPlaybackFailoverCandidate(
+            candidates = track.playbackUriCandidates(),
+            tried = triedPlaybackUris,
+            failedUri = failedUri,
+        )
     }
 
     protected fun replayWithFailoverUri(generation: Int, failedUri: String?): Boolean {
@@ -855,7 +862,9 @@ abstract class SimpleAudioPlayer(
             positionMs = resumePositionMs,
             playbackErrorMessage = null,
         )
-        PhoebeLog.d("AudioPlayer") { "playback failover uri=$next positionMs=$resumePositionMs" }
+        PhoebeLog.d("AudioPlayer") {
+            "playback failover uri=${PlaybackFailureClassifier.redactStreamUri(next)} positionMs=$resumePositionMs"
+        }
         startPlaybackStartupWatchdog(generation)
         playQueueOnPlatform(
             queue = mutableState.value.queue,

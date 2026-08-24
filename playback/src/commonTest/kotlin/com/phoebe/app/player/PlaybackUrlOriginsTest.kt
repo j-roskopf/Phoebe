@@ -120,4 +120,62 @@ class PlaybackUrlOriginsTest {
         assertEquals(local, local.withPlaybackOrigins("https://plex.example:32400"))
         assertEquals(listOf("file:///music/song.mp3"), local.playbackUriCandidates())
     }
+
+    @Test
+    fun plexDirectLanHostsAreLocalOnlyOrigins() {
+        assertTrue(
+            isLocalOnlyPlaybackOrigin(
+                "https://172-16-1-2.abc.plex.direct:32400/library/parts/1/file.mp3",
+            ),
+        )
+        assertTrue(isLocalOnlyPlaybackOrigin("http://192.168.1.9:32400/library/parts/1/file.mp3"))
+        assertTrue(isLocalOnlyPlaybackOrigin("http://10.0.0.5:8091/emby/Audio/1/stream"))
+        assertFalse(
+            isLocalOnlyPlaybackOrigin(
+                "https://173-230-133-75.abc.plex.direct:8443/library/parts/1/file.mp3",
+            ),
+        )
+        assertFalse(isLocalOnlyPlaybackOrigin("https://72-58-82-53.abc.plex.direct:32400/library/parts/1/file.mp3"))
+    }
+
+    @Test
+    fun failoverAfterRemoteTimeoutSkipsLanOriginsAndCapsAttempts() {
+        val remoteRelay = "https://173-230-133-75.abc.plex.direct:8443/library/parts/1/file.mp3"
+        val lanDirect = "https://172-16-1-2.abc.plex.direct:32400/library/parts/1/file.mp3"
+        val lanHttp = "http://172.16.1.2:32400/library/parts/1/file.mp3"
+        val remoteAlt = "https://72-58-82-53.abc.plex.direct:32400/library/parts/1/file.mp3"
+        val candidates = listOf(remoteRelay, lanDirect, lanHttp, remoteAlt)
+
+        assertEquals(
+            remoteAlt,
+            nextPlaybackFailoverCandidate(
+                candidates = candidates,
+                tried = setOf(remoteRelay),
+                failedUri = remoteRelay,
+            ),
+        )
+        assertEquals(
+            null,
+            nextPlaybackFailoverCandidate(
+                candidates = candidates,
+                tried = setOf(remoteRelay, remoteAlt),
+                failedUri = remoteAlt,
+                maxTriedUris = 2,
+            ),
+        )
+    }
+
+    @Test
+    fun failoverAfterLanFailureStillTriesRemoteRelays() {
+        val lan = "http://192.168.1.9:32400/library/parts/1/file.mp3"
+        val remote = "https://45-79-210-225.abc.plex.direct:8443/library/parts/1/file.mp3"
+        assertEquals(
+            remote,
+            nextPlaybackFailoverCandidate(
+                candidates = listOf(lan, remote),
+                tried = setOf(lan),
+                failedUri = lan,
+            ),
+        )
+    }
 }

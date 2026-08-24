@@ -1,0 +1,1 @@
+ALTER TABLE AppSettingsRow ADD COLUMN streamingPolicySettings TEXT NOT NULL DEFAULT '{"quality":"Original","useDataSaverOnCellular":true}';

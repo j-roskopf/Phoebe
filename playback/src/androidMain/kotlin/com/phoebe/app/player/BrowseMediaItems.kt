@@ -28,7 +28,9 @@ internal fun browseFolderItem(
         .build()
 
 internal fun browseTrackItem(track: Track): MediaItem {
-    val uriString = track.localUri ?: track.streamUrl.takeIf { it.isNotBlank() }.orEmpty()
+    val uriString = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
+        .takeIf { it.isNotBlank() }
+        .orEmpty()
     val isHls = uriString.contains(".m3u8", ignoreCase = true)
     return MediaItem.Builder()
         .setMediaId(track.id)

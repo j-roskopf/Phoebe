@@ -7,6 +7,8 @@ import com.phoebe.app.domain.ArtistEventsLoadState
 import com.phoebe.app.domain.AudioProcessingCapabilities
 import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.DownloadPolicySettings
+import com.phoebe.app.domain.StreamingPolicySettings
+import com.phoebe.app.player.StreamingPlaybackPolicyHolder
 import com.phoebe.app.domain.EventSettings
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.CatalogSnapshot
@@ -506,6 +508,12 @@ class AppState(
             dependencies.radioRepository.restore()
             dependencies.searchHistoryRepository.restore()
             dependencies.audioPlayer.setCrossfadeDurationMs(appSettings.value.crossfadeSeconds * 1_000L)
+            dependencies.audioPlayer.setAudioProcessing(appSettings.value.audioProcessing)
+            dependencies.audioPlayer.setStreamingPolicy(appSettings.value.streamingPolicy)
+            StreamingPlaybackPolicyHolder.networkIsConstrainedProvider = {
+                val network = currentNetworkMeteringStatus()
+                network.isMetered || network.isCellular
+            }
             dependencies.playHistoryRepository.restore()
             mutableDownloadDirectory.value = dependencies.platformStorage.readDownloadDirectory()
             checkForUpdatesInBackground()
@@ -594,6 +602,7 @@ class AppState(
                 mutablePersistEqualizerSettings.value = settings.persistEqualizerSettings
                 dependencies.audioPlayer.setCrossfadeDurationMs(settings.crossfadeSeconds * 1_000L)
                 dependencies.audioPlayer.setAudioProcessing(settings.audioProcessing)
+                dependencies.audioPlayer.setStreamingPolicy(settings.streamingPolicy)
                 val eventSettings = settings.events.normalized()
                 if (eventSettings != lastEventSettings) {
                     lastEventSettings = eventSettings
@@ -3138,6 +3147,10 @@ class AppState(
 
     fun setDownloadPolicySettings(settings: DownloadPolicySettings) = scope.launch {
         dependencies.appSettingsRepository.setDownloadPolicySettings(settings)
+    }
+
+    fun setStreamingPolicySettings(settings: StreamingPolicySettings) = scope.launch {
+        dependencies.appSettingsRepository.setStreamingPolicySettings(settings)
     }
 
     fun setEventSettings(settings: EventSettings) = scope.launch {

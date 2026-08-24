@@ -10,6 +10,8 @@ import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.DownloadPolicySettings
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
+import com.phoebe.app.domain.StreamingPolicySettings
+import com.phoebe.app.domain.StreamingQuality
 import com.phoebe.app.platform.SecureCredentialKey
 import com.phoebe.app.testing.FakeSecureCredentialStore
 import com.phoebe.app.testing.newInMemoryPhoebeDatabase
@@ -218,6 +220,25 @@ class AppSettingsRepositoryDesktopTest {
         assertEquals(1f, restored.audioProcessing.crossfeedAmount)
         assertFalse(restored.audioProcessing.exclusiveMode)
         assertFalse(restored.audioProcessing.bitPerfectPreference)
+    }
+
+    @Test
+    fun streamingPolicyPersistsAndRestores() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+
+        AppSettingsRepository(db).run {
+            setStreamingPolicySettings(
+                StreamingPolicySettings(
+                    quality = StreamingQuality.High,
+                    useDataSaverOnCellular = false,
+                ),
+            )
+        }
+        val restored = AppSettingsRepository(db).apply { restore() }.settings.value
+
+        assertEquals(StreamingQuality.High, restored.streamingPolicy.quality)
+        assertFalse(restored.streamingPolicy.useDataSaverOnCellular)
     }
 
     @Test

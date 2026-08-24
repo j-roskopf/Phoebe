@@ -1089,7 +1089,7 @@ class AndroidAudioPlayer(
 
     private fun updateOptimisticLocalBufferedPosition(track: Track, generation: Int) {
         val durationMs = track.durationMs.takeIf { it > 0L } ?: return
-        val uri = track.localUri ?: track.streamUrl
+        val uri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
         if (uri.isBlank()) return
         if (!uri.isHttpUrl()) {
             updateBufferedPosition(durationMs, generation)
@@ -1575,9 +1575,8 @@ class AndroidAudioPlayer(
     }
 
     private fun currentStreamUri(): String? {
-        val track = state.value.currentTrack
-        return track?.localUri?.takeIf { it.isNotBlank() }
-            ?: track?.streamUrl?.takeIf { it.isNotBlank() }
+        val track = state.value.currentTrack ?: return null
+        return StreamingPlaybackPolicyHolder.resolvePlaybackUri(track).takeIf { it.isNotBlank() }
     }
 
     private fun PlaybackException.toPlaybackFailure(streamUri: String?): PlaybackFailure {

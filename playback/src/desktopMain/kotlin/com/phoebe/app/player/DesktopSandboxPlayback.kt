@@ -76,7 +76,11 @@ internal object DesktopSandboxPlayback {
     }
 
     fun playbackStreamUrlForTrack(track: Track): String {
-        if (track.streamUrl.isBlank()) return track.streamUrl
+        val qualityAware = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
+        if (qualityAware.isBlank()) return qualityAware
+        // Local files and already-rewritten quality URLs skip further sandbox transforms.
+        if (!DesktopPlaybackStartupPolicy.isRemoteUri(qualityAware)) return qualityAware
+        if (qualityAware != track.streamUrl) return qualityAware
         if (!isFlatpakSandbox()) {
             return javaFxFriendlyStreamUrlForTrack(track) ?: track.streamUrl
         }

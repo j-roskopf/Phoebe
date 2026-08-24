@@ -54,6 +54,8 @@ internal object AndroidPlaybackDiagnostics {
                 engine = engine,
                 constrainedNetwork = context.hasConstrainedPlaybackNetwork(),
                 uiVisible = PhoebeAppLifecycle.isUiVisible,
+                dataSaver = StreamingPlaybackPolicyHolder.effectiveQuality() ==
+                    com.phoebe.app.domain.StreamingQuality.DataSaver,
             ),
         )
     }
@@ -73,6 +75,10 @@ internal object PhoebeLoadControlConfig {
     const val ConstrainedMainMinBufferMs = 20_000
     const val ConstrainedMainMaxBufferMs = 90_000
     const val ConstrainedMainTargetBufferBytes = 4 * 1024 * 1024
+    // Data saver prefers less speculative download even when the network is shaky.
+    const val DataSaverMainMinBufferMs = 10_000
+    const val DataSaverMainMaxBufferMs = 35_000
+    const val DataSaverMainTargetBufferBytes = 2 * 1024 * 1024
     const val CrossfadeMinBufferMs = 2_000
     const val CrossfadeMaxBufferMs = 12_000
     const val CrossfadeTargetBufferBytes = 1 * 1024 * 1024
@@ -83,19 +89,27 @@ internal object PhoebeLoadControlConfig {
         engine: PlaybackEnginePath,
         constrainedNetwork: Boolean = false,
         uiVisible: Boolean = true,
+        dataSaver: Boolean = false,
     ): DefaultLoadControl =
-        create(profileFor(engine, constrainedNetwork, uiVisible))
+        create(profileFor(engine, constrainedNetwork, uiVisible, dataSaver))
 
     fun profileFor(
         engine: PlaybackEnginePath,
         constrainedNetwork: Boolean = false,
         uiVisible: Boolean = true,
+        dataSaver: Boolean = false,
     ): PhoebeLoadControlProfile =
         if (engine == PlaybackEnginePath.Media3Crossfade) {
             PhoebeLoadControlProfile(
                 minBufferMs = CrossfadeMinBufferMs,
                 maxBufferMs = CrossfadeMaxBufferMs,
                 targetBufferBytes = CrossfadeTargetBufferBytes,
+            )
+        } else if (dataSaver) {
+            PhoebeLoadControlProfile(
+                minBufferMs = DataSaverMainMinBufferMs,
+                maxBufferMs = DataSaverMainMaxBufferMs,
+                targetBufferBytes = DataSaverMainTargetBufferBytes,
             )
         } else if (!uiVisible || constrainedNetwork) {
             PhoebeLoadControlProfile(

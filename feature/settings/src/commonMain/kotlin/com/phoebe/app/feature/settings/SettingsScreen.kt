@@ -80,6 +80,8 @@ import com.phoebe.app.domain.MobileBottomTab
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.PersonalMixPreferences
 import com.phoebe.app.domain.PlexSession
+import com.phoebe.app.domain.StreamingPolicySettings
+import com.phoebe.app.domain.StreamingQuality
 import com.phoebe.app.domain.providerLabel
 import com.phoebe.app.platform.PhoebeBuildInfo
 import com.phoebe.app.platform.SecureCredentialAvailability
@@ -140,6 +142,7 @@ fun SettingsDesktopView(
     onCancelDownloads: (Set<String>) -> Unit = {},
     onDeleteDownloads: (Set<String>) -> Unit = {},
     onDownloadPolicySettings: (DownloadPolicySettings) -> Unit = {},
+    onStreamingPolicySettings: (StreamingPolicySettings) -> Unit = {},
     onCrossfadeSeconds: (Int) -> Unit,
     onScanLibraryOnLaunch: (Boolean) -> Unit,
     onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
@@ -253,6 +256,7 @@ fun SettingsDesktopView(
                         onPersistEqualizerSettings = onPersistEqualizerSettings,
                         onPersistVolumeSettings = onPersistVolumeSettings,
                         onAudioProcessingSettings = onAudioProcessingSettings,
+                        onStreamingPolicySettings = onStreamingPolicySettings,
                         onShowUltimateGuitarButton = onShowUltimateGuitarButton,
                     )
                     SettingsCategory.Account -> AccountSettingsCard(
@@ -346,6 +350,7 @@ fun SettingsMobileView(
     onCancelDownloads: (Set<String>) -> Unit = {},
     onDeleteDownloads: (Set<String>) -> Unit = {},
     onDownloadPolicySettings: (DownloadPolicySettings) -> Unit = {},
+    onStreamingPolicySettings: (StreamingPolicySettings) -> Unit = {},
     onCrossfadeSeconds: (Int) -> Unit,
     onScanLibraryOnLaunch: (Boolean) -> Unit,
     onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
@@ -462,6 +467,7 @@ fun SettingsMobileView(
             onPersistEqualizerSettings = onPersistEqualizerSettings,
             onPersistVolumeSettings = onPersistVolumeSettings,
             onAudioProcessingSettings = onAudioProcessingSettings,
+            onStreamingPolicySettings = onStreamingPolicySettings,
             onShowUltimateGuitarButton = onShowUltimateGuitarButton,
             compact = true,
         )
@@ -901,15 +907,40 @@ private fun AudioPlaybackSettingsCard(
     onPersistEqualizerSettings: (Boolean) -> Unit,
     onPersistVolumeSettings: (Boolean) -> Unit = {},
     onAudioProcessingSettings: (AudioProcessingSettings) -> Unit,
+    onStreamingPolicySettings: (StreamingPolicySettings) -> Unit = {},
     onShowUltimateGuitarButton: (Boolean) -> Unit = {},
     compact: Boolean = false,
 ) {
     var localCrossfade by remember(settings.crossfadeSeconds) { mutableIntStateOf(settings.crossfadeSeconds) }
     var localAudio by remember(settings.audioProcessing) { mutableStateOf(settings.audioProcessing.normalized()) }
     val audio = localAudio.normalized()
+    val streamingPolicy = settings.streamingPolicy.normalized()
     SettingsCard {
         Text("Audio Playback", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
         Text("Transitions and library scan", color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
+        Text("Streaming quality", color = PhoebeUi.secondaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        Text(
+            "Controls remote stream bitrate. Local and already-downloaded files stay original.",
+            color = PhoebeUi.mutedText,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(bottom = 8.dp),
+        )
+        StreamingQualitySelector(
+            selected = streamingPolicy.quality,
+            compact = compact,
+            onSelected = { quality ->
+                onStreamingPolicySettings(streamingPolicy.copy(quality = quality))
+            },
+        )
+        SettingsSwitchRow(
+            title = "Data saver on cellular",
+            subtitle = "Force 128 kbps remote streams on metered or cellular networks",
+            checked = streamingPolicy.useDataSaverOnCellular,
+            onCheckedChange = { checked ->
+                onStreamingPolicySettings(streamingPolicy.copy(useDataSaverOnCellular = checked))
+            },
+        )
+        Spacer(Modifier.height(12.dp))
         Text("Crossfade", color = PhoebeUi.secondaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         Slider(
             value = localCrossfade.toFloat(),
@@ -997,6 +1028,64 @@ private fun AudioPlaybackSettingsCard(
             checked = settings.scanLibraryOnLaunch,
             onCheckedChange = onScanLibraryOnLaunch,
         )
+    }
+}
+
+@Composable
+private fun StreamingQualitySelector(
+    selected: StreamingQuality,
+    compact: Boolean,
+    onSelected: (StreamingQuality) -> Unit,
+) {
+    val containerShape = RoundedCornerShape(if (compact) 10.dp else 12.dp)
+    val optionShape = RoundedCornerShape(
+        if (PhoebeUi.design == PhoebeDesignSystem.Brutalist) 0.dp else if (compact) 8.dp else 9.dp,
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(containerShape)
+            .background(PhoebeUi.subtleFill)
+            .border(BorderStroke(1.dp, PhoebeUi.border), containerShape)
+            .padding(if (compact) 4.dp else 5.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        StreamingQuality.Options.forEach { quality ->
+            val isSelected = quality == selected
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(optionShape)
+                    .clickable { onSelected(quality) }
+                    .testTag("settings:streamingQuality:${quality.name}")
+                    .background(if (isSelected) PhoebeUi.accent.copy(alpha = 0.16f) else Color.Transparent)
+                    .border(
+                        BorderStroke(
+                            1.dp,
+                            if (isSelected) PhoebeUi.accent.copy(alpha = 0.32f) else Color.Transparent,
+                        ),
+                        optionShape,
+                    )
+                    .padding(horizontal = 8.dp, vertical = if (compact) 8.dp else 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Text(
+                    quality.label,
+                    color = if (isSelected) PhoebeUi.accentLight else PhoebeUi.primaryText,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    quality.subtitle,
+                    color = PhoebeUi.mutedText,
+                    fontSize = 11.sp,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
     }
 }
 

@@ -85,6 +85,28 @@ class AndroidPlaybackDiagnosticsTest {
     }
 
     @Test
+    fun media3LoadControlUsesTighterBuffersForDataSaver() {
+        val constrained = PhoebeLoadControlConfig.profileFor(
+            engine = PlaybackEnginePath.Media3,
+            constrainedNetwork = true,
+            uiVisible = true,
+            dataSaver = false,
+        )
+        val dataSaver = PhoebeLoadControlConfig.profileFor(
+            engine = PlaybackEnginePath.Media3,
+            constrainedNetwork = true,
+            uiVisible = true,
+            dataSaver = true,
+        )
+        assertTrue(dataSaver.minBufferMs < constrained.minBufferMs)
+        assertTrue(dataSaver.maxBufferMs < constrained.maxBufferMs)
+        assertTrue(dataSaver.targetBufferBytes < constrained.targetBufferBytes)
+        assertEquals(PhoebeLoadControlConfig.DataSaverMainMinBufferMs, dataSaver.minBufferMs)
+        assertEquals(PhoebeLoadControlConfig.DataSaverMainMaxBufferMs, dataSaver.maxBufferMs)
+        assertEquals(PhoebeLoadControlConfig.DataSaverMainTargetBufferBytes, dataSaver.targetBufferBytes)
+    }
+
+    @Test
     fun bufferDurationsRemainValidForMedia3Builder() {
         val profiles = listOf(
             PhoebeLoadControlConfig.profileFor(
@@ -96,6 +118,12 @@ class AndroidPlaybackDiagnosticsTest {
                 engine = PlaybackEnginePath.Media3,
                 constrainedNetwork = true,
                 uiVisible = false,
+            ),
+            PhoebeLoadControlConfig.profileFor(
+                engine = PlaybackEnginePath.Media3,
+                constrainedNetwork = true,
+                uiVisible = true,
+                dataSaver = true,
             ),
             PhoebeLoadControlConfig.profileFor(PlaybackEnginePath.Media3Crossfade),
         )

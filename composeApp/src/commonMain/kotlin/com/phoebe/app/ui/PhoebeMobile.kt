@@ -207,6 +207,7 @@ import com.phoebe.app.domain.CatalogSnapshot
 import com.phoebe.app.domain.CollectionEntry
 import com.phoebe.app.domain.DownloadItem
 import com.phoebe.app.domain.DownloadPolicySettings
+import com.phoebe.app.domain.StreamingPolicySettings
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.EventSettings
 import com.phoebe.app.domain.LocalFolderMediaSourceConfig
@@ -379,6 +380,7 @@ internal fun MobileBrowseShell(
     onCancelDownloads: (Set<String>) -> Unit = {},
     onDeleteDownloads: (Set<String>) -> Unit = {},
     onDownloadPolicySettings: (DownloadPolicySettings) -> Unit = {},
+    onStreamingPolicySettings: (StreamingPolicySettings) -> Unit = {},
     useLightAppearance: Boolean,
     onUseLightAppearanceChange: (Boolean) -> Unit,
     appearanceDesignId: String = PhoebeDesignSystem.Default.id,
@@ -638,6 +640,7 @@ internal fun MobileBrowseShell(
                         onCancelDownloads = onCancelDownloads,
                         onDeleteDownloads = onDeleteDownloads,
                         onDownloadPolicySettings = onDownloadPolicySettings,
+                        onStreamingPolicySettings = onStreamingPolicySettings,
                         onCrossfadeSeconds = onCrossfadeSeconds,
                         onScanLibraryOnLaunch = onScanLibraryOnLaunch,
                         onNotifyWhenDownloadFinishes = onNotifyWhenDownloadFinishes,

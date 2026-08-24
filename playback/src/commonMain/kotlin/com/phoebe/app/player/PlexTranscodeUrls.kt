@@ -1,6 +1,7 @@
 package com.phoebe.app.player
 
 import com.phoebe.app.data.PlexClient
+import com.phoebe.app.domain.StreamingQuality
 import com.phoebe.app.domain.Track
 import io.ktor.http.URLBuilder
 import io.ktor.http.Url
@@ -21,7 +22,7 @@ internal fun Track.plexRatingKey(): String? {
  * Jellyfin and Emby expose `/Audio/{itemId}/stream`; request `/stream.mp3` when Java Sound cannot
  * decode the source container (Flatpak sandboxes, Chromecast, etc.).
  */
-internal fun Track.jellyfinFamilyMp3TranscodeUrl(): String? {
+internal fun Track.jellyfinFamilyMp3TranscodeUrl(maxAudioBitrateKbps: Int? = null): String? {
     val parsed = runCatching { Url(streamUrl) }.getOrNull() ?: return null
     val token = parsed.parameters["api_key"]?.takeIf { it.isNotBlank() } ?: return null
     if (parsed.protocol.name.isBlank() || parsed.host.isBlank()) return null
@@ -34,6 +35,7 @@ internal fun Track.jellyfinFamilyMp3TranscodeUrl(): String? {
                 parameters.clear()
                 parameters.append("static", "true")
                 parameters.append("audioCodec", "mp3")
+                maxAudioBitrateKbps?.takeIf { it > 0 }?.let { parameters.append("audioBitRate", it.toString()) }
                 parameters.append("api_key", token)
             }
             .buildString()
@@ -43,14 +45,18 @@ internal fun Track.jellyfinFamilyMp3TranscodeUrl(): String? {
 internal fun jellyfinFamilyAudioItemId(encodedPath: String): String? =
     Regex("""/Audio/([^/]+)/stream(?:\.[^/]+)?""").find(encodedPath)?.groupValues?.getOrNull(1)
 
-internal fun Track.plexUniversalMp3TranscodeUrl(): String? =
-    buildPlexUniversalMp3TranscodeUrl()
+internal fun Track.plexUniversalMp3TranscodeUrl(maxAudioBitrateKbps: Int? = null): String? =
+    buildPlexUniversalMp3TranscodeUrl(
+        extraParameters = buildMap {
+            maxAudioBitrateKbps?.takeIf { it > 0 }?.let { put("maxAudioBitrate", it.toString()) }
+        },
+    )
 
 /**
  * Plex Web uses a slimmer query than Chromecast/Flatpak. Extra transcode knobs such as
  * `directPlay=0` or `X-Plex-Client-Profile-Extra` can make current PMS builds return 400.
  */
-internal fun Track.plexWebUniversalMp3TranscodeUrl(): String? {
+internal fun Track.plexWebUniversalMp3TranscodeUrl(maxAudioBitrateKbps: Int = 320): String? {
     val ratingKey = plexRatingKey() ?: return null
     val parsed = runCatching { Url(streamUrl) }.getOrNull() ?: return null
     val token = parsed.parameters["X-Plex-Token"].orEmpty()
@@ -71,7 +77,7 @@ internal fun Track.plexWebUniversalMp3TranscodeUrl(): String? {
                 parameters.append("path", metadataPath)
                 parameters.append("mediaIndex", "0")
                 parameters.append("partIndex", "0")
-                parameters.append("maxAudioBitrate", "320")
+                parameters.append("maxAudioBitrate", maxAudioBitrateKbps.coerceAtLeast(32).toString())
                 parameters.append("protocol", parsed.protocol.name)
                 parameters.append("session", randomPlexTranscodeSession())
                 parameters.append("offset", "0")
@@ -175,9 +181,15 @@ internal fun Track.flatpakSandboxTranscodeUrl(): String? =
 /**
  * Browser playback keeps MP3/AAC/M4A on the direct Plex part URL. Lossless sources can opt into
  * Plex Web's slimmer universal MP3 transcode endpoint when the browser cannot decode them safely.
+ * When [quality] is capped, prefer a bitrate-limited transcode even for playable lossy sources.
  */
-internal fun Track.webPlaybackStreamUrl(): String {
+internal fun Track.webPlaybackStreamUrl(
+    quality: StreamingQuality = StreamingQuality.Original,
+): String {
     if (streamUrl.isBlank()) return streamUrl
+    if (quality != StreamingQuality.Original) {
+        return qualityAwareStreamUrl(quality)
+    }
     if (hasChromecastDirectPlayableCodec()) return streamUrl
     return plexWebUniversalMp3TranscodeUrl() ?: jellyfinFamilyMp3TranscodeUrl() ?: streamUrl
 }

@@ -70,6 +70,7 @@ class ImportExportService(
         backup.savedSearches.forEach { userArtifactsRepository.upsertSavedSearch(it) }
         backup.localMetadataOverrides.forEach { userArtifactsRepository.upsertMetadataOverride(it) }
         appSettingsRepository.setDownloadPolicySettings(backup.settings.downloadPolicy)
+        appSettingsRepository.setStreamingPolicySettings(backup.settings.streamingPolicy)
         appSettingsRepository.setAudioProcessingSettings(backup.settings.audioProcessing)
         appSettingsRepository.setListenBrainzSettings(backup.settings.listenBrainz)
         appSettingsRepository.setLastFmSettings(backup.settings.lastFm)

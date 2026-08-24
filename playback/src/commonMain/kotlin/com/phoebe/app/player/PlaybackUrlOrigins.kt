@@ -7,6 +7,9 @@ import io.ktor.http.Url
 
 private const val MaxPlaybackFallbackOrigins = 8
 
+/** Stop after this many distinct stream URIs, including the first. Each Android attempt can take 30s. */
+internal const val MaxTriedPlaybackUris = 3
+
 internal fun isMusicServerStreamUrl(url: String): Boolean {
     if (url.isBlank()) return false
     val parsed = runCatching { Url(url) }.getOrNull() ?: return false
@@ -85,6 +88,65 @@ internal fun Track.playbackUriCandidates(): List<String> {
     return (listOfNotNull(primary) + playbackFallbackUrls)
         .filter { it.isNotBlank() }
         .distinct()
+}
+
+/**
+ * Next stream origin after [failedUri], skipping LAN-only hosts once a remote URL
+ * has already timed out. Plex advertises `172-16-1-2.<hash>.plex.direct:32400` next
+ * to public relays; walking those from cellular burns 30s per skip with no audio.
+ */
+internal fun nextPlaybackFailoverCandidate(
+    candidates: List<String>,
+    tried: Set<String>,
+    failedUri: String?,
+    maxTriedUris: Int = MaxTriedPlaybackUris,
+): String? {
+    if (tried.size >= maxTriedUris) return null
+    val skipLocalOrigins = failedUri != null &&
+        failedUri.isNotBlank() &&
+        !isLocalOnlyPlaybackOrigin(failedUri)
+    return candidates.firstOrNull { candidate ->
+        candidate.isNotBlank() &&
+            candidate !in tried &&
+            !(skipLocalOrigins && isLocalOnlyPlaybackOrigin(candidate))
+    }
+}
+
+internal fun isLocalOnlyPlaybackOrigin(url: String): Boolean {
+    if (url.isBlank()) return false
+    val parsed = runCatching { Url(url) }.getOrNull() ?: return false
+    val host = parsed.host.lowercase()
+    if (host == "localhost" || host.endsWith(".local")) return true
+    val ip = when {
+        isDottedIpv4(host) -> host
+        else -> decodedIpv4FromPlexDirectHost(host)
+    } ?: return false
+    return isPrivateOrLoopbackIpv4(ip)
+}
+
+private fun isDottedIpv4(host: String): Boolean {
+    val parts = host.split('.')
+    return parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 }
+}
+
+private fun decodedIpv4FromPlexDirectHost(host: String): String? {
+    if (!host.endsWith(".plex.direct")) return null
+    val dashed = host.substringBefore('.')
+    val parts = dashed.split('-')
+    if (parts.size != 4 || parts.any { it.toIntOrNull() !in 0..255 }) return null
+    return parts.joinToString(".")
+}
+
+private fun isPrivateOrLoopbackIpv4(ip: String): Boolean {
+    val parts = ip.split('.').mapNotNull { it.toIntOrNull() }
+    if (parts.size != 4) return false
+    val a = parts[0]
+    val b = parts[1]
+    return a == 10 ||
+        a == 127 ||
+        (a == 192 && b == 168) ||
+        (a == 172 && b in 16..31) ||
+        (a == 169 && b == 254)
 }
 
 fun Track.withPlaybackOrigins(

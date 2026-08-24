@@ -952,6 +952,7 @@ internal fun DesktopPlayer(
                                             onCancelDownloads = settingsActions.onCancelDownloads,
                                             onDeleteDownloads = settingsActions.onDeleteDownloads,
                                             onDownloadPolicySettings = settingsActions.onDownloadPolicySettings,
+                                            onStreamingPolicySettings = settingsActions.onStreamingPolicySettings,
                                             onCrossfadeSeconds = onCrossfadeSeconds,
                                             onScanLibraryOnLaunch = onScanLibraryOnLaunch,
                                             onNotifyWhenDownloadFinishes = onNotifyWhenDownloadFinishes,

@@ -15,6 +15,7 @@ import com.phoebe.app.domain.MobileBottomTab
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.PersonalMixPreferences
 import com.phoebe.app.domain.PlexSession
+import com.phoebe.app.domain.StreamingPolicySettings
 import com.phoebe.app.platform.SecureCredentialAvailability
 import com.phoebe.app.ui.PhoebeDesignSystem
 import com.phoebe.app.ui.HomeScreenLayoutMode
@@ -63,6 +64,7 @@ class SettingsRouteActions(
     val onCancelDownloads: (Set<String>) -> Unit = {},
     val onDeleteDownloads: (Set<String>) -> Unit = {},
     val onDownloadPolicySettings: (DownloadPolicySettings) -> Unit = {},
+    val onStreamingPolicySettings: (StreamingPolicySettings) -> Unit = {},
     val onCrossfadeSeconds: (Int) -> Unit,
     val onScanLibraryOnLaunch: (Boolean) -> Unit,
     val onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
@@ -134,6 +136,7 @@ fun SettingsDesktopRoute(
         onCancelDownloads = actions.onCancelDownloads,
         onDeleteDownloads = actions.onDeleteDownloads,
         onDownloadPolicySettings = actions.onDownloadPolicySettings,
+        onStreamingPolicySettings = actions.onStreamingPolicySettings,
         onCrossfadeSeconds = actions.onCrossfadeSeconds,
         onScanLibraryOnLaunch = actions.onScanLibraryOnLaunch,
         onNotifyWhenDownloadFinishes = actions.onNotifyWhenDownloadFinishes,
@@ -212,6 +215,7 @@ fun SettingsMobileRoute(
         onCancelDownloads = actions.onCancelDownloads,
         onDeleteDownloads = actions.onDeleteDownloads,
         onDownloadPolicySettings = actions.onDownloadPolicySettings,
+        onStreamingPolicySettings = actions.onStreamingPolicySettings,
         onCrossfadeSeconds = actions.onCrossfadeSeconds,
         onScanLibraryOnLaunch = actions.onScanLibraryOnLaunch,
         onNotifyWhenDownloadFinishes = actions.onNotifyWhenDownloadFinishes,

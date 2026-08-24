@@ -26,6 +26,7 @@ import com.phoebe.app.domain.CatalogSnapshot
 import com.phoebe.app.domain.CollectionEntry
 import com.phoebe.app.domain.DownloadItem
 import com.phoebe.app.domain.DownloadPolicySettings
+import com.phoebe.app.domain.StreamingPolicySettings
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.HomeSection
 import com.phoebe.app.domain.JellyfinLibraryPageKind
@@ -308,6 +309,7 @@ internal data class SettingsActions(
     val onCancelDownloads: (Set<String>) -> Unit = {},
     val onDeleteDownloads: (Set<String>) -> Unit = {},
     val onDownloadPolicySettings: (DownloadPolicySettings) -> Unit = {},
+    val onStreamingPolicySettings: (StreamingPolicySettings) -> Unit = {},
     val onUseLightAppearanceChange: (Boolean) -> Unit,
     val onAppearanceDesignChange: (String) -> Unit = {},
     val onAppearanceTintChange: (String) -> Unit,

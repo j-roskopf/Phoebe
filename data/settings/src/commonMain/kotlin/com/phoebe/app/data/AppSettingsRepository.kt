@@ -10,6 +10,7 @@ import com.phoebe.app.domain.EventSettings
 import com.phoebe.app.domain.LastFmSettings
 import com.phoebe.app.domain.ListenBrainzSettings
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
+import com.phoebe.app.domain.StreamingPolicySettings
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
@@ -170,6 +171,12 @@ class AppSettingsRepository(
         }
     }
 
+    suspend fun setStreamingPolicySettings(settings: StreamingPolicySettings) {
+        updateAndSave { current ->
+            current.copy(streamingPolicy = settings.normalized())
+        }
+    }
+
     suspend fun setAudioProcessingSettings(settings: AudioProcessingSettings) {
         updateAndSave { current ->
             val normalizedSettings = settings.normalized()
@@ -228,6 +235,7 @@ class AppSettingsRepository(
                         listenBrainzSettings = json.encodeToString(persisted.listenBrainz),
                         lastFmSettings = json.encodeToString(persisted.lastFm),
                         downloadPolicySettings = json.encodeToString(persisted.downloadPolicy),
+                        streamingPolicySettings = json.encodeToString(persisted.streamingPolicy),
                         audioProcessingSettings = json.encodeToString(persisted.audioProcessing),
                         eventSettings = json.encodeToString(persisted.events),
                     )
@@ -258,6 +266,7 @@ class AppSettingsRepository(
             listenBrainz = decodeListenBrainzSettings(listenBrainzSettings),
             lastFm = decodeLastFmSettings(lastFmSettings),
             downloadPolicy = decodeDownloadPolicySettings(downloadPolicySettings),
+            streamingPolicy = decodeStreamingPolicySettings(streamingPolicySettings),
             audioProcessing = decodeAudioProcessingSettings(audioProcessingSettings),
             events = decodeEventSettings(eventSettings),
         ).normalized()
@@ -299,6 +308,15 @@ class AppSettingsRepository(
             DownloadPolicySettings()
         } catch (_: IllegalArgumentException) {
             DownloadPolicySettings()
+        }
+
+    private fun decodeStreamingPolicySettings(value: String): StreamingPolicySettings =
+        try {
+            json.decodeFromString<StreamingPolicySettings>(value).normalized()
+        } catch (_: SerializationException) {
+            StreamingPolicySettings()
+        } catch (_: IllegalArgumentException) {
+            StreamingPolicySettings()
         }
 
     private fun decodeAudioProcessingSettings(value: String): AudioProcessingSettings =

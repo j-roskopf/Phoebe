@@ -107,7 +107,8 @@ private class WebAudioPlayer(
     override fun playTrack(track: Track) {
         val directStreamUri = track.streamUrl.takeIf { it.isNotBlank() }
         val localUri = track.localUri?.takeIf { it.isNotBlank() }
-        val streamUri = track.webPlaybackStreamUrl().takeIf { it.isNotBlank() }
+        val streamUri = track.webPlaybackStreamUrl(StreamingPlaybackPolicyHolder.effectiveQuality())
+            .takeIf { it.isNotBlank() }
         directStreamFallbackUri = directStreamUri?.takeIf { streamUri != null && it != streamUri }
         playUri(
             uri = localUri ?: streamUri.orEmpty(),
@@ -122,7 +123,9 @@ private class WebAudioPlayer(
     private fun webPlaybackUriForTrack(track: Track): String {
         val localUri = track.localUri?.takeIf { it.isNotBlank() }
         if (localUri != null) return localUri
-        return track.webPlaybackStreamUrl().takeIf { it.isNotBlank() }.orEmpty()
+        return track.webPlaybackStreamUrl(StreamingPlaybackPolicyHolder.effectiveQuality())
+            .takeIf { it.isNotBlank() }
+            .orEmpty()
     }
 
     private fun playUri(uri: String, fallbackUri: String?) {
@@ -428,7 +431,8 @@ private class WebAudioPlayer(
         onResolved: (String) -> Unit,
     ): Boolean {
         val localUri = track.localUri?.takeIf { it.isNotBlank() }
-        val streamUri = track.webPlaybackStreamUrl().takeIf { it.isNotBlank() }
+        val streamUri = track.webPlaybackStreamUrl(StreamingPlaybackPolicyHolder.effectiveQuality())
+            .takeIf { it.isNotBlank() }
         val uri = localUri ?: streamUri.orEmpty()
         if (uri.isBlank()) return false
         if (uri.startsWith("web-download://")) {
