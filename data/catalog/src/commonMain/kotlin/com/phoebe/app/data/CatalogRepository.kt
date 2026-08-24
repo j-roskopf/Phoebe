@@ -3759,9 +3759,20 @@ class CatalogRepository(
         )
             .map { it.withPlexPrefix() }
             .distinctBy { it.id }
+            .distinctBy { track ->
+                "${track.title.trim().lowercase()}|${track.artist.trim().lowercase()}"
+            }
         if (tracks.isNotEmpty()) {
-            publishIndexedPlexTracks(tracks)
-            runCatalogDbWrite { persistTrackBatch(tracks) }
+            persistenceScope.launch {
+                runCatching { publishIndexedPlexTracks(tracks) }
+                    .onFailure { error ->
+                        if (error is CancellationException) throw error
+                        PhoebeLog.d("CatalogRepository") {
+                            "popular songs catalog publish failed: ${error.message}"
+                        }
+                    }
+                enqueueCatalogDbWrite { persistTrackBatch(tracks) }
+            }
         }
         tracks
     }

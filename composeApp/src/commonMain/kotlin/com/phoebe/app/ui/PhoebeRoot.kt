@@ -296,6 +296,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import com.phoebe.app.sources.rememberPickLocalFolder
 import io.ktor.client.HttpClient
 import io.ktor.client.call.body
@@ -1032,7 +1033,9 @@ private fun PhoebeRootStateHolder(
                 homePosterLoading = homePosterLoading.copy(popularMix = true)
                 val loadingStartedAtMs = currentTimeMs()
                 try {
-                    state.playPopularMix().join()
+                    withTimeoutOrNull(HomePosterMixLoadTimeoutMs) {
+                        state.playPopularMix().join()
+                    }
                 } finally {
                     val remainingLoadingMs = HomePosterLoadingMinDurationMs - (currentTimeMs() - loadingStartedAtMs)
                     if (remainingLoadingMs > 0L) {
@@ -1050,7 +1053,9 @@ private fun PhoebeRootStateHolder(
                 homePosterLoading = homePosterLoading.copy(topTracksMix = true)
                 val loadingStartedAtMs = currentTimeMs()
                 try {
-                    state.playTopTracksMix().join()
+                    withTimeoutOrNull(HomePosterMixLoadTimeoutMs) {
+                        state.playTopTracksMix().join()
+                    }
                 } finally {
                     val remainingLoadingMs = HomePosterLoadingMinDurationMs - (currentTimeMs() - loadingStartedAtMs)
                     if (remainingLoadingMs > 0L) {
@@ -3042,6 +3047,7 @@ private fun MobilePlayerHost(
 }
 
 private const val HomePosterLoadingMinDurationMs = 700L
+private const val HomePosterMixLoadTimeoutMs = 25_000L
 
 private fun Track?.withRadioNowPlaying(metadata: RadioNowPlayingMetadata?): Track? {
     val track = this ?: return null

@@ -352,6 +352,7 @@ class PlexClient(
         if (ratingKey.isBlank() || limit <= 0) return emptyList()
         val response: PlexMediaContainerResponse = withReachableBase(server) { base ->
             val response = httpClient.get("$base/library/sections/${library.key}/all") {
+                timeout { requestTimeoutMillis = PlexPopularTracksRequestTimeoutMs }
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
                 header("X-Plex-Container-Start", "0")
@@ -384,6 +385,7 @@ class PlexClient(
         if (limit <= 0) return emptyList()
         val response: PlexMediaContainerResponse = withReachableBase(server) { base ->
             val response = httpClient.get("$base/library/sections/${library.key}/all") {
+                timeout { requestTimeoutMillis = PlexPopularTracksRequestTimeoutMs }
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
                 header("X-Plex-Container-Start", "0")
@@ -392,7 +394,6 @@ class PlexClient(
                 parameter("X-Plex-Container-Size", limit)
                 parameter("type", PlexTrackType)
                 parameter("album.subformat!", "Compilation,Live")
-                parameter("group", "title")
                 parameter("ratingCount>>", 0)
                 parameter("sort", "ratingCount:desc")
                 parameter("limit", limit)
@@ -1882,34 +1883,33 @@ class PlexClient(
         server: PlexServer,
         block: suspend (base: String) -> T,
     ): T {
-        apiBaseCache[server.id]?.let { cached ->
+        val cached = baseResolveMutex.withLock { apiBaseCache[server.id] }
+        var lastError: Throwable? = null
+        if (cached != null) {
             try {
                 return block(cached)
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
-            }
-        }
-        return baseResolveMutex.withLock {
-            apiBaseCache[server.id]?.let { cached ->
-                try {
-                    return@withLock block(cached)
-                } catch (error: Throwable) {
-                    if (error is CancellationException) throw error
+                lastError = error
+                baseResolveMutex.withLock {
+                    if (apiBaseCache[server.id] == cached) {
+                        apiBaseCache.remove(server.id)
+                    }
                 }
             }
-            var lastError: Throwable? = null
-            for (base in server.reachableBaseUris(apiBaseCache[server.id])) {
-                try {
-                    val result = block(base)
-                    apiBaseCache[server.id] = base
-                    return@withLock result
-                } catch (error: Throwable) {
-                    if (error is CancellationException) throw error
-                    lastError = error
-                }
-            }
-            throw lastError ?: IllegalStateException("Could not reach Plex server '${server.name}'")
         }
+        for (base in server.reachableBaseUris(cached)) {
+            if (base == cached) continue
+            try {
+                val result = block(base)
+                baseResolveMutex.withLock { apiBaseCache[server.id] = base }
+                return result
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                lastError = error
+            }
+        }
+        throw lastError ?: IllegalStateException("Could not reach Plex server '${server.name}'")
     }
 
     private suspend inline fun <reified T> plexGet(server: PlexServer, token: String, path: String): T =
@@ -2240,6 +2240,7 @@ class PlexClient(
         private const val PlexTrackType = 10
         private const val PlexLocalSetupRequestTimeoutMs = 800L
         private const val PlexRemoteSetupRequestTimeoutMs = 8_000L
+        private const val PlexPopularTracksRequestTimeoutMs = 15_000L
         private const val MusicStationsHubContext = "hub.music.stations"
         private const val MusicStationsHubIdentifier = "music.stations"
         val PlexJson = Json {

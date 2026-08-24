@@ -349,7 +349,7 @@ class PlexMappingTest {
         assertEquals("10", capturedType)
         assertEquals(null, capturedArtist)
         assertEquals("Compilation,Live", capturedSubformat)
-        assertEquals("title", capturedGroup)
+        assertEquals(null, capturedGroup)
         assertEquals("0", capturedRatingCount)
         assertEquals("ratingCount:desc", capturedSort)
         assertEquals("25", capturedLimit)

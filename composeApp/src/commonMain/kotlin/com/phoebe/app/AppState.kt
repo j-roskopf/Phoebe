@@ -2211,9 +2211,11 @@ class AppState(
     }
 
     fun playPopularMix() = scope.launch {
+        PhoebeLog.d("AppState") { "popular mix play requested" }
         val seed = popularMixSeedForSession(session.value)
         val popularPool = seed?.tracks.orEmpty()
         if (seed == null || popularPool.isEmpty()) {
+            PhoebeLog.d("AppState") { "popular mix play aborted: no seed tracks" }
             mutableMessage.value = "No popular songs found yet."
             return@launch
         }
@@ -2239,11 +2241,15 @@ class AppState(
     }
 
     fun playTopTracksMix() = scope.launch {
+        PhoebeLog.d("AppState") { "top tracks mix play requested" }
         val currentSession = session.value
-        val cachedPool = dependencies.catalogRepository.cachedPopularTracksForLibrary(currentSession)
+        val cachedPool = withTimeoutOrNull(MixProviderLoadTimeoutMs) {
+            dependencies.catalogRepository.cachedPopularTracksForLibrary(currentSession)
+        }.orEmpty()
         val seed = if (cachedPool.isEmpty()) popularMixSeedForSession(currentSession) else null
         val topTracksPool = cachedPool.takeIf { it.isNotEmpty() } ?: seed?.tracks.orEmpty()
         if (topTracksPool.isEmpty()) {
+            PhoebeLog.d("AppState") { "top tracks mix play aborted: no tracks" }
             mutableMessage.value = "No top tracks found yet."
             return@launch
         }
@@ -2277,12 +2283,21 @@ class AppState(
         val signature = currentSession.topTracksMixSessionSignature() ?: return null
         val cachedTracks = popularMixSeedTracks
             .takeIf { popularMixSeedSignature == signature && it.isNotEmpty() }
-            ?: startPopularMixSeedBuild(plexSession, signature).await()
+            ?: awaitPopularMixSeedBuild(plexSession, signature)
         return PopularMixSeed(
             session = plexSession,
             signature = signature,
             tracks = cachedTracks,
         )
+    }
+
+    private suspend fun awaitPopularMixSeedBuild(session: PlexSession, signature: String): List<Track> {
+        val deferred = startPopularMixSeedBuild(session, signature)
+        val tracks = withTimeoutOrNull(MixProviderLoadTimeoutMs) { deferred.await() }
+        if (tracks == null) {
+            PhoebeLog.d("AppState") { "popular mix seed timed out after ${MixProviderLoadTimeoutMs}ms" }
+        }
+        return tracks.orEmpty()
     }
 
     private fun startPopularMixSeedBuild(session: PlexSession, signature: String): Deferred<List<Track>> {
@@ -2292,17 +2307,15 @@ class AppState(
         }
         val deferred = scope.async {
             val tracks = runCatching {
-                withTimeoutOrNull(MixProviderLoadTimeoutMs) {
-                    dependencies.catalogRepository.popularSongsForLibrary(
-                        session = session,
-                        limit = PopularMixSeedTrackLimit,
-                    )
-                }
+                dependencies.catalogRepository.popularSongsForLibrary(
+                    session = session,
+                    limit = PopularMixSeedTrackLimit,
+                )
             }.getOrElse { error ->
                 if (error is CancellationException) throw error
                 PhoebeLog.d("AppState") { "popular mix seed provider load failed: ${error.message}" }
-                null
-            }.orEmpty()
+                emptyList()
+            }
             if (tracks.isNotEmpty()) {
                 popularMixSeedSignature = signature
                 popularMixSeedTracks = tracks

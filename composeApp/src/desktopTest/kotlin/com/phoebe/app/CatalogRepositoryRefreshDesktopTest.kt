@@ -617,11 +617,13 @@ class CatalogRepositoryRefreshDesktopTest {
         driver = d
         var capturedLimit: String? = null
         var capturedContainerSize: String? = null
+        var capturedGroup: String? = null
         val engine = MockEngine { request ->
             when (request.url.encodedPath) {
                 "/library/sections/1/all" -> {
                     capturedLimit = request.url.parameters["limit"]
                     capturedContainerSize = request.headers["X-Plex-Container-Size"]
+                    capturedGroup = request.url.parameters["group"]
                     respondJson(popularTracksJson("t1" to "Library Top Song"))
                 }
                 else -> respond("", HttpStatusCode.NotFound)
@@ -641,6 +643,7 @@ class CatalogRepositoryRefreshDesktopTest {
 
         assertEquals("500", capturedLimit)
         assertEquals("500", capturedContainerSize)
+        assertEquals(null, capturedGroup)
         assertEquals(listOf("plex:t1"), tracks.map { it.id })
     }
 
