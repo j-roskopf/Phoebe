@@ -167,8 +167,12 @@ internal fun Track.preferPlaybackUri(uri: String): Track {
 }
 
 /** JavaFX/player-engine timeouts on LAN hosts will hang the same way on every engine. */
-internal fun shouldSkipAlternateEngineAfterPlayerTimeout(uri: String): Boolean =
-    uri.isNotBlank() && isLocalOnlyPlaybackOrigin(uri)
+internal fun shouldSkipAlternateEngineAfterPlayerTimeout(uri: String): Boolean {
+    if (uri.isBlank()) return false
+    val isHttp = uri.startsWith("http://", ignoreCase = true) ||
+        uri.startsWith("https://", ignoreCase = true)
+    return isHttp && isLocalOnlyPlaybackOrigin(uri)
+}
 
 fun Track.withPlaybackOrigins(
     preferredOrigin: String?,

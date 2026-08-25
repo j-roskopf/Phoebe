@@ -210,6 +210,16 @@ class PlaybackUrlOriginsTest {
                 "https://173-230-133-75.abc.plex.direct:8443/library/parts/1/file.mp3",
             ),
         )
+        assertFalse(
+            shouldSkipAlternateEngineAfterPlayerTimeout(
+                "file:///home/runner/Downloads/phoebe-smoke/wikimedia-example.mp3",
+            ),
+        )
+        assertFalse(
+            shouldSkipAlternateEngineAfterPlayerTimeout(
+                "file:/home/runner/Downloads/phoebe-smoke/wikimedia-example.mp3",
+            ),
+        )
     }
 
     @Test

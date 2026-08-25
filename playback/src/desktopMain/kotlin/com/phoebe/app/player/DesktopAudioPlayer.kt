@@ -1753,25 +1753,28 @@ class DesktopAudioPlayer(
             }
         }
         val readyTimeoutMs = DesktopPlaybackStartupPolicy.javaFxMediaReadyTimeoutMs(uri)
-        scheduleJavaFxStartupWatchdog(
-            stop = watchdogStop,
-            generation = generation,
-            mediaReady = mediaReady,
-            timeoutMs = readyTimeoutMs,
-            onStartupFailed = {
-                failStartup(
-                    PlaybackFailureClassifier.fromMessage(
-                        "JavaFX media did not become ready in ${readyTimeoutMs}ms",
-                        uri,
-                    ),
-                )
-            },
-        )
         JavaFxRuntime.runLater(
             block = {
                 runCatching {
                     diagnostics.playbackStartupEvent(PlaybackEnginePath.JavaFxMediaPlayer, "javafx-thread")
                     diagnostics.engineSelected(PlaybackEnginePath.JavaFxMediaPlayer)
+                    // Ready timeout starts here so Platform.startup does not consume it.
+                    if (!watchdogStop.get() && isPlayRequestCurrent(generation)) {
+                        scheduleJavaFxStartupWatchdog(
+                            stop = watchdogStop,
+                            generation = generation,
+                            mediaReady = mediaReady,
+                            timeoutMs = readyTimeoutMs,
+                            onStartupFailed = {
+                                failStartup(
+                                    PlaybackFailureClassifier.fromMessage(
+                                        "JavaFX media did not become ready in ${readyTimeoutMs}ms",
+                                        uri,
+                                    ),
+                                )
+                            },
+                        )
+                    }
                     val media = Media(uri)
                     diagnostics.playbackStartupEvent(PlaybackEnginePath.JavaFxMediaPlayer, "media-created")
                     val mediaPlayer = MediaPlayer(media)
