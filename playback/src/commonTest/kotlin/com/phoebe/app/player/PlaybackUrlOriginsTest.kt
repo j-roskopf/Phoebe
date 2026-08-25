@@ -166,6 +166,53 @@ class PlaybackUrlOriginsTest {
     }
 
     @Test
+    fun preferPlaybackOriginMovesMatchingRelayFirstWithoutDroppingLanFallback() {
+        val lan = "https://172-16-1-2.abc.plex.direct:32400/library/parts/1/file.mp3"
+        val remote = "https://173-230-133-75.abc.plex.direct:8443/library/parts/1/file.mp3"
+        val track = Track(
+            id = "1",
+            title = "Song",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 180_000,
+            streamUrl = lan,
+            downloadUrl = "",
+            playbackFallbackUrls = listOf(remote),
+        ).preferPlaybackOrigin("https://173-230-133-75.abc.plex.direct:8443")
+
+        assertEquals(remote, track.streamUrl)
+        assertEquals(listOf(lan), track.playbackFallbackUrls)
+    }
+
+    @Test
+    fun preferPlaybackOriginLeavesUnrelatedTracksAlone() {
+        val radio = Track(
+            id = "radio:kexp",
+            title = "KEXP",
+            artist = "Radio",
+            album = "Radio",
+            durationMs = 0,
+            streamUrl = "https://kexp.streamguys1.com/kexp128.mp3",
+            downloadUrl = "",
+        )
+        assertEquals(radio, radio.preferPlaybackOrigin("https://173-230-133-75.abc.plex.direct:8443"))
+    }
+
+    @Test
+    fun playerEngineTimeoutsSkipAlternateEngineOnlyOnLanOrigins() {
+        assertTrue(
+            shouldSkipAlternateEngineAfterPlayerTimeout(
+                "https://172-16-1-2.abc.plex.direct:32400/library/parts/1/file.mp3",
+            ),
+        )
+        assertFalse(
+            shouldSkipAlternateEngineAfterPlayerTimeout(
+                "https://173-230-133-75.abc.plex.direct:8443/library/parts/1/file.mp3",
+            ),
+        )
+    }
+
+    @Test
     fun failoverAfterLanFailureStillTriesRemoteRelays() {
         val lan = "http://192.168.1.9:32400/library/parts/1/file.mp3"
         val remote = "https://45-79-210-225.abc.plex.direct:8443/library/parts/1/file.mp3"

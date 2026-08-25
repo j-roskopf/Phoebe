@@ -46,6 +46,7 @@ abstract class SimpleAudioPlayer(
     private var playGeneration = 0
     private var failoverGeneration = -1
     private val triedPlaybackUris = linkedSetOf<String>()
+    private var stickyPlaybackOrigin: String? = null
     private var crossfadeDurationMs = 0L
     private var crossfadeRequestKey: String? = null
     private var manualSeekCrossfadeSuppression: ManualSeekCrossfadeSuppression? = null
@@ -78,9 +79,10 @@ abstract class SimpleAudioPlayer(
 
     override fun play(queue: List<Track>, startIndex: Int) {
         val previous = mutableState.value
-        val index = startIndex.coerceIn(queue.indices)
-        val track = queue.getOrNull(index)
-        val sameQueue = tracksMatch(previous.queue, queue)
+        val playbackQueue = queue.preferStickyPlaybackOrigin()
+        val index = startIndex.coerceIn(playbackQueue.indices)
+        val track = playbackQueue.getOrNull(index)
+        val sameQueue = tracksMatch(previous.queue, playbackQueue)
 
         val sameCurrentTrack = sameQueue && track != null &&
             previous.currentIndex == index &&
@@ -117,7 +119,7 @@ abstract class SimpleAudioPlayer(
             stopCurrentPlaybackImmediately()
         }
         mutableState.value = previous.copy(
-            queue = queue,
+            queue = playbackQueue,
             currentIndex = if (track == null) -1 else index,
             isPlaying = false,
             isBuffering = track != null,
@@ -134,9 +136,9 @@ abstract class SimpleAudioPlayer(
             if (initialUri.isNotBlank()) notePlaybackUri(initialUri, generation)
             startPlaybackStartupWatchdog(generation)
             if (sameQueue) {
-                skipToInQueueOnPlatform(queue, index, track, generation)
+                skipToInQueueOnPlatform(playbackQueue, index, track, generation)
             } else {
-                playQueueOnPlatform(queue, index, track, generation)
+                playQueueOnPlatform(playbackQueue, index, track, generation)
             }
         }
     }
@@ -262,9 +264,10 @@ abstract class SimpleAudioPlayer(
 
     override fun addToUpNext(track: Track) {
         val state = mutableState.value
-        val deduped = state.queue.filterNot { it.id == track.id }
+        val preferred = listOf(track).preferStickyPlaybackOrigin().first()
+        val deduped = state.queue.filterNot { it.id == preferred.id }
         val insertAt = (state.currentIndex + 1).coerceIn(0, deduped.size)
-        val newQueue = deduped.toMutableList().also { it.add(insertAt, track) }
+        val newQueue = deduped.toMutableList().also { it.add(insertAt, preferred) }
         val newCurrent = if (state.currentIndex < 0) state.currentIndex
         else newQueue.indexOfFirst { it.id == state.currentTrack?.id }.takeIf { it >= 0 } ?: state.currentIndex
         mutableState.value = state.copy(queue = newQueue, currentIndex = newCurrent)
@@ -276,7 +279,7 @@ abstract class SimpleAudioPlayer(
         if (tracks.isEmpty()) return
         val state = mutableState.value
         val existingIds = state.queue.map { it.id }.toMutableSet()
-        val additions = tracks.filter { existingIds.add(it.id) }
+        val additions = tracks.filter { existingIds.add(it.id) }.preferStickyPlaybackOrigin()
         if (additions.isEmpty()) return
         val nextQueue = state.queue + additions
         mutableState.value = state.copy(queue = nextQueue)
@@ -566,8 +569,14 @@ abstract class SimpleAudioPlayer(
         if (!isPlayRequestCurrent(generation)) return
         stopPlaybackStartupWatchdog()
         val current = mutableState.value
+        val readyUri = current.currentTrack?.let { track ->
+            StreamingPlaybackPolicyHolder.resolvePlaybackUri(track).ifBlank { track.streamUrl }
+        }
+        rememberStickyPlaybackOrigin(readyUri)
+        val playbackQueue = current.queue.preferStickyPlaybackOrigin()
         val effectivePlaying = isPlaying && playWhenReady
         mutableState.value = current.copy(
+            queue = playbackQueue,
             isBuffering = false,
             isPlaying = effectivePlaying,
             bufferedPositionMs = current.bufferedPositionMs.coerceAtLeast(current.positionMs),
@@ -884,15 +893,36 @@ abstract class SimpleAudioPlayer(
     }
 
     private fun adoptFailoverStreamUrl(uri: String) {
+        rememberStickyPlaybackOrigin(uri)
         val current = mutableState.value
         val index = current.currentIndex
-        val track = current.queue.getOrNull(index) ?: return
-        if (track.streamUrl == uri) return
-        mutableState.value = current.copy(
-            queue = current.queue.mapIndexed { itemIndex, item ->
-                if (itemIndex == index) item.copy(streamUrl = uri) else item
-            },
-        )
+        val origin = playbackOriginOf(uri)
+        val nextQueue = current.queue.mapIndexed { itemIndex, item ->
+            if (itemIndex == index) item.preferPlaybackUri(uri)
+            else if (origin != null) item.preferPlaybackOrigin(origin)
+            else item
+        }
+        if (nextQueue == current.queue) return
+        PhoebeLog.d("AudioPlayer") {
+            "playback origin sticky=${origin ?: uri} rebasedQueue=${nextQueue.size}"
+        }
+        mutableState.value = current.copy(queue = nextQueue)
+    }
+
+    private fun rememberStickyPlaybackOrigin(uri: String?) {
+        val origin = uri?.let(::playbackOriginOf)?.takeIf { it.isNotBlank() } ?: return
+        stickyPlaybackOrigin = origin
+    }
+
+    private fun List<Track>.preferStickyPlaybackOrigin(): List<Track> {
+        val origin = stickyPlaybackOrigin ?: return this
+        var changed = false
+        val next = map { track ->
+            val preferred = track.preferPlaybackOrigin(origin)
+            if (preferred !== track) changed = true
+            preferred
+        }
+        return if (changed) next else this
     }
 
     protected open val playbackStartupTimeoutMs: Long

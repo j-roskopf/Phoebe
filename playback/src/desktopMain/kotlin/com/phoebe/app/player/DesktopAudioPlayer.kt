@@ -1592,6 +1592,14 @@ class DesktopAudioPlayer(
             finishPlaybackFailed(failure, generation)
             return
         }
+        if (failure.isPlayerEngineTimeout && shouldSkipAlternateEngineAfterPlayerTimeout(activeUri)) {
+            PhoebeLog.d("DesktopAudioPlayer") {
+                "skipping alternate engine after JavaFX timeout on local-only origin"
+            }
+            disposeJavaFxBlocking()
+            finishPlaybackFailed(failure, generation)
+            return
+        }
         disposeJavaFxBlocking()
         if (failure.shouldTryAlternateEngine) {
             PhoebeLog.d("DesktopAudioPlayer") {
@@ -1689,9 +1697,10 @@ class DesktopAudioPlayer(
         stop: AtomicBoolean,
         generation: Int,
         mediaReady: AtomicBoolean,
+        timeoutMs: Long,
         onStartupFailed: () -> Unit,
     ) {
-        CompletableFuture.delayedExecutor(JavaFxMediaReadyTimeoutMs, TimeUnit.MILLISECONDS)
+        CompletableFuture.delayedExecutor(timeoutMs, TimeUnit.MILLISECONDS)
             .execute {
                 if (stop.get()) return@execute
                 if (mediaReady.get() || !isPlayRequestCurrent(generation)) return@execute
@@ -1743,14 +1752,16 @@ class DesktopAudioPlayer(
                 }
             }
         }
+        val readyTimeoutMs = DesktopPlaybackStartupPolicy.javaFxMediaReadyTimeoutMs(uri)
         scheduleJavaFxStartupWatchdog(
             stop = watchdogStop,
             generation = generation,
             mediaReady = mediaReady,
+            timeoutMs = readyTimeoutMs,
             onStartupFailed = {
                 failStartup(
                     PlaybackFailureClassifier.fromMessage(
-                        "JavaFX media did not become ready in ${JavaFxMediaReadyTimeoutMs}ms",
+                        "JavaFX media did not become ready in ${readyTimeoutMs}ms",
                         uri,
                     ),
                 )
@@ -3504,7 +3515,6 @@ class DesktopAudioPlayer(
 
     private companion object {
         const val JavaFxEqualizerBandMatchTolerance = 0.045f
-        const val JavaFxMediaReadyTimeoutMs = DesktopPlaybackStartupPolicy.JavaFxFailureFallbackDelayMs
         const val JavaFxMediaPlayingTimeoutMs = 8_000L
         const val JavaFxCrossfadeReadyTimeoutMs = 3_000L
         const val JavaFxGaplessHotStartLeadMs = 180L
@@ -3708,6 +3718,13 @@ private fun normalizedPcmSample(bytes: ByteArray, offset: Int, sampleBytes: Int,
 
 internal object DesktopPlaybackStartupPolicy {
     const val JavaFxFailureFallbackDelayMs = 3_000L
+    const val JavaFxRemoteReadyTimeoutMs = 10_000L
+
+    fun javaFxMediaReadyTimeoutMs(uri: String): Long = when {
+        !isRemoteUri(uri) -> JavaFxFailureFallbackDelayMs
+        isLocalOnlyPlaybackOrigin(uri) -> JavaFxFailureFallbackDelayMs
+        else -> JavaFxRemoteReadyTimeoutMs
+    }
 
     fun isRemoteUri(uri: String): Boolean =
         uri.startsWith("http://", ignoreCase = true) || uri.startsWith("https://", ignoreCase = true)

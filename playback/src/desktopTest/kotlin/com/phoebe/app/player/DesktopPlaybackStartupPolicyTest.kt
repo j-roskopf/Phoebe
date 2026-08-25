@@ -105,6 +105,26 @@ class DesktopPlaybackStartupPolicyTest {
     }
 
     @Test
+    fun javaFxReadyTimeoutStaysShortOnLanAndLocalFiles() {
+        assertEquals(
+            DesktopPlaybackStartupPolicy.JavaFxFailureFallbackDelayMs,
+            DesktopPlaybackStartupPolicy.javaFxMediaReadyTimeoutMs(
+                "https://172-16-1-2.abc.plex.direct:32400/library/parts/1/file.mp3",
+            ),
+        )
+        assertEquals(
+            DesktopPlaybackStartupPolicy.JavaFxFailureFallbackDelayMs,
+            DesktopPlaybackStartupPolicy.javaFxMediaReadyTimeoutMs("file:///music/song.mp3"),
+        )
+        assertEquals(
+            DesktopPlaybackStartupPolicy.JavaFxRemoteReadyTimeoutMs,
+            DesktopPlaybackStartupPolicy.javaFxMediaReadyTimeoutMs(
+                "https://173-230-133-75.abc.plex.direct:8443/library/parts/1/file.mp3",
+            ),
+        )
+    }
+
+    @Test
     fun knownRemoteFormatsHaveDeterministicInstantStartupPlans() {
         val cases = listOf(
             RemoteStartupCase(

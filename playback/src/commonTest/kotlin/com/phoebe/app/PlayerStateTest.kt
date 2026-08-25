@@ -134,6 +134,96 @@ class PlayerStateTest {
     }
 
     @Test
+    fun failoverRebasesLaterQueueTracksOntoTheWorkingOrigin() = runTest {
+        val player = TimeoutTestPlayer(this)
+        val lanOne = "https://172-16-1-2.abc.plex.direct:32400/library/parts/1/file.mp3"
+        val remoteOne = "https://173-230-133-75.abc.plex.direct:8443/library/parts/1/file.mp3"
+        val lanTwo = "https://172-16-1-2.abc.plex.direct:32400/library/parts/2/file.mp3"
+        val remoteTwo = "https://173-230-133-75.abc.plex.direct:8443/library/parts/2/file.mp3"
+        val tracks = listOf(
+            Track(
+                id = "t1",
+                title = "One",
+                artist = "Artist",
+                album = "Album",
+                durationMs = 60_000,
+                streamUrl = lanOne,
+                downloadUrl = "",
+                playbackFallbackUrls = listOf(remoteOne),
+            ),
+            Track(
+                id = "t2",
+                title = "Two",
+                artist = "Artist",
+                album = "Album",
+                durationMs = 60_000,
+                streamUrl = lanTwo,
+                downloadUrl = "",
+                playbackFallbackUrls = listOf(remoteTwo),
+            ),
+        )
+
+        player.play(tracks, 0)
+        advanceTimeBy(player.testStartupTimeoutMs + 1L)
+        runCurrent()
+
+        assertEquals(remoteOne, player.state.value.queue[0].streamUrl)
+        assertEquals(remoteTwo, player.state.value.queue[1].streamUrl)
+
+        player.finishPendingLoad()
+        player.next()
+
+        assertEquals(remoteTwo, player.state.value.currentTrack?.streamUrl)
+        assertEquals(1, player.state.value.currentIndex)
+    }
+
+    @Test
+    fun newPlayRequestsReuseTheOriginThatAlreadyWorked() = runTest {
+        val player = TimeoutTestPlayer(this)
+        val lanOne = "https://172-16-1-2.abc.plex.direct:32400/library/parts/1/file.mp3"
+        val remoteOne = "https://173-230-133-75.abc.plex.direct:8443/library/parts/1/file.mp3"
+        val lanTwo = "https://172-16-1-2.abc.plex.direct:32400/library/parts/2/file.mp3"
+        val remoteTwo = "https://173-230-133-75.abc.plex.direct:8443/library/parts/2/file.mp3"
+
+        player.play(
+            listOf(
+                Track(
+                    id = "t1",
+                    title = "One",
+                    artist = "Artist",
+                    album = "Album",
+                    durationMs = 60_000,
+                    streamUrl = lanOne,
+                    downloadUrl = "",
+                    playbackFallbackUrls = listOf(remoteOne),
+                ),
+            ),
+            0,
+        )
+        advanceTimeBy(player.testStartupTimeoutMs + 1L)
+        runCurrent()
+        player.finishPendingLoad()
+
+        player.play(
+            listOf(
+                Track(
+                    id = "t2",
+                    title = "Two",
+                    artist = "Artist",
+                    album = "Album",
+                    durationMs = 60_000,
+                    streamUrl = lanTwo,
+                    downloadUrl = "",
+                    playbackFallbackUrls = listOf(remoteTwo),
+                ),
+            ),
+            0,
+        )
+
+        assertEquals(remoteTwo, player.state.value.currentTrack?.streamUrl)
+    }
+
+    @Test
     fun startupWatchdogIgnoresSupersededPlayRequests() = runTest {
         val player = TimeoutTestPlayer(this)
         val tracks = listOf(

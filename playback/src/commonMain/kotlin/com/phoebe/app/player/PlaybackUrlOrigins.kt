@@ -115,6 +115,61 @@ internal fun nextPlaybackFailoverCandidate(
 
 internal fun isLocalOnlyPlaybackOrigin(url: String): Boolean = isLocalOnlyServerOrigin(url)
 
+internal fun playbackOriginOf(url: String): String? {
+    if (url.isBlank()) return null
+    val parsed = runCatching { Url(url) }.getOrNull() ?: return null
+    if (parsed.protocol.name != "http" && parsed.protocol.name != "https") return null
+    if (parsed.host.isBlank()) return null
+    return "${parsed.protocol.name}://${parsed.host}:${parsed.port}"
+}
+
+/**
+ * Put URLs on [origin] first without inventing hosts. Playlist tracks are stamped with a
+ * LAN-first URL at queue start; after a relay actually works, later songs must not go back
+ * to the dead private address.
+ */
+internal fun Track.preferPlaybackOrigin(origin: String): Track {
+    val preferred = origin.trimEnd('/').takeIf { it.isNotBlank() } ?: return this
+    val candidates = playbackUriCandidates()
+    if (candidates.size <= 1) return this
+    val matching = candidates.filter { candidate ->
+        playbackOriginOf(candidate)?.equals(preferred, ignoreCase = true) == true
+    }
+    if (matching.isEmpty()) return this
+    val rest = candidates.filter { candidate ->
+        playbackOriginOf(candidate)?.equals(preferred, ignoreCase = true) != true
+    }
+    val ordered = matching + rest
+    val nextStream = ordered.first()
+    val nextFallbacks = ordered.drop(1)
+    if (nextStream == streamUrl && nextFallbacks == playbackFallbackUrls) return this
+    return copy(
+        streamUrl = nextStream,
+        playbackFallbackUrls = nextFallbacks,
+    )
+}
+
+internal fun Track.preferPlaybackUri(uri: String): Track {
+    if (uri.isBlank()) return this
+    val origin = playbackOriginOf(uri) ?: return copy(
+        streamUrl = uri,
+        playbackFallbackUrls = playbackUriCandidates().filter { it != uri },
+    )
+    val rest = playbackUriCandidates().filter { it != uri }
+    val sameOrigin = rest.filter { playbackOriginOf(it)?.equals(origin, ignoreCase = true) == true }
+    val others = rest.filter { playbackOriginOf(it)?.equals(origin, ignoreCase = true) != true }
+    val ordered = listOf(uri) + sameOrigin + others
+    if (ordered.first() == streamUrl && ordered.drop(1) == playbackFallbackUrls) return this
+    return copy(
+        streamUrl = ordered.first(),
+        playbackFallbackUrls = ordered.drop(1),
+    )
+}
+
+/** JavaFX/player-engine timeouts on LAN hosts will hang the same way on every engine. */
+internal fun shouldSkipAlternateEngineAfterPlayerTimeout(uri: String): Boolean =
+    uri.isNotBlank() && isLocalOnlyPlaybackOrigin(uri)
+
 fun Track.withPlaybackOrigins(
     preferredOrigin: String?,
     fallbackOrigins: List<String> = emptyList(),
