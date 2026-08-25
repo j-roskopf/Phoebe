@@ -252,6 +252,7 @@ abstract class SimpleAudioPlayer(
     override fun stopPlayback() {
         playGeneration++
         playWhenReady = false
+        stickyPlaybackOrigin = null
         clearCrossfadeRequestState()
         cancelGaplessPrepare()
         resetAudioAnalysis()
@@ -575,6 +576,11 @@ abstract class SimpleAudioPlayer(
         rememberStickyPlaybackOrigin(readyUri)
         val playbackQueue = current.queue.preferStickyPlaybackOrigin()
         val effectivePlaying = isPlaying && playWhenReady
+        if (playbackQueue !== current.queue) {
+            PhoebeLog.d("AudioPlayer") {
+                "playback origin sticky=$stickyPlaybackOrigin rebasedQueue=${playbackQueue.size}"
+            }
+        }
         mutableState.value = current.copy(
             queue = playbackQueue,
             isBuffering = false,
@@ -893,20 +899,16 @@ abstract class SimpleAudioPlayer(
     }
 
     private fun adoptFailoverStreamUrl(uri: String) {
-        rememberStickyPlaybackOrigin(uri)
         val current = mutableState.value
         val index = current.currentIndex
-        val origin = playbackOriginOf(uri)
-        val nextQueue = current.queue.mapIndexed { itemIndex, item ->
-            if (itemIndex == index) item.preferPlaybackUri(uri)
-            else if (origin != null) item.preferPlaybackOrigin(origin)
-            else item
-        }
-        if (nextQueue == current.queue) return
-        PhoebeLog.d("AudioPlayer") {
-            "playback origin sticky=${origin ?: uri} rebasedQueue=${nextQueue.size}"
-        }
-        mutableState.value = current.copy(queue = nextQueue)
+        val track = current.queue.getOrNull(index) ?: return
+        val nextTrack = track.preferPlaybackUri(uri)
+        if (nextTrack === track) return
+        mutableState.value = current.copy(
+            queue = current.queue.mapIndexed { itemIndex, item ->
+                if (itemIndex == index) nextTrack else item
+            },
+        )
     }
 
     private fun rememberStickyPlaybackOrigin(uri: String?) {

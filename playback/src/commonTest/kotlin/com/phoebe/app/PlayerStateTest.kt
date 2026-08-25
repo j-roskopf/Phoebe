@@ -168,9 +168,11 @@ class PlayerStateTest {
         runCurrent()
 
         assertEquals(remoteOne, player.state.value.queue[0].streamUrl)
-        assertEquals(remoteTwo, player.state.value.queue[1].streamUrl)
+        assertEquals(lanTwo, player.state.value.queue[1].streamUrl)
 
         player.finishPendingLoad()
+        assertEquals(remoteTwo, player.state.value.queue[1].streamUrl)
+
         player.next()
 
         assertEquals(remoteTwo, player.state.value.currentTrack?.streamUrl)
@@ -221,6 +223,53 @@ class PlayerStateTest {
         )
 
         assertEquals(remoteTwo, player.state.value.currentTrack?.streamUrl)
+    }
+
+    @Test
+    fun stopPlaybackClearsTheStickyOriginSoLanCanBeRediscovered() = runTest {
+        val player = TimeoutTestPlayer(this)
+        val lanOne = "https://172-16-1-2.abc.plex.direct:32400/library/parts/1/file.mp3"
+        val remoteOne = "https://173-230-133-75.abc.plex.direct:8443/library/parts/1/file.mp3"
+        val lanTwo = "https://172-16-1-2.abc.plex.direct:32400/library/parts/2/file.mp3"
+        val remoteTwo = "https://173-230-133-75.abc.plex.direct:8443/library/parts/2/file.mp3"
+
+        player.play(
+            listOf(
+                Track(
+                    id = "t1",
+                    title = "One",
+                    artist = "Artist",
+                    album = "Album",
+                    durationMs = 60_000,
+                    streamUrl = lanOne,
+                    downloadUrl = "",
+                    playbackFallbackUrls = listOf(remoteOne),
+                ),
+            ),
+            0,
+        )
+        advanceTimeBy(player.testStartupTimeoutMs + 1L)
+        runCurrent()
+        player.finishPendingLoad()
+        player.stopPlayback()
+
+        player.play(
+            listOf(
+                Track(
+                    id = "t2",
+                    title = "Two",
+                    artist = "Artist",
+                    album = "Album",
+                    durationMs = 60_000,
+                    streamUrl = lanTwo,
+                    downloadUrl = "",
+                    playbackFallbackUrls = listOf(remoteTwo),
+                ),
+            ),
+            0,
+        )
+
+        assertEquals(lanTwo, player.state.value.currentTrack?.streamUrl)
     }
 
     @Test
