@@ -1421,8 +1421,10 @@ class PlexClient(
      * linked services (e.g. ListenBrainz). Clients must hit this on state changes and
      * periodically (~10s) while playing.
      *
-     * Tries every known server connection (LAN before relay) because plex.direct
-     * relay URLs often serve library media but return 401 for the timeline command path.
+     * Tries known connections until one accepts the command. plex.direct relays often
+     * stream media but 401 the timeline path, so a 401 still moves to the next base.
+     * Dead LAN origins are skipped after the first local timeout so one ping cannot
+     * spend a minute on private IPs that playback already abandoned.
      */
     suspend fun reportTimeline(
         server: PlexServer,
@@ -1435,32 +1437,49 @@ class PlexClient(
         continuing: Boolean? = null,
         playQueueItemId: Long? = null,
     ) {
-        val bases = server.reachableBaseUris(apiBaseCache[server.id])
+        val bases = server.timelineBaseUris(apiBaseCache[server.id])
         var lastStatus = 0
         var lastBody = ""
         var lastBase = server.uri
         var lastError: Throwable? = null
+        var skipRemainingLocal = false
         for (base in bases) {
+            if (skipRemainingLocal && isLocalOnlyServerOrigin(base)) continue
             lastBase = base
-            val response = try {
-                timelineHttpRequest(base, token, sessionIdentifier) {
-                    parameter("ratingKey", ratingKey)
-                    parameter("key", "/library/metadata/$ratingKey")
-                    parameter("identifier", LibraryIdentifier)
-                    parameter("time", timeMs.coerceAtLeast(0L))
-                    parameter("duration", durationMs.coerceAtLeast(0L))
-                    parameter("state", state.wireValue)
-                    continuing?.let { parameter("continuing", if (it) 1 else 0) }
-                    playQueueItemId?.let { parameter("playQueueItemID", it) }
+            val probeTimeoutMs = plexTimelineProbeTimeoutMs(base)
+            val outcome = withTimeoutOrNull(probeTimeoutMs) {
+                runCatching {
+                    timelineHttpRequest(base, token, sessionIdentifier, probeTimeoutMs) {
+                        parameter("ratingKey", ratingKey)
+                        parameter("key", "/library/metadata/$ratingKey")
+                        parameter("identifier", LibraryIdentifier)
+                        parameter("time", timeMs.coerceAtLeast(0L))
+                        parameter("duration", durationMs.coerceAtLeast(0L))
+                        parameter("state", state.wireValue)
+                        continuing?.let { parameter("continuing", if (it) 1 else 0) }
+                        playQueueItemId?.let { parameter("playQueueItemID", it) }
+                    }
                 }
-            } catch (error: Throwable) {
+            }
+            if (outcome == null) {
+                lastError = IllegalStateException("reportTimeline timed out after ${probeTimeoutMs}ms via $base")
+                PhoebeLog.d("PlexClient") {
+                    "reportTimeline ${state.wireValue} timed out after ${probeTimeoutMs}ms on $base for '$ratingKey'"
+                }
+                if (isLocalOnlyServerOrigin(base)) skipRemainingLocal = true
+                continue
+            }
+            if (outcome.isFailure) {
+                val error = outcome.exceptionOrNull() ?: continue
                 if (error is CancellationException) throw error
                 lastError = error
                 PhoebeLog.d("PlexClient") {
                     "reportTimeline ${state.wireValue} failed on $base for '$ratingKey': ${error.message}"
                 }
+                if (isLocalOnlyServerOrigin(base)) skipRemainingLocal = true
                 continue
             }
+            val response = outcome.getOrThrow()
             if (response.status.isSuccess()) {
                 apiBaseCache[server.id] = base
                 PhoebeLog.v("PlexClient") {
@@ -1521,23 +1540,42 @@ class PlexClient(
     ): PlexPlayQueue? {
         if (ratingKeys.isEmpty()) return null
         val uri = metadataUri(machineIdentifier, ratingKeys)
-        val bases = server.reachableBaseUris(apiBaseCache[server.id])
+        val bases = server.timelineBaseUris(apiBaseCache[server.id])
         var lastError: Throwable? = null
+        var skipRemainingLocal = false
         for (base in bases) {
-            val response = try {
-                httpClient.post("$base/playQueues") {
-                    plexTimelineAuth(token)
-                    parameter("type", "audio")
-                    parameter("uri", uri)
-                    parameter("key", startRatingKey)
-                    parameter("continuous", 1)
+            if (skipRemainingLocal && isLocalOnlyServerOrigin(base)) continue
+            val probeTimeoutMs = plexBaseProbeTimeoutMs(base)
+            val outcome = withTimeoutOrNull(probeTimeoutMs) {
+                runCatching {
+                    httpClient.post("$base/playQueues") {
+                        timeout {
+                            requestTimeoutMillis = probeTimeoutMs
+                            connectTimeoutMillis = probeTimeoutMs
+                        }
+                        plexTimelineAuth(token)
+                        parameter("type", "audio")
+                        parameter("uri", uri)
+                        parameter("key", startRatingKey)
+                        parameter("continuous", 1)
+                    }
                 }
-            } catch (error: Throwable) {
+            }
+            if (outcome == null) {
+                lastError = IllegalStateException("createAudioPlayQueue timed out after ${probeTimeoutMs}ms via $base")
+                PhoebeLog.d("PlexClient") { "createAudioPlayQueue timed out after ${probeTimeoutMs}ms on $base" }
+                if (isLocalOnlyServerOrigin(base)) skipRemainingLocal = true
+                continue
+            }
+            if (outcome.isFailure) {
+                val error = outcome.exceptionOrNull() ?: continue
                 if (error is CancellationException) throw error
                 lastError = error
                 PhoebeLog.d("PlexClient") { "createAudioPlayQueue failed on $base: ${error.message}" }
+                if (isLocalOnlyServerOrigin(base)) skipRemainingLocal = true
                 continue
             }
+            val response = outcome.getOrThrow()
             val body = response.bodyAsText()
             if (!response.status.isSuccess()) {
                 if (response.status.value == 401) continue
@@ -1566,9 +1604,14 @@ class PlexClient(
         base: String,
         token: String,
         sessionIdentifier: String,
+        probeTimeoutMs: Long,
         block: io.ktor.client.request.HttpRequestBuilder.() -> Unit,
     ): HttpResponse {
         val getResponse = httpClient.get("$base/:/timeline") {
+            timeout {
+                requestTimeoutMillis = probeTimeoutMs
+                connectTimeoutMillis = probeTimeoutMs
+            }
             plexTimelineAuth(token)
             header("X-Plex-Session-Identifier", sessionIdentifier)
             block()
@@ -1577,6 +1620,10 @@ class PlexClient(
             return getResponse
         }
         return httpClient.post("$base/:/timeline") {
+            timeout {
+                requestTimeoutMillis = probeTimeoutMs
+                connectTimeoutMillis = probeTimeoutMs
+            }
             plexTimelineAuth(token)
             header("X-Plex-Session-Identifier", sessionIdentifier)
             block()
@@ -1978,6 +2025,9 @@ class PlexClient(
         remoteTimeoutMs
     }
 
+    private fun plexTimelineProbeTimeoutMs(base: String): Long =
+        plexBaseProbeTimeoutMs(base, PlexTimelineRemoteRequestTimeoutMs)
+
     private suspend fun metadataDetails(server: PlexServer, ratingKey: String, token: String): List<PlexMetadataDto> {
         val response = plexGet<PlexMediaContainerResponse>(
             server,
@@ -2240,6 +2290,7 @@ class PlexClient(
         private const val PlexTrackType = 10
         private const val PlexLocalSetupRequestTimeoutMs = 800L
         private const val PlexRemoteSetupRequestTimeoutMs = 8_000L
+        private const val PlexTimelineRemoteRequestTimeoutMs = 3_000L
         private const val PlexPopularTracksRequestTimeoutMs = 15_000L
         private const val MusicStationsHubContext = "hub.music.stations"
         private const val MusicStationsHubIdentifier = "music.stations"

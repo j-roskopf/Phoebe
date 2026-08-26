@@ -4,6 +4,7 @@ import com.phoebe.app.data.decodedIpFromPlexDirect
 import com.phoebe.app.data.expandConnectionUris
 import com.phoebe.app.data.isLocalOnlyServerOrigin
 import com.phoebe.app.data.reachableBaseUris
+import com.phoebe.app.data.timelineBaseUris
 import com.phoebe.app.domain.PlexServer
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -102,6 +103,46 @@ class PlexServerConnectionsTest {
         val ordered = server.reachableBaseUris()
         assertTrue(ordered.indexOf(remoteRelay) < ordered.indexOf(closedWan))
         assertTrue(ordered.indexOf(remoteRelay) < ordered.indexOf("https://72.58.82.53:32400"))
+    }
+
+    @Test
+    fun timelineBaseUrisSkipsLanWhenPreferredOriginIsRemote() {
+        val lanDirect = "https://172-16-1-2.abc.plex.direct:32400"
+        val remoteRelay = "https://45-79-202-250.abc.plex.direct:8443"
+        val closedWan = "https://72-58-82-53.abc.plex.direct:32400"
+        val server = PlexServer(
+            id = "s1",
+            name = "plex",
+            uri = lanDirect,
+            owned = true,
+            connectionUris = expandConnectionUris(listOf(lanDirect, remoteRelay, closedWan)),
+            advertisedConnectionUris = listOf(lanDirect, remoteRelay, closedWan),
+            localConnectionUris = listOf(lanDirect),
+            httpsRequired = true,
+        )
+        val ordered = server.timelineBaseUris(remoteRelay)
+        assertEquals(remoteRelay, ordered.first())
+        assertTrue(ordered.none { isLocalOnlyServerOrigin(it) })
+        assertTrue(closedWan in ordered)
+    }
+
+    @Test
+    fun timelineBaseUrisKeepsLanWhenPreferredOriginIsLocal() {
+        val lan = "http://192.168.1.9:32400"
+        val remoteRelay = "https://45-79-202-250.abc.plex.direct:8443"
+        val server = PlexServer(
+            id = "s1",
+            name = "plex",
+            uri = lan,
+            owned = true,
+            connectionUris = expandConnectionUris(listOf(lan, remoteRelay)),
+            advertisedConnectionUris = listOf(lan, remoteRelay),
+            localConnectionUris = listOf(lan),
+        )
+        val ordered = server.timelineBaseUris(lan)
+        assertEquals(lan, ordered.first())
+        assertTrue(ordered.any { isLocalOnlyServerOrigin(it) })
+        assertTrue(remoteRelay in ordered)
     }
 
     @Test

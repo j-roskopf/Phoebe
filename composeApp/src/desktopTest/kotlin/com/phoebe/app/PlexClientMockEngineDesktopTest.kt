@@ -185,4 +185,51 @@ class PlexClientMockEngineDesktopTest {
 
         assertEquals(listOf("first.example", "second.example"), attemptedHosts)
     }
+
+    @Test
+    fun reportTimelineSkipsRemainingLanAfterLocalTimeout() = runBlocking {
+        val attemptedHosts = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            attemptedHosts += request.url.host
+            when (request.url.host) {
+                "172.16.1.2", "192.168.1.9" -> {
+                    delay(5_000)
+                    respond("", HttpStatusCode.GatewayTimeout)
+                }
+                else -> respond(
+                    content = """{"MediaContainer":{"size":0}}""",
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            }
+        }
+        val client = PlexClient(testHttpClient(engine))
+        val lanA = "http://172.16.1.2:32400"
+        val lanB = "http://192.168.1.9:32400"
+        val remote = "https://45-33-97-28.abc.plex.direct:8443"
+        client.reportTimeline(
+            server = PlexServer(
+                id = "id",
+                name = "plex",
+                uri = lanA,
+                owned = true,
+                connectionUris = listOf(lanA, lanB, remote),
+                advertisedConnectionUris = listOf(lanA, lanB, remote),
+                localConnectionUris = listOf(lanA, lanB),
+            ),
+            token = "secret-token",
+            sessionIdentifier = "session-1",
+            ratingKey = "123",
+            timeMs = 5_000L,
+            durationMs = 180_000L,
+            state = PlexTimelineState.Playing,
+        )
+
+        assertTrue("172.16.1.2" in attemptedHosts || "192.168.1.9" in attemptedHosts)
+        assertTrue(
+            attemptedHosts.count { it == "172.16.1.2" || it == "192.168.1.9" } == 1,
+            "should skip remaining LAN after the first local timeout; hosts=$attemptedHosts",
+        )
+        assertTrue("45-33-97-28.abc.plex.direct" in attemptedHosts, "hosts=$attemptedHosts")
+    }
 }

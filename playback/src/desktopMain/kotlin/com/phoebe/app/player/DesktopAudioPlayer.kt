@@ -17,6 +17,8 @@ import java.io.BufferedInputStream
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -506,6 +508,30 @@ class DesktopAudioPlayer(
                         preferJavaFxForLocalStreaming = preferJavaFxForLocalStreaming,
                     )
                 ) {
+                    if (file == null &&
+                        isRemoteUri(playbackUri) &&
+                        !preflightHttpOriginConnect(
+                            playbackUri,
+                            DesktopPlaybackStartupPolicy.javaFxPreflightTimeoutMs(playbackUri),
+                        )
+                    ) {
+                        PhoebeLog.d("DesktopAudioPlayer") {
+                            "JavaFX preflight failed for ${PlaybackFailureClassifier.redactStreamUri(playbackUri)}"
+                        }
+                        handleJavaFxStartupFailure(
+                            failure = PlaybackFailureClassifier.fromMessage(
+                                "failed to connect to playback origin",
+                                playbackUri,
+                            ),
+                            activeUri = activeUri,
+                            downloadUri = downloadUri,
+                            preferredSampledExtension = preferredSampledExtension,
+                            preferredStreamingExtension = preferredStreamingExtension,
+                            file = file,
+                            generation = generation,
+                        )
+                        return@execute
+                    }
                     val javaFxScheduled = startJavaFxPlayback(playbackUri, generation) { failure ->
                         handleJavaFxStartupFailure(
                             failure = failure,
@@ -758,7 +784,20 @@ class DesktopAudioPlayer(
         gaplessGeneration = generation
         gaplessTrackId = track.id
         resetGaplessJavaFxHotStartState()
-        JavaFxRuntime.runLater {
+        playbackExecutor.execute {
+            if (!isGaplessPrepareCurrent(generation, track.id)) return@execute
+            if (isRemoteUri(uri) &&
+                !preflightHttpOriginConnect(uri, DesktopPlaybackStartupPolicy.javaFxPreflightTimeoutMs(uri))
+            ) {
+                PhoebeLog.d("DesktopAudioPlayer") {
+                    "gapless JavaFX preflight failed for ${PlaybackFailureClassifier.redactStreamUri(uri)}"
+                }
+                clearGaplessPrepareState()
+                gaplessGeneration = -1
+                gaplessTrackId = null
+                return@execute
+            }
+            JavaFxRuntime.runLater {
             if (!isGaplessPrepareCurrent(generation, track.id)) {
                 return@runLater
             }
@@ -813,6 +852,7 @@ class DesktopAudioPlayer(
             }.onFailure { error ->
                 diagnostics.playbackError(PlaybackEnginePath.JavaFxMediaPlayer, error.message)
                 disposeGaplessPlayer()
+            }
             }
         }
         return true
@@ -1596,11 +1636,11 @@ class DesktopAudioPlayer(
             PhoebeLog.d("DesktopAudioPlayer") {
                 "skipping alternate engine after JavaFX timeout on local-only origin"
             }
-            disposeJavaFxBlocking()
+            disposeJavaFxBlocking(DesktopPlaybackStartupPolicy.JavaFxStartupDisposeTimeoutMs)
             finishPlaybackFailed(failure, generation)
             return
         }
-        disposeJavaFxBlocking()
+        disposeJavaFxBlocking(DesktopPlaybackStartupPolicy.JavaFxStartupDisposeTimeoutMs)
         if (failure.shouldTryAlternateEngine) {
             PhoebeLog.d("DesktopAudioPlayer") {
                 "trying alternate engine after JavaFX startup failure"
@@ -1707,7 +1747,7 @@ class DesktopAudioPlayer(
                 stop.set(true)
                 playbackExecutor.execute {
                     if (stop.get() || mediaReady.get() || !isPlayRequestCurrent(generation)) return@execute
-                    disposeJavaFxBlocking()
+                    disposeJavaFxBlocking(DesktopPlaybackStartupPolicy.JavaFxStartupDisposeTimeoutMs)
                     onStartupFailed()
                 }
             }
@@ -3154,7 +3194,9 @@ class DesktopAudioPlayer(
         gaplessTrackId = null
     }
 
-    private fun disposeJavaFxBlocking() {
+    private fun disposeJavaFxBlocking(
+        timeoutMs: Long = 30_000L,
+    ) {
         if (player == null &&
             fadingOutPlayer == null &&
             gaplessPlayer == null &&
@@ -3179,8 +3221,12 @@ class DesktopAudioPlayer(
             disposeGaplessPlayer()
             latch.countDown()
         }
-        if (latch.await(30, TimeUnit.SECONDS)) {
+        if (latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
             Thread.sleep(JavaFxDisposeSettleMs)
+        } else {
+            PhoebeLog.d("DesktopAudioPlayer") {
+                "JavaFX dispose timed out after ${timeoutMs}ms; FX thread may be blocked on a dead origin"
+            }
         }
     }
 
@@ -3556,6 +3602,26 @@ class DesktopAudioPlayer(
     }
 }
 
+/**
+ * Cheap TCP connect before handing an HTTP(S) URI to JavaFX. On Windows, [Media] can block
+ * the JavaFX thread for a full OS timeout on a dead LAN address, which then stalls every
+ * later `runLater` (progress, skip, dispose).
+ */
+internal fun preflightHttpOriginConnect(uri: String, timeoutMs: Long): Boolean {
+    val parsed = runCatching { URI(uri) }.getOrNull() ?: return false
+    val scheme = parsed.scheme?.lowercase() ?: return false
+    if (scheme != "http" && scheme != "https") return true
+    val host = parsed.host?.takeIf { it.isNotBlank() } ?: return false
+    val port = parsed.port.takeIf { it > 0 } ?: if (scheme == "https") 443 else 80
+    val timeout = timeoutMs.toInt().coerceIn(1, 60_000)
+    return runCatching {
+        Socket().use { socket ->
+            socket.connect(InetSocketAddress(host, port), timeout)
+            socket.isConnected
+        }
+    }.getOrDefault(false)
+}
+
 internal fun isLikelyDesktopPlaylistUri(uri: String): Boolean {
     val path = runCatching { URI(uri).path }.getOrNull()
         ?: uri.substringBefore('?').substringBefore('#')
@@ -3738,12 +3804,18 @@ private fun normalizedPcmSample(bytes: ByteArray, offset: Int, sampleBytes: Int,
 internal object DesktopPlaybackStartupPolicy {
     const val JavaFxFailureFallbackDelayMs = 3_000L
     const val JavaFxRemoteReadyTimeoutMs = 10_000L
+    const val JavaFxLocalPreflightTimeoutMs = 800L
+    const val JavaFxRemotePreflightTimeoutMs = 3_000L
+    const val JavaFxStartupDisposeTimeoutMs = 1_500L
 
     fun javaFxMediaReadyTimeoutMs(uri: String): Long = when {
         !isRemoteUri(uri) -> JavaFxFailureFallbackDelayMs
         isLocalOnlyPlaybackOrigin(uri) -> JavaFxFailureFallbackDelayMs
         else -> JavaFxRemoteReadyTimeoutMs
     }
+
+    fun javaFxPreflightTimeoutMs(uri: String): Long =
+        if (isLocalOnlyPlaybackOrigin(uri)) JavaFxLocalPreflightTimeoutMs else JavaFxRemotePreflightTimeoutMs
 
     fun isRemoteUri(uri: String): Boolean =
         uri.startsWith("http://", ignoreCase = true) || uri.startsWith("https://", ignoreCase = true)

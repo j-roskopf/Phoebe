@@ -2,6 +2,7 @@ package com.phoebe.app.player
 
 import com.phoebe.app.domain.Track
 import java.io.File
+import java.net.ServerSocket
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -447,6 +448,31 @@ class DesktopPlaybackStartupPolicyTest {
         } finally {
             offline.delete()
         }
+    }
+
+    @Test
+    fun javaFxPreflightUsesAShortTimeoutOnLanOrigins() {
+        assertEquals(
+            DesktopPlaybackStartupPolicy.JavaFxLocalPreflightTimeoutMs,
+            DesktopPlaybackStartupPolicy.javaFxPreflightTimeoutMs("http://172.16.1.2:32400/library/parts/1/file.mp3"),
+        )
+        assertEquals(
+            DesktopPlaybackStartupPolicy.JavaFxRemotePreflightTimeoutMs,
+            DesktopPlaybackStartupPolicy.javaFxPreflightTimeoutMs(
+                "https://45-79-202-250.abc.plex.direct:8443/library/parts/1/file.mp3",
+            ),
+        )
+    }
+
+    @Test
+    fun preflightHttpOriginConnectFailsFastOnClosedPort() {
+        val port = ServerSocket(0).use { it.localPort }
+        val started = System.nanoTime()
+        assertFalse(
+            preflightHttpOriginConnect("http://127.0.0.1:$port/library/parts/1/file.mp3", timeoutMs = 400),
+        )
+        val elapsedMs = (System.nanoTime() - started) / 1_000_000L
+        assertTrue(elapsedMs < 2_000, "closed-port preflight took ${elapsedMs}ms")
     }
 
     private fun playbackTrack(
