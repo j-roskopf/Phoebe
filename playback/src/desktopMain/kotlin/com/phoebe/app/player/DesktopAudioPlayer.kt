@@ -789,6 +789,7 @@ class DesktopAudioPlayer(
             if (isRemoteUri(uri) &&
                 !preflightHttpOriginConnect(uri, DesktopPlaybackStartupPolicy.javaFxPreflightTimeoutMs(uri))
             ) {
+                if (!isGaplessPrepareCurrent(generation, track.id)) return@execute
                 PhoebeLog.d("DesktopAudioPlayer") {
                     "gapless JavaFX preflight failed for ${PlaybackFailureClassifier.redactStreamUri(uri)}"
                 }
@@ -3615,10 +3616,12 @@ internal fun preflightHttpOriginConnect(uri: String, timeoutMs: Long): Boolean {
     val port = parsed.port.takeIf { it > 0 } ?: if (scheme == "https") 443 else 80
     val timeout = timeoutMs.toInt().coerceIn(1, 60_000)
     return runCatching {
-        Socket().use { socket ->
-            socket.connect(InetSocketAddress(host, port), timeout)
-            socket.isConnected
-        }
+        CompletableFuture.supplyAsync {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(host, port), timeout)
+                socket.isConnected
+            }
+        }.orTimeout(timeoutMs.coerceAtLeast(1L), TimeUnit.MILLISECONDS).get()
     }.getOrDefault(false)
 }
 

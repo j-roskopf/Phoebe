@@ -232,4 +232,40 @@ class PlexClientMockEngineDesktopTest {
         )
         assertTrue("45-33-97-28.abc.plex.direct" in attemptedHosts, "hosts=$attemptedHosts")
     }
+
+    @Test
+    fun reportTimelineStillTriesNextLanAfterFastLocalFailure() = runBlocking {
+        val attemptedHosts = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            attemptedHosts += request.url.host
+            when (request.url.host) {
+                "172.16.1.2" -> throw IOException("connection reset")
+                else -> respond(
+                    content = """{"MediaContainer":{"size":0}}""",
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            }
+        }
+        val client = PlexClient(testHttpClient(engine))
+        client.reportTimeline(
+            server = PlexServer(
+                id = "id",
+                name = "plex",
+                uri = "http://172.16.1.2:32400",
+                owned = true,
+                connectionUris = listOf("http://172.16.1.2:32400", "http://192.168.1.9:32400"),
+                advertisedConnectionUris = listOf("http://172.16.1.2:32400", "http://192.168.1.9:32400"),
+                localConnectionUris = listOf("http://172.16.1.2:32400", "http://192.168.1.9:32400"),
+            ),
+            token = "secret-token",
+            sessionIdentifier = "session-1",
+            ratingKey = "123",
+            timeMs = 5_000L,
+            durationMs = 180_000L,
+            state = PlexTimelineState.Playing,
+        )
+
+        assertEquals(listOf("172.16.1.2", "192.168.1.9"), attemptedHosts)
+    }
 }

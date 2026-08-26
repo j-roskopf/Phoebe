@@ -122,7 +122,10 @@ class PlexServerConnectionsTest {
         )
         val ordered = server.timelineBaseUris(remoteRelay)
         assertEquals(remoteRelay, ordered.first())
-        assertTrue(ordered.none { isLocalOnlyServerOrigin(it) })
+        val firstLocal = ordered.indexOfFirst { isLocalOnlyServerOrigin(it) }
+        val lastRemote = ordered.indexOfLast { !isLocalOnlyServerOrigin(it) }
+        assertTrue(firstLocal >= 0, "LAN bases stay as a last-resort fallback")
+        assertTrue(lastRemote < firstLocal, "remote command bases must come before LAN")
         assertTrue(closedWan in ordered)
     }
 

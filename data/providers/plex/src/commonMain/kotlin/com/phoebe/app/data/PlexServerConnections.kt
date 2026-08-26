@@ -39,19 +39,20 @@ fun PlexServer.reachableBaseUris(preferredFirst: String? = null): List<String> {
 
 /**
  * Bases for Plex command paths (`/:/timeline`, play queues). Library media often works on a
- * public relay while LAN IPs are dead; walking those first with an 8s connect timeout makes
+ * public relay while LAN IPs are dead; walking those first with a long connect timeout makes
  * scrobble pings (and anything awaiting them) look hung.
  *
- * Once a non-LAN origin is known to work, skip private addresses. Keep them as a last resort
- * when every remaining candidate is local-only.
+ * Once a non-LAN origin is known to work, try remotes first and keep private addresses as a
+ * last resort — relays can 401 the command path while LAN still accepts it.
  */
 fun PlexServer.timelineBaseUris(preferredFirst: String? = null): List<String> {
     val bases = reachableBaseUris(preferredFirst)
     val preferred = preferredFirst?.trimEnd('/')?.takeIf { it.isNotBlank() }
-    val skipLocal = preferred != null && !isLocalOnlyServerOrigin(preferred)
-    if (!skipLocal) return bases
+    val preferRemote = preferred != null && !isLocalOnlyServerOrigin(preferred)
+    if (!preferRemote) return bases
     val remote = bases.filterNot(::isLocalOnlyServerOrigin)
-    return remote.ifEmpty { bases }
+    if (remote.isEmpty()) return bases
+    return remote + bases.filter(::isLocalOnlyServerOrigin)
 }
 
 fun bestReachableBaseUri(

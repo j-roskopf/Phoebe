@@ -1476,7 +1476,6 @@ class PlexClient(
                 PhoebeLog.d("PlexClient") {
                     "reportTimeline ${state.wireValue} failed on $base for '$ratingKey': ${error.message}"
                 }
-                if (isLocalOnlyServerOrigin(base)) skipRemainingLocal = true
                 continue
             }
             val response = outcome.getOrThrow()
@@ -1572,7 +1571,6 @@ class PlexClient(
                 if (error is CancellationException) throw error
                 lastError = error
                 PhoebeLog.d("PlexClient") { "createAudioPlayQueue failed on $base: ${error.message}" }
-                if (isLocalOnlyServerOrigin(base)) skipRemainingLocal = true
                 continue
             }
             val response = outcome.getOrThrow()
