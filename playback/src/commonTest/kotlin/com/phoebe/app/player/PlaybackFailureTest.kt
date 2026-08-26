@@ -195,6 +195,10 @@ class PlaybackFailureTest {
             "JavaFX media ready but never started playing",
             streamUri = "http://10.10.0.1:8096/emby/Audio/1/stream",
         )
+        val runtimeTimeout = PlaybackFailureClassifier.fromMessage(
+            "JavaFX runtime did not become ready in 15000ms",
+            streamUri = "file:///music/song.mp3",
+        )
 
         assertEquals(PlaybackFailureKind.Unreachable, timeout.kind)
         assertEquals(PlaybackFailureKind.Unreachable, playingTimeout.kind)
@@ -203,6 +207,8 @@ class PlaybackFailureTest {
         assertTrue(playingTimeout.shouldTryAlternateEngine)
         assertTrue(timeout.isPlayerEngineTimeout)
         assertTrue(timeout.isInfrastructureFailure)
+        assertTrue(runtimeTimeout.isPlayerEngineTimeout)
+        assertTrue(runtimeTimeout.shouldTryAlternateEngine)
     }
 
     @Test
