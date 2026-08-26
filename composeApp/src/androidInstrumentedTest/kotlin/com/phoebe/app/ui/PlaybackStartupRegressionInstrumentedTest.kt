@@ -20,6 +20,7 @@ import com.phoebe.app.feature.library.TrackList
 import com.phoebe.app.platform.PlatformStorage
 import com.phoebe.app.player.AndroidAudioPlayer
 import com.phoebe.app.player.PlaybackDiagnostics
+import com.phoebe.app.player.PlaybackOriginResolverHolder
 import com.phoebe.app.testCatalogRepository
 import com.phoebe.app.testing.PlaybackStartupProbe
 import com.phoebe.app.testing.PlaybackStartupThresholds
@@ -55,6 +56,7 @@ class PlaybackStartupRegressionInstrumentedTest {
     fun setup() {
         app = ApplicationProvider.getApplicationContext()
         AndroidContextHolder.application = app
+        PlaybackOriginResolverHolder.resolver = null
         storageOverride = File(app.cacheDir, "phoebe-playback-storage-${System.nanoTime()}").apply { mkdirs() }
         musicRoot = File(app.cacheDir, "phoebe-playback-music-${System.nanoTime()}").apply { mkdirs() }
         System.setProperty("phoebe.storage.root", storageOverride.absolutePath)
@@ -63,6 +65,7 @@ class PlaybackStartupRegressionInstrumentedTest {
 
     @After
     fun tearDown() {
+        PlaybackOriginResolverHolder.resolver = null
         runBlocking { AndroidAudioPlayer(PlaybackDiagnostics.None).releaseForTests() }
         driver?.close()
         driver = null
@@ -91,8 +94,10 @@ class PlaybackStartupRegressionInstrumentedTest {
                             empty = "No songs",
                             catalogRefreshing = false,
                             onPlayTracks = { queue, index ->
-                                playRequested = true
-                                diagnostics.markPlayRequested(queue.getOrNull(index)?.title)
+                                if (!playRequested) {
+                                    playRequested = true
+                                    diagnostics.markPlayRequested(queue.getOrNull(index)?.title)
+                                }
                                 player.play(queue, index)
                             },
                             onAddToUpNext = {},

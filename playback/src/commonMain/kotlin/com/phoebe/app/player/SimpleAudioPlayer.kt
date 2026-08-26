@@ -151,6 +151,21 @@ abstract class SimpleAudioPlayer(
         generation: Int,
         sameQueue: Boolean,
     ) {
+        // Local files and non-HTTP sources never need a Plex/media-server origin race.
+        if (!track.localUri.isNullOrBlank() ||
+            !isMusicServerStreamUrl(
+                StreamingPlaybackPolicyHolder.resolvePlaybackUri(track).ifBlank { track.streamUrl },
+            )
+        ) {
+            launchPreparedPlayback(
+                queue = queue,
+                startIndex = startIndex,
+                generation = generation,
+                sameQueue = sameQueue,
+                origin = null,
+            )
+            return
+        }
         val resolver = PlaybackOriginResolverHolder.resolver
         // Prefer a known-good origin and start immediately — never block first audio on a probe.
         // Drop sticky/cached LAN when demotion is active so cellular/away starts stay remote-first.
