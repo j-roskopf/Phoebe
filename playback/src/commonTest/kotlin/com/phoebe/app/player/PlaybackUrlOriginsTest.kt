@@ -158,6 +158,8 @@ class PlaybackUrlOriginsTest {
             ),
         )
         assertFalse(isLocalOnlyPlaybackOrigin("https://72-58-82-53.abc.plex.direct:32400/library/parts/1/file.mp3"))
+        assertFalse(isLocalOnlyPlaybackOrigin("file:///music/song.mp3"))
+        assertFalse(isLocalOnlyPlaybackOrigin("/storage/emulated/0/Music/song.mp3"))
     }
 
     @Test

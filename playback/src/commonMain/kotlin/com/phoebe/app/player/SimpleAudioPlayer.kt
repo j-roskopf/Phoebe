@@ -1053,10 +1053,12 @@ abstract class SimpleAudioPlayer(
 
     protected open val playbackStartupTimeoutMs: Long
         get() {
-            val uri = mutableState.value.currentTrack?.let { track ->
-                track.localUri?.takeIf { it.isNotBlank() }
-                    ?: StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
-                        .ifBlank { track.streamUrl }
+            val track = mutableState.value.currentTrack
+            // Local files are not network origins — give them the remote budget, not the
+            // short LAN fail-fast window (file:// used to be misclassified as local-only).
+            if (!track?.localUri.isNullOrBlank()) return PlaybackStartupTimeoutRemoteMs
+            val uri = track?.let {
+                StreamingPlaybackPolicyHolder.resolvePlaybackUri(it).ifBlank { it.streamUrl }
             }.orEmpty()
             return if (uri.isNotBlank() && isLocalOnlyPlaybackOrigin(uri)) {
                 PlaybackStartupTimeoutLocalMs

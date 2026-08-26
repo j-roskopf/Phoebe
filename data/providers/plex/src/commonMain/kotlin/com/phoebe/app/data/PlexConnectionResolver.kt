@@ -161,7 +161,7 @@ class PlexConnectionResolver(
         }
         // Do not block callers behind another in-flight race — play must stay instant.
         if (!resolveMutex.tryLock()) {
-            return cached(server, identity) ?: lastGoodByServer[server.id]
+            return cached(server, identity)
         }
         try {
             cached(server, identity)?.let { return it }

@@ -147,6 +147,9 @@ internal fun connectionPriority(uri: String, demoteLocalOrigins: Boolean = false
  */
 fun isLocalOnlyServerOrigin(uri: String): Boolean {
     if (uri.isBlank()) return false
+    val scheme = uri.substringBefore("://", missingDelimiterValue = "").lowercase()
+    // Only HTTP(S) music-server hosts — file:// and other schemes are not LAN origins.
+    if (scheme != "http" && scheme != "https") return false
     val host = uri.substringAfter("://").substringBefore(':').substringBefore('/').lowercase()
     if (host.isBlank() || host == "localhost" || host.endsWith(".local")) return true
     val ip = when {

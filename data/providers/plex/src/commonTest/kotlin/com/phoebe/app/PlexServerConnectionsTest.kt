@@ -83,6 +83,7 @@ class PlexServerConnectionsTest {
         assertTrue(isLocalOnlyServerOrigin("http://192.168.1.9:32400"))
         assertFalse(isLocalOnlyServerOrigin("https://45-79-202-250.abc.plex.direct:8443"))
         assertFalse(isLocalOnlyServerOrigin("https://72-58-82-53.abc.plex.direct:32400"))
+        assertFalse(isLocalOnlyServerOrigin("file:///music/song.mp3"))
     }
 
     @Test
