@@ -48,19 +48,51 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 @SingleIn(AppScope::class)
-@Inject
-class PlexClient(
+class PlexClient private constructor(
     private val httpClient: HttpClient,
+    private val connectionResolver: PlexConnectionResolver?,
+    @Suppress("UNUSED_PARAMETER") discriminator: Unit,
 ) {
-    /** Last base URL that accepted API calls for this server — usually plain LAN HTTP. */
-    private val apiBaseCache = mutableMapOf<String, String>()
     private val baseResolveMutex = Mutex()
+    /** Fallback when constructed without a resolver (unit/desktop tests). */
+    private val localApiBaseCache = mutableMapOf<String, String>()
+
+    @Inject
+    constructor(
+        httpClient: HttpClient,
+        connectionResolver: PlexConnectionResolver,
+    ) : this(httpClient, connectionResolver, Unit)
+
+    private fun cachedApiBase(serverId: String): String? =
+        connectionResolver?.cachedOrNull(serverId) ?: localApiBaseCache[serverId]
+
+    private fun rememberApiBase(serverId: String, base: String) {
+        val trimmed = base.trimEnd('/')
+        connectionResolver?.remember(serverId, trimmed)
+        localApiBaseCache[serverId] = trimmed
+    }
+
+    private fun forgetApiBase(serverId: String, base: String? = null) {
+        connectionResolver?.forget(serverId, base)
+        if (base == null) {
+            localApiBaseCache.remove(serverId)
+        } else if (localApiBaseCache[serverId] == base.trimEnd('/')) {
+            localApiBaseCache.remove(serverId)
+        }
+    }
+
+    private fun demoteLocalOrigins(): Boolean =
+        connectionResolver?.demoteLocalOrigins() == true
 
     /** Probes server URLs and caches the fastest reachable base before catalog API calls. */
     suspend fun prepareForCatalogRequests(server: PlexServer, token: String, timeoutMs: Long = 5_000L) {
-        val candidates = server.reachableBaseUris(apiBaseCache[server.id])
+        connectionResolver?.hydrateFromDisk(server)
+        val candidates = server.reachableBaseUris(
+            preferredFirst = cachedApiBase(server.id),
+            demoteLocalOrigins = demoteLocalOrigins(),
+        )
         if (candidates.size == 1 && candidates.single().trimEnd('/') == server.uri.trimEnd('/')) {
-            apiBaseCache[server.id] = candidates.single()
+            rememberApiBase(server.id, candidates.single())
             return
         }
         resolveFastestBase(server, token, timeoutMs)
@@ -159,8 +191,24 @@ class PlexClient(
         server: PlexServer,
         token: String,
         timeoutMs: Long = PlexRemoteSetupRequestTimeoutMs,
+    ): String? {
+        connectionResolver?.let { resolver ->
+            return resolver.resolve(server, token, deadlineMs = timeoutMs)?.also { winner ->
+                localApiBaseCache[server.id] = winner
+            }
+        }
+        return raceBasesWithoutResolver(server, token, timeoutMs)
+    }
+
+    private suspend fun raceBasesWithoutResolver(
+        server: PlexServer,
+        token: String,
+        timeoutMs: Long,
     ): String? = coroutineScope {
-        val candidates = server.reachableBaseUris(apiBaseCache[server.id])
+        val candidates = server.reachableBaseUris(
+            preferredFirst = cachedApiBase(server.id),
+            demoteLocalOrigins = demoteLocalOrigins(),
+        )
         if (candidates.isEmpty()) return@coroutineScope null
         val result = CompletableDeferred<String>()
         val jobs = candidates.map { base ->
@@ -186,7 +234,7 @@ class PlexClient(
         } finally {
             jobs.forEach { it.cancel() }
         }
-        if (winner != null) apiBaseCache[server.id] = winner
+        if (winner != null) rememberApiBase(server.id, winner)
         winner
     }
 
@@ -567,7 +615,10 @@ class PlexClient(
     ): List<PlexMetadataDto> {
         val uri = "server://$machineIdentifier/$LibraryIdentifier${stationKey.normalizedStationKey()}"
         var lastError: Throwable? = null
-        for (base in server.reachableBaseUris(apiBaseCache[server.id])) {
+        for (base in server.reachableBaseUris(
+            preferredFirst = cachedApiBase(server.id),
+            demoteLocalOrigins = demoteLocalOrigins(),
+        )) {
             val response = runCatching {
                 val httpResponse = httpClient.post("$base/playQueues") {
                     plexTimelineAuth(token)
@@ -592,7 +643,7 @@ class PlexClient(
                 if (error.message?.contains("401") == true) return@getOrElse null
                 null
             } ?: continue
-            apiBaseCache[server.id] = base
+            rememberApiBase(server.id, base)
             return expandedPlayQueueMetadata(base, token, response.mediaContainer)
         }
         throw lastError ?: IllegalStateException("Plex radio returned no playable songs.")
@@ -1438,7 +1489,10 @@ class PlexClient(
         continuing: Boolean? = null,
         playQueueItemId: Long? = null,
     ) {
-        val bases = server.timelineBaseUris(apiBaseCache[server.id])
+        val bases = server.timelineBaseUris(
+            preferredFirst = cachedApiBase(server.id),
+            demoteLocalOrigins = demoteLocalOrigins(),
+        )
         var lastStatus = 0
         var lastBody = ""
         var lastBase = server.uri
@@ -1481,7 +1535,7 @@ class PlexClient(
             }
             val response = outcome.getOrThrow()
             if (response.status.isSuccess()) {
-                apiBaseCache[server.id] = base
+                rememberApiBase(server.id, base)
                 PhoebeLog.v("PlexClient") {
                     "reportTimeline ${state.wireValue} ok for '$ratingKey' on $base"
                 }
@@ -1540,7 +1594,10 @@ class PlexClient(
     ): PlexPlayQueue? {
         if (ratingKeys.isEmpty()) return null
         val uri = metadataUri(machineIdentifier, ratingKeys)
-        val bases = server.timelineBaseUris(apiBaseCache[server.id])
+        val bases = server.timelineBaseUris(
+            preferredFirst = cachedApiBase(server.id),
+            demoteLocalOrigins = demoteLocalOrigins(),
+        )
         var lastError: Throwable? = null
         var skipRemainingLocal = false
         for (base in bases) {
@@ -1581,7 +1638,7 @@ class PlexClient(
                 PhoebeLog.d("PlexClient") { "createAudioPlayQueue failed → HTTP ${response.status.value}: ${body.take(300)}" }
                 return null
             }
-            apiBaseCache[server.id] = base
+            rememberApiBase(server.id, base)
             val parsed = runCatching {
                 PlexJson.decodeFromString(PlexMediaContainerResponse.serializer(), body)
             }.getOrNull()
@@ -1929,7 +1986,7 @@ class PlexClient(
         server: PlexServer,
         block: suspend (base: String) -> T,
     ): T {
-        val cached = baseResolveMutex.withLock { apiBaseCache[server.id] }
+        val cached = baseResolveMutex.withLock { cachedApiBase(server.id) }
         var lastError: Throwable? = null
         if (cached != null) {
             try {
@@ -1938,17 +1995,18 @@ class PlexClient(
                 if (error is CancellationException) throw error
                 lastError = error
                 baseResolveMutex.withLock {
-                    if (apiBaseCache[server.id] == cached) {
-                        apiBaseCache.remove(server.id)
-                    }
+                    forgetApiBase(server.id, cached)
                 }
             }
         }
-        for (base in server.reachableBaseUris(cached)) {
+        for (base in server.reachableBaseUris(
+            preferredFirst = cached,
+            demoteLocalOrigins = demoteLocalOrigins(),
+        )) {
             if (base == cached) continue
             try {
                 val result = block(base)
-                baseResolveMutex.withLock { apiBaseCache[server.id] = base }
+                baseResolveMutex.withLock { rememberApiBase(server.id, base) }
                 return result
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
@@ -1978,7 +2036,10 @@ class PlexClient(
         baseTimeoutMs: Long,
     ): T {
         var lastError: Throwable? = null
-        val bases = server.reachableBaseUris(apiBaseCache[server.id])
+        val bases = server.reachableBaseUris(
+            preferredFirst = cachedApiBase(server.id),
+            demoteLocalOrigins = demoteLocalOrigins(),
+        )
         for (base in bases) {
             val probeTimeoutMs = minOf(baseTimeoutMs, plexBaseProbeTimeoutMs(base))
             val outcome = withTimeoutOrNull(probeTimeoutMs) {
@@ -2002,7 +2063,7 @@ class PlexClient(
                 continue
             }
             if (outcome.isSuccess) {
-                apiBaseCache[server.id] = base
+                rememberApiBase(server.id, base)
                 return outcome.getOrThrow()
             }
             val error = outcome.exceptionOrNull()
@@ -2204,7 +2265,7 @@ class PlexClient(
     }
 
     private fun PlexServer.assetUrl(path: String, token: String): String {
-        val base = apiBaseCache[id] ?: uri
+        val base = cachedApiBase(id) ?: uri
         val builder = URLBuilder(base)
         builder.appendPathSegments(path.trimStart('/').split('/'))
         builder.parameters.append("X-Plex-Token", token)
@@ -2212,7 +2273,8 @@ class PlexClient(
     }
 
     /** Base URL that succeeded for API calls, used for media/thumbnail URLs. */
-    fun mediaBaseUrl(server: PlexServer): String = apiBaseCache[server.id] ?: server.uri
+    fun mediaBaseUrl(server: PlexServer): String =
+        connectionResolver?.mediaBaseUrl(server) ?: cachedApiBase(server.id) ?: server.uri
 
     private fun parseTrackPlaybackStatsFromBody(body: String): List<PlexTrackPlaybackStat> {
         val root = runCatching { PlexJson.parseToJsonElement(body) }.getOrNull() ?: return emptyList()
@@ -2275,6 +2337,10 @@ class PlexClient(
     }
 
     companion object {
+        /** Test / smoke-harness factory — keeps an in-memory origin cache only. */
+        fun withoutResolver(httpClient: HttpClient): PlexClient =
+            PlexClient(httpClient, null, Unit)
+
         const val LibraryIdentifier = "com.plexapp.plugins.library"
         const val PlayQueueMetadataBatchSize = 25
         private const val PlexPlayQueueDefaultWindowSize = 200

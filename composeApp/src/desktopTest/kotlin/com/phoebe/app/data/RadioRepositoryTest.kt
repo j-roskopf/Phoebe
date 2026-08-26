@@ -220,7 +220,7 @@ private fun radioRepositoryFixture(engine: MockEngine): RadioRepositoryFixture {
     val (database, driver) = newInMemoryPhoebeDatabase()
     val httpClient = testHttpClient(engine)
     val sessionRepository = testSessionRepository(
-        plexClient = PlexClient(httpClient),
+        plexClient = PlexClient.withoutResolver(httpClient),
         database = database,
         storage = PlatformStorage(),
         httpClient = httpClient,

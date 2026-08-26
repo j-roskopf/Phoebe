@@ -18,7 +18,36 @@ data class NetworkMeteringStatus(
     val isCellular: Boolean = false,
 )
 
+enum class NetworkTransport {
+    Wifi,
+    Cellular,
+    Ethernet,
+    Other,
+    None,
+}
+
+/**
+ * Permission-free snapshot of the active network. [fingerprint] is stable for a given
+ * physical network (transport + hashed gateway/subnet) and must not include SSIDs or
+ * other location-sensitive identifiers.
+ */
+data class NetworkIdentity(
+    val transport: NetworkTransport = NetworkTransport.Other,
+    val fingerprint: String = "",
+    val metering: NetworkMeteringStatus = NetworkMeteringStatus(),
+) {
+    val demotesLocalOrigins: Boolean
+        get() = transport == NetworkTransport.Cellular ||
+            transport == NetworkTransport.None ||
+            metering.isCellular ||
+            metering.isMetered && transport != NetworkTransport.Wifi && transport != NetworkTransport.Ethernet
+}
+
 expect fun currentNetworkMeteringStatus(): NetworkMeteringStatus
+
+expect fun currentNetworkIdentity(): NetworkIdentity
+
+expect fun observeNetworkIdentity(): kotlinx.coroutines.flow.Flow<NetworkIdentity>
 
 expect fun defaultDownloadWifiOnly(): Boolean
 

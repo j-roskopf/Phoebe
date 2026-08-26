@@ -44,8 +44,9 @@ class WebAudioBufferedPositionTest {
     }
 
     @Test
-    fun remoteStreamsUseMinimalPreload() {
-        assertEquals("none", webAudioPreloadForUri("https://plex.example/track.mp3"))
+    fun remoteStreamsUseAutoPreloadForActiveTrack() {
+        assertEquals("auto", webAudioPreloadForUri("https://plex.example/track.mp3"))
+        assertEquals("none", webAudioPreloadForUri("https://plex.example/track.mp3", activeTrack = false))
         assertEquals("metadata", webAudioPreloadForUri("blob:https://music.example/local-file"))
         assertEquals("metadata", webAudioPreloadForUri("phoebe-test://music/alpha.mp3"))
     }

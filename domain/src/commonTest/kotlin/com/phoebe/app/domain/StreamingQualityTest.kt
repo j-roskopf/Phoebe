@@ -17,6 +17,20 @@ class StreamingQualityTest {
     }
 
     @Test
+    fun preferLocalNetworkOffAlwaysDemotesLan() {
+        val policy = StreamingPolicySettings(preferLocalNetwork = false)
+        assertTrue(policy.shouldDemoteLocalOrigins(networkDemotesLocalOrigins = false))
+        assertTrue(policy.shouldDemoteLocalOrigins(networkDemotesLocalOrigins = true))
+    }
+
+    @Test
+    fun preferLocalNetworkOnOnlyDemotesWhenNetworkRequires() {
+        val policy = StreamingPolicySettings(preferLocalNetwork = true)
+        assertFalse(policy.shouldDemoteLocalOrigins(networkDemotesLocalOrigins = false))
+        assertTrue(policy.shouldDemoteLocalOrigins(networkDemotesLocalOrigins = true))
+    }
+
+    @Test
     fun losslessTracksTranscodeWhenQualityIsCapped() {
         val flac = track(audioCodec = "flac", bitrateKbps = 921, filepath = "song.flac")
         assertTrue(flac.keepsOriginalStreamFor(StreamingQuality.Original))

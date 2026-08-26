@@ -38,8 +38,8 @@ internal object AndroidPlaybackDiagnostics {
         diagnostics.engineSelected(engine)
         val httpDataSourceFactory = DefaultHttpDataSource.Factory()
             .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(15_000)
-            .setReadTimeoutMs(20_000)
+            .setConnectTimeoutMs(3_000)
+            .setReadTimeoutMs(8_000)
         return ExoPlayer.Builder(
             context,
             PhoebeRenderersFactory(

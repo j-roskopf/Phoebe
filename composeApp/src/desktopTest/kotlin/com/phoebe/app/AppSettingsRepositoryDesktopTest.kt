@@ -232,6 +232,7 @@ class AppSettingsRepositoryDesktopTest {
                 StreamingPolicySettings(
                     quality = StreamingQuality.High,
                     useDataSaverOnCellular = false,
+                    preferLocalNetwork = true,
                 ),
             )
         }
@@ -239,6 +240,7 @@ class AppSettingsRepositoryDesktopTest {
 
         assertEquals(StreamingQuality.High, restored.streamingPolicy.quality)
         assertFalse(restored.streamingPolicy.useDataSaverOnCellular)
+        assertTrue(restored.streamingPolicy.preferLocalNetwork)
     }
 
     @Test

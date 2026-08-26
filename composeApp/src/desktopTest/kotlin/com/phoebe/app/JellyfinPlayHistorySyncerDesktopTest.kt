@@ -105,7 +105,7 @@ class JellyfinPlayHistorySyncerDesktopTest {
         val storage = PlatformStorage()
         val mediaSources = MediaSourcesRepository(db, storage)
         val catalogRepository = testCatalogRepository(
-            plexClient = PlexClient(testHttpClient(engine)),
+            plexClient = PlexClient.withoutResolver(testHttpClient(engine)),
             providerRegistry = MusicProviderRegistry(emptyList()),
             database = db,
             storage = storage,

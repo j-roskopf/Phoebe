@@ -149,6 +149,44 @@ class PlexServerConnectionsTest {
     }
 
     @Test
+    fun reachableBaseUrisDemotesLocalOriginsOnCellularHint() {
+        val lan = "http://192.168.86.43:32400"
+        val remoteRelay = "https://172-105-8-66.abc.plex.direct:8443"
+        val server = PlexServer(
+            id = "s1",
+            name = "plex",
+            uri = lan,
+            owned = true,
+            connectionUris = expandConnectionUris(listOf(lan, remoteRelay)),
+            advertisedConnectionUris = listOf(lan, remoteRelay),
+            localConnectionUris = listOf(lan),
+        )
+        val ordered = server.reachableBaseUris(demoteLocalOrigins = true)
+        assertEquals(remoteRelay, ordered.first())
+        assertTrue(ordered.indexOf(lan) > ordered.indexOf(remoteRelay))
+    }
+
+    @Test
+    fun timelineBaseUrisDemotesLocalWhenHintedEvenIfPreferredIsLocal() {
+        val lan = "http://192.168.1.9:32400"
+        val remoteRelay = "https://45-79-202-250.abc.plex.direct:8443"
+        val server = PlexServer(
+            id = "s1",
+            name = "plex",
+            uri = lan,
+            owned = true,
+            connectionUris = expandConnectionUris(listOf(lan, remoteRelay)),
+            advertisedConnectionUris = listOf(lan, remoteRelay),
+            localConnectionUris = listOf(lan),
+        )
+        val ordered = server.timelineBaseUris(preferredFirst = lan, demoteLocalOrigins = true)
+        assertEquals(remoteRelay, ordered.first { !isLocalOnlyServerOrigin(it) })
+        val firstLocal = ordered.indexOfFirst { isLocalOnlyServerOrigin(it) }
+        val lastRemote = ordered.indexOfLast { !isLocalOnlyServerOrigin(it) }
+        assertTrue(lastRemote < firstLocal)
+    }
+
+    @Test
     fun authTokenPrefersServerAccessToken() {
         val server = PlexServer(
             id = "s1",

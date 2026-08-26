@@ -45,7 +45,7 @@ class PlexClientMockEngineDesktopTest {
                 respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val servers: List<PlexServer> = client.servers("fake-token")
         assertEquals(1, servers.size)
         assertEquals("server-id", servers.single().id)
@@ -66,7 +66,7 @@ class PlexClientMockEngineDesktopTest {
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         client.reportTimeline(
             server = PlexServer("id", "plex", "https://plex.example:32400", owned = true),
             token = "secret-token",
@@ -99,7 +99,7 @@ class PlexClientMockEngineDesktopTest {
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
 
         client.markPlayed(
             server = PlexServer("id", "plex", "https://plex.example:32400", owned = true),
@@ -132,7 +132,7 @@ class PlexClientMockEngineDesktopTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
 
         val libraries = client.musicLibraries(
             server = PlexServer(
@@ -165,7 +165,7 @@ class PlexClientMockEngineDesktopTest {
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         client.reportTimeline(
             server = PlexServer(
                 id = "id",
@@ -203,7 +203,7 @@ class PlexClientMockEngineDesktopTest {
                 )
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val lanA = "http://172.16.1.2:32400"
         val lanB = "http://192.168.1.9:32400"
         val remote = "https://45-33-97-28.abc.plex.direct:8443"
@@ -247,7 +247,7 @@ class PlexClientMockEngineDesktopTest {
                 )
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         client.reportTimeline(
             server = PlexServer(
                 id = "id",

@@ -100,7 +100,7 @@ object ProviderSmokeHarness {
     }
 
     suspend fun runPlexClientSmoke(http: HttpClient) {
-        val client = PlexClient(http)
+        val client = PlexClient.withoutResolver(http)
         val session = testPlexSession()
         val server = session.selectedServer!!
         val library = session.selectedLibrary!!

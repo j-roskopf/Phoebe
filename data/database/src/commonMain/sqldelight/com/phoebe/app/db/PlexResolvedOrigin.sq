@@ -1,0 +1,25 @@
+-- Working Plex API/media base per physical network. Survives process death so cellular
+-- cold starts immediately target the relay instead of a dead LAN address from last home session.
+
+CREATE TABLE PlexResolvedOriginRow (
+    serverId TEXT NOT NULL,
+    networkFingerprint TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    updatedAtMs INTEGER NOT NULL,
+    PRIMARY KEY (serverId, networkFingerprint)
+);
+
+selectOrigin:
+SELECT origin
+FROM PlexResolvedOriginRow
+WHERE serverId = ? AND networkFingerprint = ?;
+
+upsertOrigin:
+INSERT OR REPLACE INTO PlexResolvedOriginRow(serverId, networkFingerprint, origin, updatedAtMs)
+VALUES (?, ?, ?, ?);
+
+deleteForServer:
+DELETE FROM PlexResolvedOriginRow WHERE serverId = ?;
+
+clearAll:
+DELETE FROM PlexResolvedOriginRow;

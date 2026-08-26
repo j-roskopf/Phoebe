@@ -63,6 +63,12 @@ interface AudioPlayer {
     fun setOutputDevice(id: String?) = Unit
 
     /**
+     * Prefer [origin] for upcoming queue entries after a network change or successful race,
+     * without restarting the currently playing item.
+     */
+    fun rebasePlaybackOrigins(origin: String) = Unit
+
+    /**
      * Keep per-app output at unity while [updateReportedVolume] mirrors the OS level on the slider.
      */
     fun setUnityOutputVolume()

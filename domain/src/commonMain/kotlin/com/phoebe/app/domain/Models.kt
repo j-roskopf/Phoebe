@@ -1410,6 +1410,12 @@ enum class StreamingQuality {
 data class StreamingPolicySettings(
     val quality: StreamingQuality = StreamingQuality.Original,
     val useDataSaverOnCellular: Boolean = true,
+    /**
+     * When false (default), playback and API origin selection prefer public/remote Plex
+     * connections and only use LAN addresses as a fallback. When true, restore the
+     * home-LAN-first strategy on unmetered Wi‑Fi (still demote LAN on cellular).
+     */
+    val preferLocalNetwork: Boolean = false,
 ) {
     fun normalized(): StreamingPolicySettings = copy(quality = quality)
 
@@ -1421,6 +1427,10 @@ data class StreamingPolicySettings(
             normalized.quality
         }
     }
+
+    /** True when LAN-only Plex origins should sort after remote ones. */
+    fun shouldDemoteLocalOrigins(networkDemotesLocalOrigins: Boolean): Boolean =
+        !normalized().preferLocalNetwork || networkDemotesLocalOrigins
 }
 
 fun Track.isLosslessAudioSource(): Boolean {

@@ -8,6 +8,11 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
@@ -17,7 +22,9 @@ import java.awt.TrayIcon
 import java.io.File
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.NetworkInterface
 import java.net.URI
 import java.net.SocketTimeoutException
 import java.nio.file.Paths
@@ -59,9 +66,76 @@ actual fun isIosPlatform(): Boolean = false
 
 actual fun supportsPredictiveBack(): Boolean = false
 
-actual fun currentNetworkMeteringStatus(): NetworkMeteringStatus = NetworkMeteringStatus()
+actual fun currentNetworkMeteringStatus(): NetworkMeteringStatus =
+    currentNetworkIdentity().metering
+
+actual fun currentNetworkIdentity(): NetworkIdentity = desktopNetworkIdentity()
+
+actual fun observeNetworkIdentity(): Flow<NetworkIdentity> = flow {
+    var last: NetworkIdentity? = null
+    while (true) {
+        val next = desktopNetworkIdentity()
+        if (next != last) {
+            emit(next)
+            last = next
+        }
+        delay(DesktopNetworkPollIntervalMs)
+    }
+}.flowOn(Dispatchers.IO).distinctUntilChanged()
 
 actual fun defaultDownloadWifiOnly(): Boolean = true
+
+private const val DesktopNetworkPollIntervalMs = 2_000L
+
+private val DesktopVirtualInterfaceNamePrefixes = listOf(
+    "docker", "br-", "veth", "vmnet", "vbox", "virbr", "tun", "tap", "utun",
+    "awdl", "llw", "bridge", "ap", "ipsec", "ppp", "gif", "stf", "zt", "wg",
+)
+
+private fun desktopNetworkIdentity(): NetworkIdentity {
+    val material = runCatching {
+        NetworkInterface.getNetworkInterfaces()
+            ?.toList()
+            .orEmpty()
+            .asSequence()
+            .filter { iface ->
+                runCatching {
+                    iface.isUp &&
+                        !iface.isLoopback &&
+                        !iface.isVirtual &&
+                        !iface.isPointToPoint &&
+                        !isDesktopVirtualInterfaceName(iface.name)
+                }.getOrDefault(false)
+            }
+            .flatMap { iface ->
+                iface.inetAddresses.toList().asSequence()
+                    .filterIsInstance<Inet4Address>()
+                    .mapNotNull { address ->
+                        val host = address.hostAddress ?: return@mapNotNull null
+                        if (address.isLinkLocalAddress) return@mapNotNull null
+                        val parts = host.split('.')
+                        if (parts.size != 4) return@mapNotNull null
+                        "${parts[0]}.${parts[1]}.${parts[2]}.0"
+                    }
+            }
+            .distinct()
+            .sorted()
+            .joinToString("|")
+    }.getOrDefault("")
+    val transport = if (material.isBlank()) NetworkTransport.None else NetworkTransport.Other
+    return NetworkIdentity(
+        transport = transport,
+        fingerprint = networkFingerprint(transport, material.ifBlank { transport.name.lowercase() }),
+        metering = NetworkMeteringStatus(),
+    )
+}
+
+private fun isDesktopVirtualInterfaceName(name: String): Boolean {
+    val lower = name.lowercase()
+    return DesktopVirtualInterfaceNamePrefixes.any { prefix ->
+        lower == prefix || lower.startsWith(prefix)
+    }
+}
 
 private val storageRoot: File by lazy {
     desktopStorageRoot()

@@ -18,6 +18,7 @@ suspend fun PhoebeDatabase.clearAllAppData(clearPlayHistory: Boolean = true) = w
         radioStationsQueries.clearManualStations()
         mediaSourcesQueries.clear()
         sessionQueries.clear()
+        plexResolvedOriginQueries.clearAll()
         userArtifactsQueries.clearSmartPlaylists()
         userArtifactsQueries.clearSavedSearches()
         userArtifactsQueries.clearLocalMetadataOverrides()

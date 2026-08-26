@@ -509,10 +509,11 @@ class DesktopAudioPlayer(
                     )
                 ) {
                     if (file == null &&
-                        isRemoteUri(playbackUri) &&
+                        DesktopPlaybackStartupPolicy.shouldPreflightJavaFxOrigin(playbackUri) &&
                         !preflightHttpOriginConnect(
-                            playbackUri,
-                            DesktopPlaybackStartupPolicy.javaFxPreflightTimeoutMs(playbackUri),
+                            uri = playbackUri,
+                            timeoutMs = DesktopPlaybackStartupPolicy.JavaFxLocalPreflightTimeoutMs,
+                            isCurrent = { isPlayRequestCurrent(generation) },
                         )
                     ) {
                         PhoebeLog.d("DesktopAudioPlayer") {
@@ -786,8 +787,12 @@ class DesktopAudioPlayer(
         resetGaplessJavaFxHotStartState()
         playbackExecutor.execute {
             if (!isGaplessPrepareCurrent(generation, track.id)) return@execute
-            if (isRemoteUri(uri) &&
-                !preflightHttpOriginConnect(uri, DesktopPlaybackStartupPolicy.javaFxPreflightTimeoutMs(uri))
+            if (DesktopPlaybackStartupPolicy.shouldPreflightJavaFxOrigin(uri) &&
+                !preflightHttpOriginConnect(
+                    uri = uri,
+                    timeoutMs = DesktopPlaybackStartupPolicy.JavaFxLocalPreflightTimeoutMs,
+                    isCurrent = { isPlayRequestCurrent(generation) },
+                )
             ) {
                 if (!isGaplessPrepareCurrent(generation, track.id)) return@execute
                 PhoebeLog.d("DesktopAudioPlayer") {
@@ -3604,11 +3609,21 @@ class DesktopAudioPlayer(
 }
 
 /**
- * Cheap TCP connect before handing an HTTP(S) URI to JavaFX. On Windows, [Media] can block
- * the JavaFX thread for a full OS timeout on a dead LAN address, which then stalls every
- * later `runLater` (progress, skip, dispose).
+ * Cheap TCP connect before handing a **LAN-only** HTTP(S) URI to JavaFX. On Windows, [Media]
+ * can block the JavaFX thread for a full OS timeout on a dead private address, which then
+ * stalls every later `runLater` (progress, skip, dispose). Remote/`plex.direct` origins skip
+ * this — they are not the hang case, and the connect cost delayed every song start.
+ *
+ * [isCurrent] lets callers abort early when a newer play generation has already superseded
+ * this load — critical because desktop playback runs on a single-thread executor that would
+ * otherwise burn the full timeout for every skipped song still in the queue.
  */
-internal fun preflightHttpOriginConnect(uri: String, timeoutMs: Long): Boolean {
+internal fun preflightHttpOriginConnect(
+    uri: String,
+    timeoutMs: Long,
+    isCurrent: () -> Boolean = { true },
+): Boolean {
+    if (!isCurrent()) return false
     val parsed = runCatching { URI(uri) }.getOrNull() ?: return false
     val scheme = parsed.scheme?.lowercase() ?: return false
     if (scheme != "http" && scheme != "https") return true
@@ -3616,12 +3631,34 @@ internal fun preflightHttpOriginConnect(uri: String, timeoutMs: Long): Boolean {
     val port = parsed.port.takeIf { it > 0 } ?: if (scheme == "https") 443 else 80
     val timeout = timeoutMs.toInt().coerceIn(1, 60_000)
     return runCatching {
-        CompletableFuture.supplyAsync {
+        val future = CompletableFuture.supplyAsync {
+            if (!isCurrent()) return@supplyAsync false
             Socket().use { socket ->
                 socket.connect(InetSocketAddress(host, port), timeout)
                 socket.isConnected
             }
-        }.orTimeout(timeoutMs.coerceAtLeast(1L), TimeUnit.MILLISECONDS).get()
+        }
+        // Poll so a superseded generation can bail without waiting out the full connect.
+        val deadlineNs = System.nanoTime() + timeoutMs.coerceAtLeast(1L) * 1_000_000L
+        while (true) {
+            if (!isCurrent()) {
+                future.cancel(true)
+                return@runCatching false
+            }
+            if (future.isDone) return@runCatching future.get()
+            val remainingMs = ((deadlineNs - System.nanoTime()) / 1_000_000L).coerceAtLeast(0L)
+            if (remainingMs == 0L) {
+                future.cancel(true)
+                return@runCatching false
+            }
+            try {
+                return@runCatching future.get(minOf(50L, remainingMs), TimeUnit.MILLISECONDS)
+            } catch (_: java.util.concurrent.TimeoutException) {
+                // keep polling
+            }
+        }
+        @Suppress("UNREACHABLE_CODE")
+        false
     }.getOrDefault(false)
 }
 
@@ -3807,8 +3844,7 @@ private fun normalizedPcmSample(bytes: ByteArray, offset: Int, sampleBytes: Int,
 internal object DesktopPlaybackStartupPolicy {
     const val JavaFxFailureFallbackDelayMs = 3_000L
     const val JavaFxRemoteReadyTimeoutMs = 10_000L
-    const val JavaFxLocalPreflightTimeoutMs = 800L
-    const val JavaFxRemotePreflightTimeoutMs = 3_000L
+    const val JavaFxLocalPreflightTimeoutMs = 400L
     const val JavaFxStartupDisposeTimeoutMs = 1_500L
 
     fun javaFxMediaReadyTimeoutMs(uri: String): Long = when {
@@ -3817,8 +3853,12 @@ internal object DesktopPlaybackStartupPolicy {
         else -> JavaFxRemoteReadyTimeoutMs
     }
 
-    fun javaFxPreflightTimeoutMs(uri: String): Long =
-        if (isLocalOnlyPlaybackOrigin(uri)) JavaFxLocalPreflightTimeoutMs else JavaFxRemotePreflightTimeoutMs
+    /**
+     * Only private-IP / LAN-only stream hosts need a TCP guard before JavaFX.
+     * Public plex.direct (and other remote) URLs go straight to MediaPlayer.
+     */
+    fun shouldPreflightJavaFxOrigin(uri: String): Boolean =
+        isRemoteUri(uri) && isLocalOnlyPlaybackOrigin(uri)
 
     fun isRemoteUri(uri: String): Boolean =
         uri.startsWith("http://", ignoreCase = true) || uri.startsWith("https://", ignoreCase = true)

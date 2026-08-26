@@ -6,10 +6,13 @@ import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.RepeatMode
 import com.phoebe.app.player.PlaybackFailure
 import com.phoebe.app.player.PlaybackFailureClassifier
+import com.phoebe.app.player.PlaybackOriginResolver
+import com.phoebe.app.player.PlaybackOriginResolverHolder
 import com.phoebe.app.player.SimpleAudioPlayer
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -79,6 +82,84 @@ class PlayerStateTest {
         player.finishPendingLoad()
 
         assertFalse(player.state.value.isPlaying)
+    }
+
+    @Test
+    fun warmOriginResolverStampsQueueBeforePlatformLoad() = runTest {
+        val warmOrigin = "https://warm.example"
+        PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
+            override fun cachedOrigin(): String = warmOrigin
+            override suspend fun resolveOrigin(deadlineMs: Long): String = warmOrigin
+            override fun demoteLocalOrigins(): Boolean = false
+        }
+        try {
+            val player = QueueAwareTestPlayer(this)
+            val cold = "https://cold.example/library/parts/1/file.mp3"
+            val warm = "$warmOrigin/library/parts/1/file.mp3"
+            player.play(
+                listOf(
+                    Track(
+                        id = "t1",
+                        title = "One",
+                        artist = "Artist",
+                        album = "Album",
+                        durationMs = 60_000,
+                        streamUrl = cold,
+                        downloadUrl = "",
+                        playbackFallbackUrls = listOf(warm),
+                    ),
+                ),
+                0,
+            )
+            assertEquals(warm, player.state.value.currentTrack?.streamUrl)
+            assertEquals(1, player.fullLoads)
+            assertTrue(player.state.value.isBuffering)
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
+        }
+    }
+
+    @Test
+    fun coldOriginResolverStartsImmediatelyWithoutWaitingForProbe() = runTest {
+        val warmOrigin = "https://resolved.example"
+        PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
+            override fun cachedOrigin(): String? = null
+            override suspend fun resolveOrigin(deadlineMs: Long): String {
+                delay(20)
+                return warmOrigin
+            }
+            override fun demoteLocalOrigins(): Boolean = true
+        }
+        try {
+            val player = QueueAwareTestPlayer(this)
+            val cold = "http://192.168.1.9:32400/library/parts/1/file.mp3"
+            val warm = "$warmOrigin/library/parts/1/file.mp3"
+            player.play(
+                listOf(
+                    Track(
+                        id = "t1",
+                        title = "One",
+                        artist = "Artist",
+                        album = "Album",
+                        durationMs = 60_000,
+                        streamUrl = cold,
+                        downloadUrl = "",
+                        playbackFallbackUrls = listOf(warm),
+                    ),
+                ),
+                0,
+            )
+            // Must not wait on the probe — platform load starts with the stamped queue immediately.
+            assertEquals(1, player.fullLoads)
+            assertEquals(cold, player.state.value.currentTrack?.streamUrl)
+            assertTrue(player.state.value.isBuffering)
+            advanceTimeBy(25)
+            runCurrent()
+            // Background resolve learns the winner for later tracks without restarting.
+            assertEquals(warm, player.state.value.queue.first().streamUrl)
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
+        }
     }
 
     @Test
@@ -614,14 +695,14 @@ class PlayerStateTest {
         player.platformPlayback(
             positionMs = 10_000L,
             durationMs = 60_000L,
-            bufferedPositionMs = 10_500L,
+            bufferedPositionMs = 10_400L,
             isPlaying = false,
             isBuffering = true,
         )
 
         assertTrue(player.state.value.isBuffering)
         assertFalse(player.state.value.isPlaying)
-        assertEquals(10_500L, player.state.value.bufferedPositionMs)
+        assertEquals(10_400L, player.state.value.bufferedPositionMs)
     }
 
     @Test
@@ -1225,7 +1306,9 @@ private class TimeoutTestPlayer(scope: CoroutineScope) : SlowTestPlayer(scope) {
         get() = testStartupTimeoutMs
 }
 
-private class QueueAwareTestPlayer : SimpleAudioPlayer() {
+private class QueueAwareTestPlayer(
+    scope: CoroutineScope = CoroutineScope(Dispatchers.Default),
+) : SimpleAudioPlayer(scope) {
     var fullLoads = 0
     var queueSkips = 0
 

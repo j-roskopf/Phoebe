@@ -16,7 +16,7 @@ fun ProviderSmokeHarness.catalogRepository(
 ): CatalogRepository {
     val mediaSources = MediaSourcesRepository(database, storage)
     return testCatalogRepository(
-        plexClient = PlexClient(http),
+        plexClient = PlexClient.withoutResolver(http),
         jellyfinClient = com.phoebe.app.data.JellyfinClient(http),
         embyClient = com.phoebe.app.data.EmbyClient(http),
         subsonicClient = com.phoebe.app.data.SubsonicClient(http),

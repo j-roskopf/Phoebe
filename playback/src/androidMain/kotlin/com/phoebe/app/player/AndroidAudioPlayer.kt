@@ -1672,9 +1672,9 @@ class AndroidAudioPlayer(
         }
 
     private companion object {
-        const val PlaybackBufferingTimeoutMs = 30_000L
+        const val PlaybackBufferingTimeoutMs = 9_000L
         const val AutoplayStartRetryMs = 2_000L
-        const val MaxStreamRetryCount = 5
+        const val MaxStreamRetryCount = 2
         const val MaxUnreachableRetryCount = 1
         const val StreamRetryBaseDelayMs = 1_000L
         const val SeekSettleTimeoutMs = 1_500L

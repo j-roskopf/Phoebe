@@ -9,8 +9,14 @@ import com.phoebe.app.domain.PlexServer
  * `http://192.168.x.x:32400`. We synthesize `http://172.105.8.66:32400` from the plex.direct
  * hostname, but that address is usually the server's *public* IP and is often unreachable on
  * LAN; real local URLs from Plex must win.
+ *
+ * When [demoteLocalOrigins] is true (cellular / unknown Wi-Fi), LAN-only hosts sort after
+ * remote relays so playback and API probes do not burn seconds on dead private addresses.
  */
-fun PlexServer.reachableBaseUris(preferredFirst: String? = null): List<String> {
+fun PlexServer.reachableBaseUris(
+    preferredFirst: String? = null,
+    demoteLocalOrigins: Boolean = false,
+): List<String> {
     val primary = uri.trimEnd('/').takeIf { it.isNotBlank() }
     val advertised = advertisedConnectionUris.ifEmpty { connectionUris }
     val expanded = when {
@@ -22,14 +28,24 @@ fun PlexServer.reachableBaseUris(preferredFirst: String? = null): List<String> {
     val localSet = localConnectionUris.toSet()
     val ordered = expanded.sortedWith(
         compareBy(
-            { it != primary },
-            { it !in localSet },
+            { uri ->
+                val keepPrimaryFirst = uri == primary &&
+                    !(demoteLocalOrigins && isLocalOnlyServerOrigin(uri))
+                !keepPrimaryFirst
+            },
+            { if (demoteLocalOrigins) isLocalOnlyServerOrigin(it) else it !in localSet },
             { it !in advertisedSet },
-            { connectionPriority(it) },
+            { connectionPriority(it, demoteLocalOrigins) },
         ),
     )
-    val withPreferred = listOfNotNull(preferredFirst?.trimEnd('/')) +
-        ordered.filter { it != preferredFirst?.trimEnd('/') }
+    val preferred = preferredFirst?.trimEnd('/')?.takeIf { it.isNotBlank() }
+    val preferPreferred = preferred != null &&
+        !(demoteLocalOrigins && isLocalOnlyServerOrigin(preferred))
+    val withPreferred = if (preferPreferred && preferred != null) {
+        listOf(preferred) + ordered.filter { it != preferred }
+    } else {
+        ordered
+    }
     return if (httpsRequired) {
         withPreferred.sortedBy { if (it.startsWith("https://")) 0 else 1 }
     } else {
@@ -45,11 +61,14 @@ fun PlexServer.reachableBaseUris(preferredFirst: String? = null): List<String> {
  * Once a non-LAN origin is known to work, try remotes first and keep private addresses as a
  * last resort — relays can 401 the command path while LAN still accepts it.
  */
-fun PlexServer.timelineBaseUris(preferredFirst: String? = null): List<String> {
-    val bases = reachableBaseUris(preferredFirst)
+fun PlexServer.timelineBaseUris(
+    preferredFirst: String? = null,
+    demoteLocalOrigins: Boolean = false,
+): List<String> {
+    val bases = reachableBaseUris(preferredFirst, demoteLocalOrigins = demoteLocalOrigins)
     val preferred = preferredFirst?.trimEnd('/')?.takeIf { it.isNotBlank() }
     val preferRemote = preferred != null && !isLocalOnlyServerOrigin(preferred)
-    if (!preferRemote) return bases
+    if (!preferRemote && !demoteLocalOrigins) return bases
     val remote = bases.filterNot(::isLocalOnlyServerOrigin)
     if (remote.isEmpty()) return bases
     return remote + bases.filter(::isLocalOnlyServerOrigin)
@@ -98,11 +117,17 @@ internal fun decodedIpFromPlexDirect(uri: String): String? {
     return parts.joinToString(".")
 }
 
-internal fun connectionPriority(uri: String): Int {
+internal fun connectionPriority(uri: String, demoteLocalOrigins: Boolean = false): Int {
     val port = uri.substringAfter("://").substringAfter(':', "32400").substringBefore('/').toIntOrNull() ?: 32400
     val secure = uri.startsWith("https://")
     val local = isLocalOnlyServerOrigin(uri)
     val plexDirect = uri.contains(".plex.direct", ignoreCase = true)
+    if (demoteLocalOrigins && local) {
+        return 200 + when {
+            !secure && port == 32400 -> 0
+            else -> 25
+        }
+    }
     return when {
         local && !secure && port == 32400 -> 0
         plexDirect && secure && (port == 443 || port == 8443) && !local -> 5

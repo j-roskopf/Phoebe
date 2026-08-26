@@ -74,7 +74,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -99,7 +99,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -145,7 +145,7 @@ class CatalogRepositoryRefreshDesktopTest {
         assertEquals("Test Studio", cachedAfter.recordLabel)
 
         val otherRepo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -176,7 +176,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -238,7 +238,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -300,7 +300,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -356,7 +356,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -381,7 +381,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -418,7 +418,7 @@ class CatalogRepositoryRefreshDesktopTest {
         }
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(testHttpClient(engine)),
+            plexClient = PlexClient.withoutResolver(testHttpClient(engine)),
             database = db,
             storage = PlatformStorage(),
             httpClient = testHttpClient(engine),
@@ -465,7 +465,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -510,7 +510,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -581,7 +581,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -600,7 +600,7 @@ class CatalogRepositoryRefreshDesktopTest {
         )
 
         val restored = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -632,7 +632,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -666,7 +666,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -703,7 +703,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -739,7 +739,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -810,7 +810,7 @@ class CatalogRepositoryRefreshDesktopTest {
         }
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(testHttpClient(engine)),
+            plexClient = PlexClient.withoutResolver(testHttpClient(engine)),
             database = db,
             storage = PlatformStorage(),
             httpClient = testHttpClient(engine),
@@ -871,7 +871,7 @@ class CatalogRepositoryRefreshDesktopTest {
         }
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(testHttpClient(engine)),
+            plexClient = PlexClient.withoutResolver(testHttpClient(engine)),
             database = db,
             storage = PlatformStorage(),
             httpClient = testHttpClient(engine),
@@ -968,7 +968,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1028,7 +1028,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1047,7 +1047,7 @@ class CatalogRepositoryRefreshDesktopTest {
 
         assertTrue(repo.catalog.value.playlists.single { it.id == "plex:p1" }.favorite)
         val restored = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1078,7 +1078,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1111,7 +1111,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1124,7 +1124,7 @@ class CatalogRepositoryRefreshDesktopTest {
         assertEquals("a1", repo.catalog.value.tracksByParent["plex:a1"].orEmpty().single().parentAlbumId)
 
         val restored = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1184,7 +1184,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1199,7 +1199,7 @@ class CatalogRepositoryRefreshDesktopTest {
         assertEquals(listOf("plex:t1"), db.catalogQueries.selectAllTrackIds().executeAsList())
 
         val restored = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1254,7 +1254,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1312,7 +1312,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1368,7 +1368,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1408,7 +1408,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1440,7 +1440,7 @@ class CatalogRepositoryRefreshDesktopTest {
             db.catalogQueries.upsertCollectionTag("Albums", "Mood", "plex:a1", "Angry")
         }
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1490,7 +1490,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1536,7 +1536,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1569,7 +1569,7 @@ class CatalogRepositoryRefreshDesktopTest {
         }
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(testHttpClient(engine)),
+            plexClient = PlexClient.withoutResolver(testHttpClient(engine)),
             database = db,
             storage = PlatformStorage(),
             httpClient = testHttpClient(engine),
@@ -1631,7 +1631,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1702,7 +1702,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1733,7 +1733,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1792,7 +1792,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1856,7 +1856,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1884,7 +1884,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1906,7 +1906,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1934,7 +1934,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -1971,7 +1971,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -2030,7 +2030,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -2236,7 +2236,7 @@ class CatalogRepositoryRefreshDesktopTest {
         val http = testHttpClient(engine)
         val media = MediaSourcesRepository(db, PlatformStorage())
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -2303,7 +2303,7 @@ class CatalogRepositoryRefreshDesktopTest {
         media: MediaSourcesRepository,
         http: io.ktor.client.HttpClient,
     ): CatalogRepository = testCatalogRepository(
-        plexClient = PlexClient(http),
+        plexClient = PlexClient.withoutResolver(http),
         jellyfinClient = JellyfinClient(http),
         database = db,
         storage = PlatformStorage(),

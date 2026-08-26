@@ -754,7 +754,7 @@ private class IosAudioPlayer(
 
     private companion object {
         // Avoid asking AVPlayer to retain very large forward buffers on device.
-        const val PreferredForwardBufferSeconds = 60.0
+        const val PreferredForwardBufferSeconds = 10.0
         const val GaplessPreferredForwardBufferSeconds = 5.0
         const val MaxStreamRetryCount = 5
         const val StreamRetryBaseDelayMs = 1_000L

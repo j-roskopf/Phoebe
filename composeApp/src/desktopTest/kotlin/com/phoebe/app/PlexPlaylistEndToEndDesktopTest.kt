@@ -1098,7 +1098,7 @@ class PlexPlaylistEndToEndDesktopTest {
     private fun catalogRepository(db: com.phoebe.app.db.PhoebeDatabase, http: io.ktor.client.HttpClient): CatalogRepository {
         val mediaSources = MediaSourcesRepository(db, PlatformStorage())
         return testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,

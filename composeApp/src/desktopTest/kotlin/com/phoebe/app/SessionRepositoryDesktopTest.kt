@@ -35,7 +35,7 @@ class SessionRepositoryDesktopTest {
             }
         }
         val repository = testSessionRepository(
-            plexClient = PlexClient(testHttpClient(engine)),
+            plexClient = PlexClient.withoutResolver(testHttpClient(engine)),
             database = database,
             storage = PlatformStorage(),
             httpClient = testHttpClient(engine),
@@ -76,7 +76,7 @@ class SessionRepositoryDesktopTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer(
             id = "server-id",
             name = "Studio Plex",
@@ -132,7 +132,7 @@ class SessionRepositoryDesktopTest {
             }
         }
         val repository = testSessionRepository(
-            plexClient = PlexClient(testHttpClient(engine)),
+            plexClient = PlexClient.withoutResolver(testHttpClient(engine)),
             database = database,
             storage = PlatformStorage(),
             httpClient = testHttpClient(engine),

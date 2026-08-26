@@ -45,7 +45,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
         val playlist = client.createPlaylist(
             server = server,
@@ -79,7 +79,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
         val added = client.addTracksToPlaylist(
             server = server,
@@ -113,7 +113,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         client.movePlaylistItemToTop(
@@ -145,7 +145,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         client.movePlaylistItem(
@@ -177,7 +177,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
         val playlists = client.playlists(server, "token")
         val tracks = client.playlistTracks(server, playlists.single(), "token")
@@ -202,7 +202,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
         client.playlists(server, "token")
 
@@ -231,7 +231,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         client.rateItem(server, "token", "t1", 3.5f)
@@ -278,7 +278,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         client.setFavoriteArtistCollection(server, "token", MusicLibrary("1", "Music"), "a1", favorite = true)
@@ -312,7 +312,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         client.setFavoriteAlbumCollection(server, "token", MusicLibrary("1", "Music"), "b1", favorite = false)
@@ -391,7 +391,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         client.setFavoriteAlbumCollection(server, "token", MusicLibrary("1", "Music"), "b1", favorite = true)
@@ -440,7 +440,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         val stations = client.musicStations(server, MusicLibrary("1", "Music"), "token")
@@ -501,7 +501,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         val stations = client.musicStations(server, MusicLibrary("1", "Music"), "token")
@@ -543,7 +543,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         val station = client.artistStation(server, "a1", "token")
@@ -586,7 +586,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         val artists = client.similarArtistsForArtist(server, "a1", "token", limit = 10)
@@ -626,7 +626,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         val station = client.artistStation(server, "a1", "token")
@@ -668,7 +668,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         val station = client.artistStation(server, "a1", "token")
@@ -710,7 +710,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         val station = client.artistStation(server, "a1", "token")
@@ -761,7 +761,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         val tracks = client.createStationPlayQueue(server, "token", "machine1", "/library/sections/1/stations/library")
@@ -870,7 +870,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         val tracks = client.createStationPlayQueue(server, "token", "machine1", "/library/sections/1/stations/library")
@@ -930,7 +930,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         val tracks = client.createStationPlayQueue(server, "token", "machine1", "/library/sections/1/stations/deepCuts")
@@ -990,7 +990,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
 
         val tracks = client.createStationPlayQueue(server, "token", "machine1", "/library/sections/1/stations/library")
@@ -1037,7 +1037,7 @@ class PlexClientPlaylistEndToEndTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true)
         val playlists = client.playlists(server, "token")
 

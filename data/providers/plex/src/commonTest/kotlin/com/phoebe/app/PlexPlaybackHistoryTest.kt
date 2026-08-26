@@ -54,7 +54,7 @@ class PlexPlaybackHistoryTest {
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val page = client.playbackHistoryPage(
             server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true),
             token = "token",
@@ -102,7 +102,7 @@ class PlexPlaybackHistoryTest {
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
 
         val page = client.playbackHistoryPage(
             server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true),
@@ -146,7 +146,7 @@ class PlexPlaybackHistoryTest {
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val stat = client.trackPlaybackStat(
             server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true),
             ratingKey = "12345",
@@ -195,7 +195,7 @@ class PlexPlaybackHistoryTest {
                 headers = headersOf(HttpHeaders.ContentType, "application/json"),
             )
         }
-        val client = PlexClient(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
         val stats = client.trackPlaybackStatsPage(
             server = PlexServer("server", "Plex", "https://plex.example:32400", owned = true),
             token = "token",

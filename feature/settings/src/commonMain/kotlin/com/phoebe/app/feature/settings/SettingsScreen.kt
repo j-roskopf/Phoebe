@@ -943,6 +943,14 @@ private fun AudioPlaybackSettingsCard(
                 onStreamingPolicySettings(streamingPolicy.copy(useDataSaverOnCellular = checked))
             },
         )
+        SettingsSwitchRow(
+            title = "Prefer home network",
+            subtitle = "Try your server's LAN address first on Wi‑Fi. Off by default — Phoebe uses remote plex.direct first so cellular and away-from-home playback start without probing dead local IPs.",
+            checked = streamingPolicy.preferLocalNetwork,
+            onCheckedChange = { checked ->
+                onStreamingPolicySettings(streamingPolicy.copy(preferLocalNetwork = checked))
+            },
+        )
         Spacer(Modifier.height(12.dp))
         Text("Crossfade", color = PhoebeUi.secondaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         Slider(

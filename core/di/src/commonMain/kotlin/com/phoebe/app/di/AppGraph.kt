@@ -33,6 +33,7 @@ import com.phoebe.app.data.NavidromePlayHistorySyncer
 import com.phoebe.app.data.PlayHistoryRepository
 import com.phoebe.app.data.PlaylistService
 import com.phoebe.app.data.PlexClient
+import com.phoebe.app.data.PlexConnectionResolver
 import com.phoebe.app.data.PlexPlayHistorySyncer
 import com.phoebe.app.data.PlexPlaybackReporter
 import com.phoebe.app.data.RadioNowPlayingRepository
@@ -149,6 +150,7 @@ interface AppGraphContributions {
     val platformStorage: PlatformStorage
     val secureCredentialStore: SecureCredentialStore
     val plexClient: PlexClient
+    val plexConnectionResolver: PlexConnectionResolver
     val jellyfinClient: JellyfinClient
     val embyClient: EmbyClient
     val subsonicClient: SubsonicClient

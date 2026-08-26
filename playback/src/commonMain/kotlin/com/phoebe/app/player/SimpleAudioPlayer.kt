@@ -18,8 +18,10 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 
-internal const val PlaybackReadyBufferedAheadMs = 2_000L
-internal const val PlaybackStartupTimeoutMs = 30_000L
+internal const val PlaybackReadyBufferedAheadMs = 500L
+internal const val PlaybackStartupTimeoutMs = 9_000L
+internal const val PlaybackStartupTimeoutLocalMs = 4_000L
+internal const val PlaybackStartupTimeoutRemoteMs = 9_000L
 
 internal fun hasPlaybackReadyBuffer(
     positionMs: Long,
@@ -131,16 +133,104 @@ abstract class SimpleAudioPlayer(
         setOutputVolume(effectiveOutputVolume())
         if (track != null) {
             resetPlaybackUriFailover(generation)
-            val initialUri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
-                .ifBlank { track.playbackUriCandidates().firstOrNull().orEmpty() }
-            if (initialUri.isNotBlank()) notePlaybackUri(initialUri, generation)
             startPlaybackStartupWatchdog(generation)
-            if (sameQueue) {
-                skipToInQueueOnPlatform(playbackQueue, index, track, generation)
-            } else {
-                playQueueOnPlatform(playbackQueue, index, track, generation)
-            }
+            beginPlaybackAfterOriginResolve(
+                queue = playbackQueue,
+                startIndex = index,
+                track = track,
+                generation = generation,
+                sameQueue = sameQueue,
+            )
         }
+    }
+
+    private fun beginPlaybackAfterOriginResolve(
+        queue: List<Track>,
+        startIndex: Int,
+        track: Track,
+        generation: Int,
+        sameQueue: Boolean,
+    ) {
+        val resolver = PlaybackOriginResolverHolder.resolver
+        // Prefer a known-good origin and start immediately — never block first audio on a probe.
+        val knownOrigin = resolver?.cachedOrigin()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+            ?: stickyPlaybackOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        if (knownOrigin != null) {
+            launchPreparedPlayback(
+                queue = queue.withResolvedOrigin(knownOrigin),
+                startIndex = startIndex,
+                generation = generation,
+                sameQueue = sameQueue,
+                origin = knownOrigin,
+            )
+            return
+        }
+        // Cold start: play the already-stamped queue URLs now; learn the winner in the background.
+        launchPreparedPlayback(
+            queue = queue,
+            startIndex = startIndex,
+            generation = generation,
+            sameQueue = sameQueue,
+            origin = null,
+        )
+        if (resolver == null) return
+        scope.launch {
+            val resolved = runCatching {
+                resolver.resolveOrigin(PlaybackOriginResolver.DefaultPlayResolveDeadlineMs)
+            }.getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return@launch
+            if (!isPlayRequestCurrent(generation)) return@launch
+            rememberStickyPlaybackOrigin(resolved)
+            val current = mutableState.value
+            if (current.queue.isEmpty()) return@launch
+            val rebased = current.queue.withResolvedOrigin(resolved)
+            if (rebased === current.queue) return@launch
+            mutableState.value = current.copy(queue = rebased)
+            onQueueEdited(rebased, current.currentIndex)
+        }
+    }
+
+    private fun launchPreparedPlayback(
+        queue: List<Track>,
+        startIndex: Int,
+        generation: Int,
+        sameQueue: Boolean,
+        origin: String?,
+    ) {
+        if (!isPlayRequestCurrent(generation) || !playWhenReady) return
+        val index = startIndex.coerceIn(queue.indices)
+        val track = queue.getOrNull(index) ?: return
+        if (origin != null) {
+            rememberStickyPlaybackOrigin(origin)
+        }
+        val current = mutableState.value
+        if (current.queue !== queue || current.currentIndex != index) {
+            mutableState.value = current.copy(
+                queue = queue,
+                currentIndex = index,
+                isBuffering = true,
+                isPlaying = false,
+                durationMs = track.durationMs,
+            )
+        }
+        val initialUri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
+            .ifBlank { track.playbackUriCandidates().firstOrNull().orEmpty() }
+        if (initialUri.isNotBlank()) notePlaybackUri(initialUri, generation)
+        startPlaybackStartupWatchdog(generation)
+        if (sameQueue) {
+            skipToInQueueOnPlatform(queue, index, track, generation)
+        } else {
+            playQueueOnPlatform(queue, index, track, generation)
+        }
+    }
+
+    private fun List<Track>.withResolvedOrigin(origin: String): List<Track> {
+        var changed = false
+        val next = map { track ->
+            val preferred = track.preferPlaybackOrigin(origin)
+            if (preferred !== track) changed = true
+            preferred
+        }
+        return if (changed) next else this
     }
 
     override fun playShuffled(queue: List<Track>, startIndex: Int) {
@@ -927,8 +1017,33 @@ abstract class SimpleAudioPlayer(
         return if (changed) next else this
     }
 
+    override fun rebasePlaybackOrigins(origin: String) {
+        val trimmed = origin.trimEnd('/').takeIf { it.isNotBlank() } ?: return
+        rememberStickyPlaybackOrigin(trimmed)
+        val current = mutableState.value
+        if (current.queue.isEmpty()) return
+        val playbackQueue = current.queue.preferStickyPlaybackOrigin()
+        if (playbackQueue === current.queue) return
+        PhoebeLog.d("AudioPlayer") {
+            "rebasePlaybackOrigins origin=$trimmed queue=${playbackQueue.size}"
+        }
+        mutableState.value = current.copy(queue = playbackQueue)
+        onQueueEdited(playbackQueue, current.currentIndex)
+    }
+
     protected open val playbackStartupTimeoutMs: Long
-        get() = PlaybackStartupTimeoutMs
+        get() {
+            val uri = mutableState.value.currentTrack?.let { track ->
+                track.localUri?.takeIf { it.isNotBlank() }
+                    ?: StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
+                        .ifBlank { track.streamUrl }
+            }.orEmpty()
+            return if (uri.isNotBlank() && isLocalOnlyPlaybackOrigin(uri)) {
+                PlaybackStartupTimeoutLocalMs
+            } else {
+                PlaybackStartupTimeoutRemoteMs
+            }
+        }
 
     protected fun maybeStartCrossfadeAtPosition(generation: Int, positionMs: Long) {
         val duration = crossfadeDurationMs

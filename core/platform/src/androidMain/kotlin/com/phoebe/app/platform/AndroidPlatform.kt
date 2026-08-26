@@ -11,7 +11,10 @@ import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.ConnectivityManager
+import android.net.LinkProperties
+import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -33,6 +36,10 @@ import io.ktor.client.engine.okhttp.OkHttp
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
@@ -119,19 +126,107 @@ actual fun isIosPlatform(): Boolean = false
 
 actual fun supportsPredictiveBack(): Boolean = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
 
-actual fun currentNetworkMeteringStatus(): NetworkMeteringStatus {
-    val context = AndroidContextHolder.applicationOrNull ?: return NetworkMeteringStatus()
+actual fun currentNetworkMeteringStatus(): NetworkMeteringStatus =
+    currentNetworkIdentity().metering
+
+actual fun currentNetworkIdentity(): NetworkIdentity {
+    val context = AndroidContextHolder.applicationOrNull ?: return NetworkIdentity()
     val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
-        ?: return NetworkMeteringStatus()
-    val activeNetwork = connectivity.activeNetwork
-    val capabilities = activeNetwork?.let(connectivity::getNetworkCapabilities)
-    return NetworkMeteringStatus(
+        ?: return NetworkIdentity()
+    return androidNetworkIdentity(connectivity, connectivity.activeNetwork)
+}
+
+actual fun observeNetworkIdentity(): Flow<NetworkIdentity> = callbackFlow {
+    val context = AndroidContextHolder.applicationOrNull
+    if (context == null) {
+        trySend(NetworkIdentity())
+        close()
+        return@callbackFlow
+    }
+    val connectivity = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+    if (connectivity == null) {
+        trySend(NetworkIdentity())
+        close()
+        return@callbackFlow
+    }
+    val emit = {
+        trySend(androidNetworkIdentity(connectivity, connectivity.activeNetwork))
+        Unit
+    }
+    emit()
+    val callback = object : ConnectivityManager.NetworkCallback() {
+        override fun onAvailable(network: Network) = emit()
+        override fun onLost(network: Network) = emit()
+        override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) = emit()
+        override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) = emit()
+    }
+    val request = NetworkRequest.Builder()
+        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        .build()
+    runCatching { connectivity.registerNetworkCallback(request, callback) }
+        .onFailure {
+            trySend(androidNetworkIdentity(connectivity, connectivity.activeNetwork))
+        }
+    awaitClose {
+        runCatching { connectivity.unregisterNetworkCallback(callback) }
+    }
+}.distinctUntilChanged()
+
+actual fun defaultDownloadWifiOnly(): Boolean = false
+
+private fun androidNetworkIdentity(
+    connectivity: ConnectivityManager,
+    network: Network?,
+): NetworkIdentity {
+    if (network == null) {
+        return NetworkIdentity(
+            transport = NetworkTransport.None,
+            fingerprint = networkFingerprint(NetworkTransport.None, ""),
+            metering = NetworkMeteringStatus(isMetered = true, isCellular = false),
+        )
+    }
+    val capabilities = connectivity.getNetworkCapabilities(network)
+    val transport = when {
+        capabilities == null -> NetworkTransport.Other
+        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkTransport.Wifi
+        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkTransport.Cellular
+        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> NetworkTransport.Ethernet
+        else -> NetworkTransport.Other
+    }
+    val metering = NetworkMeteringStatus(
         isMetered = connectivity.isActiveNetworkMetered,
-        isCellular = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true,
+        isCellular = transport == NetworkTransport.Cellular,
+    )
+    val material = when (transport) {
+        NetworkTransport.Cellular -> "cellular"
+        NetworkTransport.None -> ""
+        else -> androidNetworkMaterial(connectivity.getLinkProperties(network))
+    }
+    return NetworkIdentity(
+        transport = transport,
+        fingerprint = networkFingerprint(transport, material),
+        metering = metering,
     )
 }
 
-actual fun defaultDownloadWifiOnly(): Boolean = false
+private fun androidNetworkMaterial(linkProperties: LinkProperties?): String {
+    if (linkProperties == null) return ""
+    val gateways = linkProperties.routes
+        .mapNotNull { route -> route.gateway?.hostAddress?.takeIf { it.isNotBlank() } }
+        .distinct()
+        .sorted()
+    val subnets = linkProperties.linkAddresses
+        .mapNotNull { address ->
+            val host = address.address?.hostAddress ?: return@mapNotNull null
+            if (':' in host) return@mapNotNull null
+            val parts = host.split('.')
+            if (parts.size != 4) return@mapNotNull null
+            "${parts[0]}.${parts[1]}.${parts[2]}.0/${address.prefixLength}"
+        }
+        .distinct()
+        .sorted()
+    return (gateways + subnets).joinToString("|")
+}
 
 actual class PlatformStorage actual constructor() {
     private val root: File

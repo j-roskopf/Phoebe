@@ -211,14 +211,7 @@ private class WebAudioPlayer(
             }
         }
 
-        if (playbackUri.isRemoteWebAudioUri()) {
-            remoteTrackLoadJob = scope.launch {
-                delay(WebRemoteTrackLoadDeferMs)
-                startPlayback()
-            }
-        } else {
-            startPlayback()
-        }
+        startPlayback()
     }
 
     override fun pause() {
@@ -281,7 +274,10 @@ private class WebAudioPlayer(
         // Preloading a second remote stream doubles Chrome media memory on web.
         if (playbackUri.isRemoteWebAudioUri()) return false
         stopWebGapless()
-        val prepared = createAudioElement(useCors = audioUsesCors, preload = webAudioPreloadForUri(playbackUri))
+        val prepared = createAudioElement(
+            useCors = audioUsesCors,
+            preload = webAudioPreloadForUri(playbackUri, activeTrack = false),
+        )
         webGaplessAudio = prepared
         webGaplessGeneration = generation
         webGaplessTrackId = track.id
@@ -470,7 +466,10 @@ private class WebAudioPlayer(
         allowCorsFallback: Boolean,
     ) {
         if (!isWebCrossfadeCurrent(generation, outgoing)) return
-        val incoming = createAudioElement(useCors = useCors, preload = webAudioPreloadForUri(playbackUri))
+        val incoming = createAudioElement(
+            useCors = useCors,
+            preload = webAudioPreloadForUri(playbackUri, activeTrack = false),
+        )
         webCrossfadeIncoming?.let { previous ->
             if (previous !== incoming) disposeWebAudioElement(previous)
         }
@@ -1271,8 +1270,12 @@ private fun createAudioElement(useCors: Boolean, preload: String = "metadata"): 
         }
     }
 
-internal fun webAudioPreloadForUri(uri: String): String =
-    if (uri.isRemoteWebAudioUri()) "none" else "metadata"
+internal fun webAudioPreloadForUri(uri: String, activeTrack: Boolean = true): String =
+    when {
+        !uri.isRemoteWebAudioUri() -> "metadata"
+        activeTrack -> "auto"
+        else -> "none"
+    }
 
 data class WebAudioTimeRange(
     val startMs: Long,
@@ -1363,7 +1366,6 @@ private fun org.w3c.dom.TimeRanges.toWebAudioTimeRanges(): List<WebAudioTimeRang
 private const val WebAudioRangeStartToleranceMs = 250L
 private const val WebProgressSyncMinStepMs = 1_000L
 private const val WebPositionPollIntervalMs = 250L
-private const val WebRemoteTrackLoadDeferMs = 100L
 private const val WebAudioDurationEndToleranceMs = 750L
 private const val WebAudioPrefetchUpdateThreshold = 0.005
 private const val WebGaplessHotStartLeadMs = 90L

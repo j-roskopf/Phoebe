@@ -8,7 +8,6 @@ import com.phoebe.app.domain.AudioProcessingCapabilities
 import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.DownloadPolicySettings
 import com.phoebe.app.domain.StreamingPolicySettings
-import com.phoebe.app.player.StreamingPlaybackPolicyHolder
 import com.phoebe.app.domain.EventSettings
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.CatalogSnapshot
@@ -82,6 +81,9 @@ import com.phoebe.app.data.PlexClient
 import com.phoebe.app.data.defaultPlexRadioStations
 import com.phoebe.app.playlists.PlaylistExportFormat
 import com.phoebe.app.player.MusicAssistantRemotePlayback
+import com.phoebe.app.player.PlaybackOriginResolver
+import com.phoebe.app.player.PlaybackOriginResolverHolder
+import com.phoebe.app.player.StreamingPlaybackPolicyHolder
 import com.phoebe.app.player.asPlayerState
 import com.phoebe.app.player.isPlaybackActive
 import com.phoebe.app.player.playbackOriginCandidates
@@ -91,7 +93,9 @@ import com.phoebe.app.platform.MemoryPressureLevel
 import com.phoebe.app.platform.PhoebeAppLifecycle
 import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.shouldDeferCatalogMemoryUpdates
+import com.phoebe.app.platform.currentNetworkIdentity
 import com.phoebe.app.platform.currentNetworkMeteringStatus
+import com.phoebe.app.platform.observeNetworkIdentity
 import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.platform.defaultDownloadWifiOnly
 import com.phoebe.app.platform.isDesktopPlatform
@@ -510,10 +514,19 @@ class AppState(
             dependencies.audioPlayer.setCrossfadeDurationMs(appSettings.value.crossfadeSeconds * 1_000L)
             dependencies.audioPlayer.setAudioProcessing(appSettings.value.audioProcessing)
             dependencies.audioPlayer.setStreamingPolicy(appSettings.value.streamingPolicy)
+            wirePlaybackOriginResolver()
             StreamingPlaybackPolicyHolder.networkIsConstrainedProvider = {
-                val network = currentNetworkMeteringStatus()
-                network.isMetered || network.isCellular
+                val identity = currentNetworkIdentity()
+                identity.metering.isMetered || identity.metering.isCellular ||
+                    identity.demotesLocalOrigins
             }
+            // Live read so toggling "Prefer home network" takes effect without restart.
+            runCatching {
+                dependencies.appGraph.plexConnectionResolver.preferLocalNetworkProvider = {
+                    appSettings.value.streamingPolicy.preferLocalNetwork
+                }
+            }
+            observeNetworkIdentityForPlayback()
             dependencies.playHistoryRepository.restore()
             mutableDownloadDirectory.value = dependencies.platformStorage.readDownloadDirectory()
             checkForUpdatesInBackground()
@@ -2657,10 +2670,67 @@ class AppState(
 
     private fun currentPlaybackOrigin(): String? {
         val server = session.value?.selectedServer ?: return null
+        val resolver = runCatching { dependencies.appGraph.plexConnectionResolver }.getOrNull()
+        resolver?.cached(server)?.let { return it }
         return dependencies.appGraph.plexClient.mediaBaseUrl(server)
             .trimEnd('/')
             .ifBlank { server.uri.trimEnd('/') }
             .takeIf { it.isNotBlank() }
+    }
+
+    private fun wirePlaybackOriginResolver() {
+        val resolver = runCatching { dependencies.appGraph.plexConnectionResolver }.getOrNull()
+            ?: return
+        PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
+            override fun cachedOrigin(): String? {
+                val server = session.value?.selectedServer ?: return null
+                return resolver.cached(server)
+            }
+
+            override suspend fun resolveOrigin(deadlineMs: Long): String? {
+                val current = session.value ?: return null
+                val server = current.selectedServer ?: return null
+                val token = current.serverAuthToken() ?: return null
+                return resolver.resolve(server, token, deadlineMs = deadlineMs)
+            }
+
+            override fun demoteLocalOrigins(): Boolean = resolver.demoteLocalOrigins()
+        }
+        val server = session.value?.selectedServer
+        if (server != null) {
+            scope.launch {
+                runCatching { resolver.hydrateFromDisk(server) }
+            }
+        }
+    }
+
+    private fun observeNetworkIdentityForPlayback() {
+        scope.launch {
+            var lastFingerprint = currentNetworkIdentity().fingerprint
+            observeNetworkIdentity().collect { identity ->
+                if (identity.fingerprint == lastFingerprint) return@collect
+                lastFingerprint = identity.fingerprint
+                val current = session.value?.takeIf { it.isPlex() } ?: return@collect
+                val server = current.selectedServer ?: return@collect
+                val token = current.serverAuthToken() ?: return@collect
+                val resolver = runCatching { dependencies.appGraph.plexConnectionResolver }.getOrNull()
+                    ?: return@collect
+                // Prefer a warm cache hit so we never stall playback on a network flap.
+                val warm = resolver.cached(server)
+                if (warm != null) {
+                    dependencies.audioPlayer.rebasePlaybackOrigins(warm)
+                }
+                val origin = runCatching {
+                    resolver.resolve(server, token)
+                }.getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return@collect
+                if (origin != warm) {
+                    dependencies.audioPlayer.rebasePlaybackOrigins(origin)
+                }
+                PhoebeLog.d("AppState") {
+                    "playback queue rebased after network change fingerprint=${identity.fingerprint} origin=$origin"
+                }
+            }
+        }
     }
 
     fun playTracks(
@@ -4016,7 +4086,14 @@ internal fun Track.withFreshPlaybackUrls(
     session: PlexSession,
     liveOrigin: String? = null,
 ): Track {
-    val origins = playbackOriginCandidates(session.selectedServer, liveOrigin)
+    val demoteLocalOrigins = StreamingPlaybackPolicyHolder.settings.shouldDemoteLocalOrigins(
+        currentNetworkIdentity().demotesLocalOrigins,
+    )
+    val origins = playbackOriginCandidates(
+        server = session.selectedServer,
+        preferredOrigin = liveOrigin,
+        demoteLocalOrigins = demoteLocalOrigins,
+    )
     val withOrigins = if (origins.isEmpty()) this else withPlaybackOrigins(origins.first(), origins.drop(1))
     val refreshedStreamUrl = withOrigins.streamUrl.withFreshPlaybackAuth(session)
     val refreshedDownloadUrl = withOrigins.downloadUrl.withFreshPlaybackAuth(session)

@@ -240,7 +240,7 @@ class PlexPlayHistorySyncerDesktopTest {
         val repo = PlayHistoryRepository(db)
         repository = repo
         val catalogRepository = newCatalogRepository(engine, db)
-        val syncer = PlexPlayHistorySyncer(PlexClient(testHttpClient(engine)), repo, catalogRepository)
+        val syncer = PlexPlayHistorySyncer(PlexClient.withoutResolver(testHttpClient(engine)), repo, catalogRepository)
 
         val result = assertIs<PlexPlayHistorySyncResult.Synced>(
             syncer.sync(testSession(), CatalogSnapshot()),
@@ -499,7 +499,7 @@ class PlexPlayHistorySyncerDesktopTest {
 
     private fun newSyncer(engine: MockEngine, db: PhoebeDatabase, repo: PlayHistoryRepository): PlexPlayHistorySyncer =
         PlexPlayHistorySyncer(
-            plexClient = PlexClient(testHttpClient(engine)),
+            plexClient = PlexClient.withoutResolver(testHttpClient(engine)),
             playHistoryRepository = repo,
             catalogRepository = newCatalogRepository(engine, db),
         )
@@ -507,7 +507,7 @@ class PlexPlayHistorySyncerDesktopTest {
     private fun newCatalogRepository(engine: MockEngine, db: PhoebeDatabase): CatalogRepository {
         val storage = PlatformStorage()
         return testCatalogRepository(
-            plexClient = PlexClient(testHttpClient(engine)),
+            plexClient = PlexClient.withoutResolver(testHttpClient(engine)),
             providerRegistry = MusicProviderRegistry(emptyList()),
             database = db,
             storage = storage,

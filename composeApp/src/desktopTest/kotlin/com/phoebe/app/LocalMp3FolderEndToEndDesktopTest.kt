@@ -52,7 +52,7 @@ class LocalMp3FolderEndToEndDesktopTest {
         val http = testHttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })
         val mediaSources = MediaSourcesRepository(db, PlatformStorage())
         val catalog = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -79,7 +79,7 @@ class LocalMp3FolderEndToEndDesktopTest {
         val http = testHttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })
         val mediaSources = MediaSourcesRepository(db, PlatformStorage())
         val catalog = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -110,7 +110,7 @@ class LocalMp3FolderEndToEndDesktopTest {
         val http = testHttpClient(MockEngine { respond("", HttpStatusCode.NotFound) })
         val mediaSources = MediaSourcesRepository(db, PlatformStorage())
         val catalog = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,

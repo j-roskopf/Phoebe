@@ -300,7 +300,7 @@ class PlexPlaybackReporterTest {
     private fun newReporter(engine: MockEngine, audioPlayer: AudioPlayer): PlexPlaybackReporter {
         val httpClient = testHttpClient(engine)
         return PlexPlaybackReporter(
-            plexClient = PlexClient(httpClient),
+            plexClient = PlexClient.withoutResolver(httpClient),
             jellyfinClient = JellyfinClient(httpClient),
             audioPlayer = audioPlayer,
             session = MutableStateFlow(
@@ -321,7 +321,7 @@ class PlexPlaybackReporterTest {
     private fun newNavidromeReporter(engine: MockEngine, audioPlayer: AudioPlayer): PlexPlaybackReporter {
         val httpClient = testHttpClient(engine)
         return PlexPlaybackReporter(
-            plexClient = PlexClient(httpClient),
+            plexClient = PlexClient.withoutResolver(httpClient),
             jellyfinClient = JellyfinClient(httpClient),
             providerRegistry = MusicProviderRegistry(
                 listOf(NavidromeProviderAdapter(SubsonicClient(httpClient))),

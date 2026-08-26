@@ -10,6 +10,11 @@ import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlinx.browser.window
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import org.w3c.dom.events.Event
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
@@ -38,9 +43,124 @@ actual fun isIosPlatform(): Boolean = false
 
 actual fun supportsPredictiveBack(): Boolean = false
 
-actual fun currentNetworkMeteringStatus(): NetworkMeteringStatus = NetworkMeteringStatus()
+actual fun currentNetworkMeteringStatus(): NetworkMeteringStatus =
+    currentNetworkIdentity().metering
+
+actual fun currentNetworkIdentity(): NetworkIdentity = webNetworkIdentity()
+
+actual fun observeNetworkIdentity(): Flow<NetworkIdentity> = callbackFlow {
+    val emit = {
+        trySend(webNetworkIdentity())
+        Unit
+    }
+    emit()
+    val onlineListener: (Event) -> Unit = { emit() }
+    val offlineListener: (Event) -> Unit = { emit() }
+    window.addEventListener("online", onlineListener)
+    window.addEventListener("offline", offlineListener)
+    val connectionListener = { emit() }
+    webNetworkConnectionAddChangeListener(connectionListener)
+    awaitClose {
+        window.removeEventListener("online", onlineListener)
+        window.removeEventListener("offline", offlineListener)
+        webNetworkConnectionRemoveChangeListener(connectionListener)
+    }
+}.distinctUntilChanged()
 
 actual fun defaultDownloadWifiOnly(): Boolean = false
+
+private fun webNetworkIdentity(): NetworkIdentity {
+    if (!window.navigator.onLine) {
+        return NetworkIdentity(
+            transport = NetworkTransport.None,
+            fingerprint = networkFingerprint(NetworkTransport.None, ""),
+            metering = NetworkMeteringStatus(isMetered = true, isCellular = false),
+        )
+    }
+    val type = webNetworkConnectionType().lowercase()
+    val effectiveType = webNetworkConnectionEffectiveType().lowercase()
+    val saveData = webNetworkConnectionSaveData()
+    val transport = when {
+        type == "cellular" -> NetworkTransport.Cellular
+        type == "wifi" -> NetworkTransport.Wifi
+        type == "ethernet" -> NetworkTransport.Ethernet
+        type == "none" -> NetworkTransport.None
+        else -> NetworkTransport.Other
+    }
+    val isCellular = transport == NetworkTransport.Cellular
+    val isMetered = saveData || isCellular ||
+        effectiveType == "slow-2g" || effectiveType == "2g" || effectiveType == "3g"
+    val material = listOfNotNull(
+        type.takeIf { it.isNotBlank() },
+        effectiveType.takeIf { it.isNotBlank() },
+        if (saveData) "save" else null,
+    ).joinToString("|").ifBlank { transport.name.lowercase() }
+    return NetworkIdentity(
+        transport = transport,
+        fingerprint = networkFingerprint(transport, material),
+        metering = NetworkMeteringStatus(isMetered = isMetered, isCellular = isCellular),
+    )
+}
+
+@JsFun(
+    """
+    () => {
+      const connection = (typeof navigator !== 'undefined' && navigator.connection) ? navigator.connection : null;
+      return connection && typeof connection.type === 'string' ? String(connection.type) : '';
+    }
+    """,
+)
+private external fun webNetworkConnectionType(): String
+
+@JsFun(
+    """
+    () => {
+      const connection = (typeof navigator !== 'undefined' && navigator.connection) ? navigator.connection : null;
+      return connection && typeof connection.effectiveType === 'string' ? String(connection.effectiveType) : '';
+    }
+    """,
+)
+private external fun webNetworkConnectionEffectiveType(): String
+
+@JsFun(
+    """
+    () => {
+      const connection = (typeof navigator !== 'undefined' && navigator.connection) ? navigator.connection : null;
+      return !!(connection && connection.saveData);
+    }
+    """,
+)
+private external fun webNetworkConnectionSaveData(): Boolean
+
+@JsFun(
+    """
+    (callback) => {
+      const connection = (typeof navigator !== 'undefined' && navigator.connection) ? navigator.connection : null;
+      if (!connection || typeof connection.addEventListener !== 'function') return;
+      connection.__phoebeNetworkChange = connection.__phoebeNetworkChange || new Map();
+      const handler = () => callback();
+      connection.__phoebeNetworkChange.set(callback, handler);
+      connection.addEventListener('change', handler);
+    }
+    """,
+)
+private external fun webNetworkConnectionAddChangeListener(callback: () -> Unit)
+
+@JsFun(
+    """
+    (callback) => {
+      const connection = (typeof navigator !== 'undefined' && navigator.connection) ? navigator.connection : null;
+      if (!connection || typeof connection.removeEventListener !== 'function') return;
+      const map = connection.__phoebeNetworkChange;
+      if (!map) return;
+      const handler = map.get(callback);
+      if (!handler) return;
+      connection.removeEventListener('change', handler);
+      map.delete(callback);
+    }
+    """,
+)
+private external fun webNetworkConnectionRemoveChangeListener(callback: () -> Unit)
 
 actual suspend fun discoverJellyfinServers(): List<PlexServer> = emptyList()
 

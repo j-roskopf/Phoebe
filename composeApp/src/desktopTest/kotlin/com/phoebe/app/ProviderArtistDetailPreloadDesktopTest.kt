@@ -51,7 +51,7 @@ class ProviderArtistDetailPreloadDesktopTest {
         }
         val http = testHttpClient(engine)
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,
@@ -100,7 +100,7 @@ class ProviderArtistDetailPreloadDesktopTest {
         }
         val http = testHttpClient(engine)
         val repo = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = db,
             storage = PlatformStorage(),
             httpClient = http,

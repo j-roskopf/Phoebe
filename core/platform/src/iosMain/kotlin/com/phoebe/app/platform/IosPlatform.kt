@@ -11,6 +11,17 @@ import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlinx.cinterop.BetaInteropApi
 import kotlinx.cinterop.ExperimentalForeignApi
+import kotlinx.cinterop.alloc
+import kotlinx.cinterop.convert
+import kotlinx.cinterop.memScoped
+import kotlinx.cinterop.ptr
+import kotlinx.cinterop.reinterpret
+import kotlinx.cinterop.sizeOf
+import kotlinx.cinterop.value
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import platform.Foundation.NSDate
 import platform.Foundation.NSData
 import platform.Foundation.NSDocumentDirectory
@@ -21,9 +32,31 @@ import platform.Foundation.NSUserDefaults
 import platform.Foundation.NSUserDomainMask
 import platform.Foundation.create
 import platform.Foundation.timeIntervalSince1970
+import platform.Network.nw_interface_type_cellular
+import platform.Network.nw_interface_type_wifi
+import platform.Network.nw_interface_type_wired
+import platform.Network.nw_path_get_status
+import platform.Network.nw_path_is_constrained
+import platform.Network.nw_path_is_expensive
+import platform.Network.nw_path_monitor_cancel
+import platform.Network.nw_path_monitor_create
+import platform.Network.nw_path_monitor_set_queue
+import platform.Network.nw_path_monitor_set_update_handler
+import platform.Network.nw_path_monitor_start
+import platform.Network.nw_path_status_satisfied
+import platform.Network.nw_path_uses_interface_type
+import platform.darwin.dispatch_get_main_queue
+import platform.posix.AF_INET
+import platform.posix.SOCK_DGRAM
+import platform.posix.close
+import platform.posix.connect
 import platform.posix.fclose
 import platform.posix.fopen
 import platform.posix.fwrite
+import platform.posix.getsockname
+import platform.posix.sockaddr_in
+import platform.posix.socket
+import platform.posix.socklen_tVar
 import platform.SafariServices.SFSafariViewController
 import platform.UIKit.UIApplication
 import platform.UIKit.UIViewController
@@ -73,9 +106,104 @@ actual fun isIosPlatform(): Boolean = true
 
 actual fun supportsPredictiveBack(): Boolean = false
 
-actual fun currentNetworkMeteringStatus(): NetworkMeteringStatus = NetworkMeteringStatus()
+actual fun currentNetworkMeteringStatus(): NetworkMeteringStatus =
+    currentNetworkIdentity().metering
+
+@OptIn(ExperimentalForeignApi::class)
+actual fun currentNetworkIdentity(): NetworkIdentity = iosNetworkIdentitySnapshot()
+
+@OptIn(ExperimentalForeignApi::class)
+actual fun observeNetworkIdentity(): Flow<NetworkIdentity> = callbackFlow {
+    val monitor = nw_path_monitor_create()
+    nw_path_monitor_set_queue(monitor, dispatch_get_main_queue())
+    nw_path_monitor_set_update_handler(monitor) { path ->
+        trySend(iosNetworkIdentityFromPath(path))
+    }
+    nw_path_monitor_start(monitor)
+    trySend(iosNetworkIdentitySnapshot())
+    awaitClose {
+        nw_path_monitor_cancel(monitor)
+    }
+}.distinctUntilChanged()
 
 actual fun defaultDownloadWifiOnly(): Boolean = false
+
+@OptIn(ExperimentalForeignApi::class)
+private fun iosNetworkIdentitySnapshot(): NetworkIdentity {
+    // Without a live path callback, infer from interface addresses + expensive defaults.
+    val material = iosIpv4SubnetMaterial()
+    val transport = if (material.isBlank()) NetworkTransport.Other else NetworkTransport.Wifi
+    val isCellular = false
+    return NetworkIdentity(
+        transport = transport,
+        fingerprint = networkFingerprint(transport, material.ifBlank { transport.name.lowercase() }),
+        metering = NetworkMeteringStatus(isMetered = isCellular, isCellular = isCellular),
+    )
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun iosNetworkIdentityFromPath(path: platform.Network.nw_path_t?): NetworkIdentity {
+    if (path == null || nw_path_get_status(path) != nw_path_status_satisfied) {
+        return NetworkIdentity(
+            transport = NetworkTransport.None,
+            fingerprint = networkFingerprint(NetworkTransport.None, ""),
+            metering = NetworkMeteringStatus(isMetered = true, isCellular = false),
+        )
+    }
+    val transport = when {
+        nw_path_uses_interface_type(path, nw_interface_type_wifi) -> NetworkTransport.Wifi
+        nw_path_uses_interface_type(path, nw_interface_type_cellular) -> NetworkTransport.Cellular
+        nw_path_uses_interface_type(path, nw_interface_type_wired) -> NetworkTransport.Ethernet
+        else -> NetworkTransport.Other
+    }
+    val expensive = nw_path_is_expensive(path)
+    val constrained = nw_path_is_constrained(path)
+    val isCellular = transport == NetworkTransport.Cellular
+    val material = when (transport) {
+        NetworkTransport.Cellular -> "cellular"
+        NetworkTransport.None -> ""
+        else -> iosIpv4SubnetMaterial().ifBlank { transport.name.lowercase() }
+    }
+    return NetworkIdentity(
+        transport = transport,
+        fingerprint = networkFingerprint(transport, material),
+        metering = NetworkMeteringStatus(
+            isMetered = expensive || constrained || isCellular,
+            isCellular = isCellular,
+        ),
+    )
+}
+
+@OptIn(ExperimentalForeignApi::class)
+private fun iosIpv4SubnetMaterial(): String = memScoped {
+    val fd = socket(AF_INET, SOCK_DGRAM, 0)
+    if (fd < 0) return ""
+    try {
+        val peer = alloc<sockaddr_in>()
+        peer.sin_len = sizeOf<sockaddr_in>().convert()
+        peer.sin_family = AF_INET.convert()
+        // Network byte order for port 53 and 8.8.8.8.
+        peer.sin_port = 0x3500u.toUShort()
+        peer.sin_addr.s_addr = 0x08080808u
+        if (connect(fd, peer.ptr.reinterpret(), sizeOf<sockaddr_in>().convert()) != 0) {
+            return ""
+        }
+        val local = alloc<sockaddr_in>()
+        val length = alloc<socklen_tVar>()
+        length.value = sizeOf<sockaddr_in>().convert()
+        if (getsockname(fd, local.ptr.reinterpret(), length.ptr) != 0) {
+            return ""
+        }
+        val raw = local.sin_addr.s_addr.toUInt()
+        val b0 = (raw and 0xFFu).toInt()
+        val b1 = ((raw shr 8) and 0xFFu).toInt()
+        val b2 = ((raw shr 16) and 0xFFu).toInt()
+        if (b0 == 127) return ""
+        return "$b0.$b1.$b2.0"
+    } finally {
+        close(fd)
+    }
+}
 
 actual suspend fun discoverJellyfinServers(): List<PlexServer> = emptyList()
 

@@ -127,7 +127,7 @@ private suspend fun runProviderSmoke(rawProvider: String, http: HttpClient) {
 }
 
 private suspend fun runPlexSmoke(http: HttpClient) {
-    val client = PlexClient(http)
+    val client = PlexClient.withoutResolver(http)
     val session = PlexSession(
         token = "token",
         selectedServer = PlexServer("server", "Plex", "https://plex.example:32400", owned = true),

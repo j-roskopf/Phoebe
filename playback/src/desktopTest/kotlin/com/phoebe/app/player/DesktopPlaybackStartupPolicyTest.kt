@@ -451,16 +451,24 @@ class DesktopPlaybackStartupPolicyTest {
     }
 
     @Test
-    fun javaFxPreflightUsesAShortTimeoutOnLanOrigins() {
-        assertEquals(
-            DesktopPlaybackStartupPolicy.JavaFxLocalPreflightTimeoutMs,
-            DesktopPlaybackStartupPolicy.javaFxPreflightTimeoutMs("http://172.16.1.2:32400/library/parts/1/file.mp3"),
+    fun javaFxPreflightOnlyGuardsLanOnlyOrigins() {
+        assertTrue(
+            DesktopPlaybackStartupPolicy.shouldPreflightJavaFxOrigin(
+                "http://172.16.1.2:32400/library/parts/1/file.mp3",
+            ),
         )
-        assertEquals(
-            DesktopPlaybackStartupPolicy.JavaFxRemotePreflightTimeoutMs,
-            DesktopPlaybackStartupPolicy.javaFxPreflightTimeoutMs(
+        assertTrue(
+            DesktopPlaybackStartupPolicy.shouldPreflightJavaFxOrigin(
+                "http://192.168.1.9:32400/library/parts/1/file.mp3",
+            ),
+        )
+        assertFalse(
+            DesktopPlaybackStartupPolicy.shouldPreflightJavaFxOrigin(
                 "https://45-79-202-250.abc.plex.direct:8443/library/parts/1/file.mp3",
             ),
+        )
+        assertFalse(
+            DesktopPlaybackStartupPolicy.shouldPreflightJavaFxOrigin("file:///tmp/song.mp3"),
         )
     }
 

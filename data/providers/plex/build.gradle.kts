@@ -7,10 +7,13 @@ kotlin {
         commonMain {
             dependencies {
                 implementation(project(":core:platform"))
+                implementation(project(":data:database"))
                 implementation(project(":data:network"))
                 implementation(libs.ktor.client.core)
                 implementation(libs.ktor.client.content.negotiation)
                 implementation(libs.ktor.serialization.json)
+                implementation(libs.sqldelight.async.extensions)
+                implementation(libs.sqldelight.coroutines.extensions)
             }
         }
         commonTest {

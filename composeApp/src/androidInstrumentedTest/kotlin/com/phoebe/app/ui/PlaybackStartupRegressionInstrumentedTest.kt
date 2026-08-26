@@ -126,7 +126,7 @@ class PlaybackStartupRegressionInstrumentedTest {
         val storage = PlatformStorage()
         val mediaSources = MediaSourcesRepository(testDb.database, storage)
         val catalog = testCatalogRepository(
-            plexClient = PlexClient(http),
+            plexClient = PlexClient.withoutResolver(http),
             database = testDb.database,
             storage = storage,
             httpClient = http,
