@@ -69,7 +69,6 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import su.litvak.chromecast.api.v2.ChromeCast
 import su.litvak.chromecast.api.v2.ChromeCastException
-import su.litvak.chromecast.api.v2.ChromeCasts
 import su.litvak.chromecast.api.v2.Media as CastV2Media
 import su.litvak.chromecast.api.v2.MediaStatus as CastV2MediaStatus
 import java.awt.Dialog
@@ -824,6 +823,7 @@ internal data class DesktopCastDevice(
     val displayName: String,
     val model: String? = null,
     val host: String? = null,
+    val port: Int = DefaultChromecastPort,
     internal val native: ChromeCast? = null,
 ) {
     override fun toString(): String =
@@ -934,35 +934,28 @@ internal interface DesktopCastDevicePicker {
 }
 
 private class CastV2DesktopCastTransport : DesktopCastTransport {
-    override suspend fun startDiscovery() {
-        ChromeCasts.startDiscovery()
-    }
+    private var discoverySession: DesktopChromecastDiscoverySession? = null
 
-    override suspend fun refreshDiscovery() {
-        runCatching {
-            ChromeCasts.restartDiscovery()
-        }.getOrElse {
-            ChromeCasts.startDiscovery()
+    override suspend fun startDiscovery() {
+        ensureDesktopChromecastNetworkingConfigured()
+        if (discoverySession == null) {
+            discoverySession = DesktopChromecastDiscoverySession()
         }
     }
 
+    override suspend fun refreshDiscovery() {
+        discoverySession?.close()
+        discoverySession = DesktopChromecastDiscoverySession()
+    }
+
     override suspend fun devices(): List<DesktopCastDevice> =
-        ChromeCasts.get()
-            .distinctBy { it.name ?: "${it.address}:${it.port}" }
-            .map { cast ->
-                DesktopCastDevice(
-                    id = cast.name ?: "${cast.address}:${cast.port}",
-                    displayName = cast.title?.takeIf { it.isNotBlank() }
-                        ?: cast.name?.takeIf { it.isNotBlank() }
-                        ?: cast.address,
-                    model = cast.model?.takeIf { it.isNotBlank() },
-                    host = cast.address,
-                    native = cast,
-                )
-            }
+        discoverySession?.devices().orEmpty()
 
     override suspend fun connect(device: DesktopCastDevice): DesktopCastConnection {
-        val cast = device.native ?: ChromeCast(requireNotNull(device.host) { "Missing Chromecast host." })
+        val cast = device.native ?: ChromeCast(
+            requireNotNull(device.host) { "Missing Chromecast host." },
+            device.port,
+        )
         return CastV2DesktopCastConnection(device, cast)
     }
 }

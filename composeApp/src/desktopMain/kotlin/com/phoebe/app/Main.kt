@@ -22,6 +22,7 @@ import com.phoebe.app.platform.configureWindowsDesktopRendering
 import com.phoebe.app.platform.WindowsUndecoratedWindowSupport
 import com.phoebe.app.platform.appDisplayName
 import com.phoebe.app.platform.isDebugBuild
+import com.phoebe.app.player.configureDesktopChromecastNetworking
 import com.phoebe.app.ui.DesktopWindowTitleBar
 import com.phoebe.app.ui.LocalContinuousMotionEnabled
 import com.phoebe.app.ui.LocalDesktopMergesTitleBar
@@ -54,6 +55,7 @@ private val desktopProcessExitScheduled = AtomicBoolean(false)
 
 fun main(args: Array<String>) {
     configureDesktopApplicationName()
+    configureDesktopChromecastNetworking()
     configureDesktopApplicationIcon(isDebugBuild())
     configureSkiaGpuResourceCache()
     configureWindowsDesktopRendering()

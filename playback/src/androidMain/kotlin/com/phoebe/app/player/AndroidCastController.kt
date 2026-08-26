@@ -875,13 +875,23 @@ private class AndroidCastController : CastController {
         loadTimeoutJob?.cancel()
         loadTimeoutJob = null
         pendingHandoff = null
-        expectedRemoteHandoff = null
-        val client = remoteMediaClient() ?: return false
+        expectedRemoteHandoff = PendingCastHandoff(
+            queue = queue,
+            index = appIndex,
+            positionMs = 0L,
+            wasLocalPlaying = mutableState.value.isPlaying,
+            requestId = loadRequestId,
+        )
+        val client = remoteMediaClient() ?: run {
+            expectedRemoteHandoff = null
+            return false
+        }
         return runCatching {
             client.queueJumpToItem(item.itemId, null as JSONObject?)
             true
         }.getOrElse { error ->
             PhoebeLog.d(TAG) { "queue jump failed: ${error.message}" }
+            expectedRemoteHandoff = null
             false
         }
     }
