@@ -98,21 +98,29 @@ class PlexConnectionResolver(
     }
 
     fun cached(server: PlexServer, identity: NetworkIdentity = mutableIdentity.value): String? {
+        val demote = demoteLocalOrigins(identity)
+        fun accept(origin: String?): String? {
+            val trimmed = origin?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return null
+            if (demote && isLocalOnlyServerOrigin(trimmed)) return null
+            return trimmed
+        }
         val key = CacheKey(server.id, identity.fingerprint)
-        memoryCache[key]?.let { return it }
-        val lastGood = lastGoodByServer[server.id] ?: return null
-        // Fingerprint flapped but we still know what worked — use it unless cellular forbids LAN.
-        if (demoteLocalOrigins(identity) && isLocalOnlyServerOrigin(lastGood)) return null
-        return lastGood
+        accept(memoryCache[key])?.let { return it }
+        // Fingerprint flapped but we still know what worked — use it unless policy forbids LAN.
+        return accept(lastGoodByServer[server.id])
     }
 
     /** Non-suspending warm read used at play time when the DB has already been hydrated. */
     fun cachedOrNull(serverId: String): String? {
+        val demote = demoteLocalOrigins()
+        fun accept(origin: String?): String? {
+            val trimmed = origin?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return null
+            if (demote && isLocalOnlyServerOrigin(trimmed)) return null
+            return trimmed
+        }
         val fingerprint = mutableIdentity.value.fingerprint
-        memoryCache[CacheKey(serverId, fingerprint)]?.let { return it }
-        val lastGood = lastGoodByServer[serverId] ?: return null
-        if (demoteLocalOrigins() && isLocalOnlyServerOrigin(lastGood)) return null
-        return lastGood
+        accept(memoryCache[CacheKey(serverId, fingerprint)])?.let { return it }
+        return accept(lastGoodByServer[serverId])
     }
 
     suspend fun hydrateFromDisk(server: PlexServer) {

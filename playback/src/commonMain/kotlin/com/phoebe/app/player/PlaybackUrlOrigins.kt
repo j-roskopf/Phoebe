@@ -71,9 +71,10 @@ fun playbackOriginCandidates(
         preferredFirst = preferred,
         demoteLocalOrigins = demoteLocalOrigins,
     ).orEmpty().map { it.trimEnd('/') }
-    return (listOfNotNull(preferred) + fromServer)
-        .filter { it.isNotBlank() }
-        .distinct()
+    // reachableBaseUris already applies demotion to preferredFirst; do not re-prepend
+    // server.uri / a stale LAN preferred and undo remote-first ordering.
+    if (fromServer.isNotEmpty()) return fromServer
+    return listOfNotNull(preferred).filter { it.isNotBlank() }
 }
 
 internal fun playbackUrlsForOrigins(url: String, origins: List<String>): List<String> {

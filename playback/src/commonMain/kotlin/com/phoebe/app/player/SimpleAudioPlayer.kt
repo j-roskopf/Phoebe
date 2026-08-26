@@ -153,8 +153,10 @@ abstract class SimpleAudioPlayer(
     ) {
         val resolver = PlaybackOriginResolverHolder.resolver
         // Prefer a known-good origin and start immediately — never block first audio on a probe.
-        val knownOrigin = resolver?.cachedOrigin()?.trimEnd('/')?.takeIf { it.isNotBlank() }
-            ?: stickyPlaybackOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        // Drop sticky/cached LAN when demotion is active so cellular/away starts stay remote-first.
+        clearStickyIfDemoted()
+        val knownOrigin = acceptedPlaybackOrigin(resolver?.cachedOrigin())
+            ?: acceptedPlaybackOrigin(stickyPlaybackOrigin)
         if (knownOrigin != null) {
             launchPreparedPlayback(
                 queue = queue.withResolvedOrigin(knownOrigin),
@@ -1004,9 +1006,27 @@ abstract class SimpleAudioPlayer(
     private fun rememberStickyPlaybackOrigin(uri: String?) {
         val origin = uri?.let(::playbackOriginOf)?.takeIf { it.isNotBlank() } ?: return
         stickyPlaybackOrigin = origin
+        clearStickyIfDemoted()
+    }
+
+    private fun acceptedPlaybackOrigin(origin: String?): String? {
+        val trimmed = origin?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return null
+        val demote = PlaybackOriginResolverHolder.resolver?.demoteLocalOrigins() == true
+        if (demote && isLocalOnlyPlaybackOrigin(trimmed)) return null
+        return trimmed
+    }
+
+    private fun clearStickyIfDemoted() {
+        val sticky = stickyPlaybackOrigin ?: return
+        if (PlaybackOriginResolverHolder.resolver?.demoteLocalOrigins() == true &&
+            isLocalOnlyPlaybackOrigin(sticky)
+        ) {
+            stickyPlaybackOrigin = null
+        }
     }
 
     private fun List<Track>.preferStickyPlaybackOrigin(): List<Track> {
+        clearStickyIfDemoted()
         val origin = stickyPlaybackOrigin ?: return this
         var changed = false
         val next = map { track ->
