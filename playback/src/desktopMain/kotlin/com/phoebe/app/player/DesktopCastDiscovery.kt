@@ -27,7 +27,7 @@ fun configureDesktopChromecastNetworking() {
     ensureDesktopChromecastNetworkingConfigured()
 }
 
-internal fun desktopChromecastDiscoveryAddress(): InetAddress? =
+internal fun desktopChromecastDiscoveryAddresses(): List<InetAddress> =
     runCatching {
         NetworkInterface.getNetworkInterfaces()
             ?.toList()
@@ -52,11 +52,15 @@ internal fun desktopChromecastDiscoveryAddress(): InetAddress? =
                         address to host
                     }
             }
-            .firstOrNull()
-            ?.first
+            .map { it.first }
+            .distinctBy { it.hostAddress }
+            .toList()
     }.onFailure { error ->
         PhoebeLog.d("DesktopCastDiscovery") { "Chromecast interface lookup failed: ${error.message}" }
-    }.getOrNull()
+    }.getOrDefault(emptyList())
+
+internal fun desktopChromecastDiscoveryAddress(): InetAddress? =
+    desktopChromecastDiscoveryAddresses().firstOrNull()
 
 private fun isDesktopVirtualInterfaceName(name: String): Boolean {
     val lower = name.lowercase()
@@ -77,21 +81,26 @@ private fun desktopChromecastInterfacePreference(name: String): Int =
 internal class DesktopChromecastDiscoverySession : AutoCloseable {
     private val lock = Any()
     private val devicesById = linkedMapOf<String, DesktopCastDevice>()
-    private val jmdns: JmDNS
-    private val listener = ChromecastServiceListener()
+    private val jmdnsInstances = mutableListOf<JmDNS>()
 
     init {
         ensureDesktopChromecastNetworkingConfigured()
-        val bindAddress = desktopChromecastDiscoveryAddress()
+        val bindAddresses = desktopChromecastDiscoveryAddresses()
         PhoebeLog.d("DesktopCastDiscovery") {
-            "starting Chromecast mDNS on ${bindAddress?.hostAddress ?: "default interface"}"
+            val hosts = bindAddresses.mapNotNull { it.hostAddress }
+            "starting Chromecast mDNS on ${hosts.joinToString().ifBlank { "default interface" }}"
         }
-        jmdns = if (bindAddress != null) {
-            JmDNS.create(bindAddress)
+        if (bindAddresses.isEmpty()) {
+            val jmdns = JmDNS.create()
+            jmdns.addServiceListener(ChromecastServiceType, ChromecastServiceListener())
+            jmdnsInstances += jmdns
         } else {
-            JmDNS.create()
+            bindAddresses.forEach { bindAddress ->
+                val jmdns = JmDNS.create(bindAddress)
+                jmdns.addServiceListener(ChromecastServiceType, ChromecastServiceListener())
+                jmdnsInstances += jmdns
+            }
         }
-        jmdns.addServiceListener(ChromecastServiceType, listener)
     }
 
     fun devices(): List<DesktopCastDevice> =
@@ -100,8 +109,10 @@ internal class DesktopChromecastDiscoverySession : AutoCloseable {
         }
 
     override fun close() {
-        runCatching { jmdns.removeServiceListener(ChromecastServiceType, listener) }
-        runCatching { jmdns.close() }
+        jmdnsInstances.forEach { jmdns ->
+            runCatching { jmdns.close() }
+        }
+        jmdnsInstances.clear()
         synchronized(lock) {
             devicesById.clear()
         }
