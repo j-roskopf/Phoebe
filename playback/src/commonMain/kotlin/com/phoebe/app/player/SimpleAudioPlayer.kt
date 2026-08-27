@@ -1030,10 +1030,23 @@ abstract class SimpleAudioPlayer(
         scope.launch {
             val origins = runCatching { resolver.rediscoverOrigins() }.getOrNull().orEmpty()
             if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
-            restampQueueWithOrigins(origins)
-            val target = mutableState.value.currentTrack
-                ?.playbackUriCandidates()
-                ?.firstOrNull { it !in alreadyTried }
+            // An empty list means the addresses did not move, so the URLs already walked are still
+            // the only ones that exist. Retrying would re-time-out on every one of them, and the
+            // attempt budget may have cut the walk short while dead candidates remained.
+            val target = if (origins.isEmpty()) {
+                null
+            } else {
+                restampQueueWithOrigins(origins)
+                nextPlaybackFailoverCandidate(
+                    candidates = mutableState.value.currentTrack?.playbackUriCandidates().orEmpty(),
+                    tried = alreadyTried,
+                    failedUri = failedUri,
+                    // The addresses are new, so the exhausted budget no longer applies. Going
+                    // through the shared candidate picker keeps the LAN-only skip after a remote
+                    // failure, which a plain "first untried" scan would lose.
+                    maxTriedUris = alreadyTried.size + MaxTriedPlaybackUris,
+                )
+            }
             if (target == null) {
                 PhoebeLog.d("AudioPlayer") { "origin rediscovery surfaced no untried stream URL" }
                 publishPlaybackFailure(
@@ -1049,7 +1062,6 @@ abstract class SimpleAudioPlayer(
             PhoebeLog.d("AudioPlayer") {
                 "origin rediscovery found ${origins.size} origin(s); retrying playback"
             }
-            // The addresses are new, so the exhausted attempt budget no longer applies.
             resetPlaybackUriFailover(generation)
             notePlaybackUri(target, generation)
             startFailoverAttempt(generation, target)

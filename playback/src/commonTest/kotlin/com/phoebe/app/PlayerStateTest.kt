@@ -4,6 +4,7 @@ import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.RepeatMode
+import com.phoebe.app.player.MaxTriedPlaybackUris
 import com.phoebe.app.player.PlaybackFailure
 import com.phoebe.app.player.PlaybackFailureClassifier
 import com.phoebe.app.player.PlaybackOriginResolver
@@ -19,6 +20,7 @@ import kotlinx.coroutines.test.runTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -310,6 +312,45 @@ class PlayerStateTest {
                 player.state.value.playbackErrorMessage,
             )
             assertFalse(player.playIntentActive())
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
+        }
+    }
+
+    @Test
+    fun unchangedAddressesDoNotHandTheAttemptBudgetASecondWalk() = runTest {
+        PlaybackOriginResolverHolder.resolver = movedServerResolver()
+        try {
+            val player = TimeoutTestPlayer(this)
+            // One more candidate than the attempt budget, so the walk is cut short with an
+            // untried URL still on the list. That leftover is on the same dead server, so
+            // rediscovery reporting "nothing moved" has to surface the error rather than
+            // reset the budget and burn a timeout on it.
+            val candidates = (1..MaxTriedPlaybackUris + 1).map { "https://dead$it.example/library/parts/1/f.mp3" }
+
+            player.play(
+                listOf(
+                    Track(
+                        id = "t1",
+                        title = "One",
+                        artist = "Artist",
+                        album = "Album",
+                        durationMs = 60_000,
+                        streamUrl = candidates.first(),
+                        downloadUrl = "",
+                        playbackFallbackUrls = candidates.drop(1),
+                    ),
+                ),
+                0,
+            )
+            repeat(MaxTriedPlaybackUris) {
+                advanceTimeBy(player.testStartupTimeoutMs + 1L)
+                runCurrent()
+            }
+
+            assertEquals(1, player.state.value.playbackErrorSerial)
+            assertFalse(player.playIntentActive())
+            assertNotEquals(candidates.last(), player.state.value.currentTrack?.streamUrl)
         } finally {
             PlaybackOriginResolverHolder.resolver = null
         }
