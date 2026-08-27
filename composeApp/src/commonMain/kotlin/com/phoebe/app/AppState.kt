@@ -2754,6 +2754,22 @@ class AppState(
             }
 
             override fun demoteLocalOrigins(): Boolean = resolver.demoteLocalOrigins()
+
+            override suspend fun rediscoverOrigins(): List<String> {
+                if (!session.value.isPlex()) return emptyList()
+                val before = session.value?.selectedServer ?: return emptyList()
+                runCatching { dependencies.sessionRepository.refreshSelectedServerConnections() }
+                val after = session.value?.selectedServer ?: return emptyList()
+                // Unchanged addresses mean there is nothing new to try; fail fast instead.
+                if (after == before) return emptyList()
+                PhoebeLog.d("AppState") { "playback stalled → refreshed Plex connections" }
+                runCatching { dependencies.sessionRepository.warmServerConnection() }
+                return playbackOriginCandidates(
+                    server = after,
+                    preferredOrigin = currentPlaybackOrigin(),
+                    demoteLocalOrigins = resolver.demoteLocalOrigins(),
+                )
+            }
         }
         val server = session.value?.selectedServer
         if (server != null) {

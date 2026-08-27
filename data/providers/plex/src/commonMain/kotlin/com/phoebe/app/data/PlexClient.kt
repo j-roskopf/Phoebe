@@ -137,7 +137,7 @@ class PlexClient private constructor(
                 if (connections.isEmpty()) return@mapNotNull null
                 val advertised = connections.map { it.uri.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
                 val local = connections.filter { it.local }.map { it.uri.trimEnd('/') }.distinct()
-                val allUris = expandConnectionUris(advertised)
+                val allUris = expandConnectionUris(advertised, httpsRequired = device.httpsRequired)
                 val bestUri = bestReachableBaseUri(
                     advertisedUris = advertised,
                     localUris = local,

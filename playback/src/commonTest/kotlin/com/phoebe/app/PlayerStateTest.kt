@@ -261,6 +261,87 @@ class PlayerStateTest {
     }
 
     @Test
+    fun exhaustedFailoverRefetchesOriginsAndRetriesOnTheMovedAddress() = runTest {
+        val movedOrigin = "https://45-79-202-250.abc.plex.direct:8443"
+        PlaybackOriginResolverHolder.resolver = movedServerResolver(movedOrigin)
+        try {
+            val player = TimeoutTestPlayer(this)
+            val dead = "https://173-230-135-80.abc.plex.direct:8443/library/parts/1/file.mp3"
+
+            player.play(
+                listOf(Track("t1", "One", "Artist", "Album", 60_000, dead, "")),
+                0,
+            )
+            advanceTimeBy(player.testStartupTimeoutMs + 1L)
+            runCurrent()
+
+            assertEquals(
+                "$movedOrigin/library/parts/1/file.mp3",
+                player.state.value.currentTrack?.streamUrl,
+            )
+            assertEquals(0, player.state.value.playbackErrorSerial)
+            assertTrue(player.state.value.isBuffering)
+
+            player.finishPendingLoad()
+
+            assertTrue(player.state.value.isPlaying)
+            assertNull(player.state.value.playbackErrorMessage)
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
+        }
+    }
+
+    @Test
+    fun exhaustedFailoverFailsFastWhenTheServerAddressesAreUnchanged() = runTest {
+        PlaybackOriginResolverHolder.resolver = movedServerResolver()
+        try {
+            val player = TimeoutTestPlayer(this)
+
+            player.play(
+                listOf(Track("t1", "One", "Artist", "Album", 60_000, "https://dead.example/f.mp3", "")),
+                0,
+            )
+            advanceTimeBy(player.testStartupTimeoutMs + 1L)
+            runCurrent()
+
+            assertEquals(1, player.state.value.playbackErrorSerial)
+            assertEquals(
+                "Can't reach the music server. Check your connection and try again.",
+                player.state.value.playbackErrorMessage,
+            )
+            assertFalse(player.playIntentActive())
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
+        }
+    }
+
+    @Test
+    fun originRediscoveryRunsOncePerPlayRequestSoAnOfflineServerCannotSpin() = runTest {
+        var rediscoveries = 0
+        val movedOrigin = "https://45-79-202-250.abc.plex.direct:8443"
+        PlaybackOriginResolverHolder.resolver = movedServerResolver(movedOrigin) { rediscoveries++ }
+        try {
+            val player = TimeoutTestPlayer(this)
+            val dead = "https://173-230-135-80.abc.plex.direct:8443/library/parts/1/file.mp3"
+
+            player.play(
+                listOf(Track("t1", "One", "Artist", "Album", 60_000, dead, "")),
+                0,
+            )
+            // First stall refetches and retries; the moved address then stalls too.
+            advanceTimeBy(player.testStartupTimeoutMs + 1L)
+            runCurrent()
+            advanceTimeBy(player.testStartupTimeoutMs + 1L)
+            runCurrent()
+
+            assertEquals(1, rediscoveries)
+            assertEquals(1, player.state.value.playbackErrorSerial)
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
+        }
+    }
+
+    @Test
     fun newPlayRequestsReuseTheOriginThatAlreadyWorked() = runTest {
         val player = TimeoutTestPlayer(this)
         val lanOne = "https://172-16-1-2.abc.plex.direct:32400/library/parts/1/file.mp3"
@@ -1230,6 +1311,23 @@ class PlayerStateTest {
         assertEquals(55_000, player.state.value.positionMs)
         assertFalse(player.state.value.isPlaying)
         assertTrue(player.stopCalls >= 1)
+    }
+}
+
+/** Resolver whose only useful answer is the refetched connection list. */
+private fun movedServerResolver(
+    vararg origins: String,
+    onRediscover: () -> Unit = {},
+): PlaybackOriginResolver = object : PlaybackOriginResolver {
+    override fun cachedOrigin(): String? = null
+
+    override suspend fun resolveOrigin(deadlineMs: Long): String? = null
+
+    override fun demoteLocalOrigins(): Boolean = false
+
+    override suspend fun rediscoverOrigins(): List<String> {
+        onRediscover()
+        return origins.toList()
     }
 }
 

@@ -8,7 +8,8 @@ import com.phoebe.app.domain.PlexServer
  * Plex often advertises `https://172-105-8-66.<token>.plex.direct:8443` alongside
  * `http://192.168.x.x:32400`. We synthesize `http://172.105.8.66:32400` from the plex.direct
  * hostname, but that address is usually the server's *public* IP and is often unreachable on
- * LAN; real local URLs from Plex must win.
+ * LAN; real local URLs from Plex must win. Servers requiring HTTPS get no synthesized entries
+ * at all — see [expandConnectionUris].
  *
  * When [demoteLocalOrigins] is true (cellular / unknown Wi-Fi), LAN-only hosts sort after
  * remote relays so playback and API probes do not burn seconds on dead private addresses.
@@ -20,7 +21,8 @@ fun PlexServer.reachableBaseUris(
     val primary = uri.trimEnd('/').takeIf { it.isNotBlank() }
     val advertised = advertisedConnectionUris.ifEmpty { connectionUris }
     val expanded = when {
-        advertised.isNotEmpty() -> listOfNotNull(primary) + expandConnectionUris(advertised)
+        advertised.isNotEmpty() ->
+            listOfNotNull(primary) + expandConnectionUris(advertised, httpsRequired = httpsRequired)
         primary != null -> listOf(primary)
         else -> emptyList()
     }.distinct()
@@ -84,7 +86,7 @@ fun bestReachableBaseUri(
         name = "",
         uri = advertisedUris.firstOrNull().orEmpty(),
         owned = false,
-        connectionUris = expandConnectionUris(advertisedUris),
+        connectionUris = expandConnectionUris(advertisedUris, httpsRequired = httpsRequired),
         advertisedConnectionUris = advertisedUris,
         localConnectionUris = localUris,
         httpsRequired = httpsRequired,
@@ -92,18 +94,24 @@ fun bestReachableBaseUri(
     return server.reachableBaseUris().firstOrNull()
 }
 
-/** Advertised URLs first, then synthesized plain-IP fallbacks derived from plex.direct hosts. */
-fun expandConnectionUris(advertisedUris: List<String>): List<String> =
+/**
+ * Advertised URLs first, then synthesized plain-IP fallbacks derived from plex.direct hosts.
+ *
+ * `http://<ip>:32400` is the only variant worth synthesizing. Plex's certificate covers
+ * `*.<hash>.plex.direct`, so an `https://` URL built from the bare IP can never finish a TLS
+ * handshake, and a server with [httpsRequired] refuses the plain-HTTP port outright. Emitting
+ * either one just burns entries in the caller's fallback budget on addresses that cannot work.
+ */
+fun expandConnectionUris(
+    advertisedUris: List<String>,
+    httpsRequired: Boolean = false,
+): List<String> =
     buildList {
         val advertised = advertisedUris.map { it.trimEnd('/') }.filter { it.isNotBlank() }
         addAll(advertised)
+        if (httpsRequired) return@buildList
         for (uri in advertised) {
-            val port = uri.substringAfter("://").substringAfter(':', "").substringBefore('/').toIntOrNull()
-            decodedIpFromPlexDirect(uri)?.let { ip ->
-                add("http://$ip:32400")
-                add("https://$ip:32400")
-                if (port == 8443) add("https://$ip:8443")
-            }
+            decodedIpFromPlexDirect(uri)?.let { ip -> add("http://$ip:32400") }
         }
     }.distinct()
 

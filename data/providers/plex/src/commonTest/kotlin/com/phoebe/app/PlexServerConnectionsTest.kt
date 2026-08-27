@@ -21,12 +21,23 @@ class PlexServerConnectionsTest {
     }
 
     @Test
-    fun expandConnectionUrisAddsPlainLanAnd8443() {
+    fun expandConnectionUrisAddsOnlyThePlainIpPort() {
         val expanded = expandConnectionUris(
             listOf("https://172-105-8-66.abc.plex.direct:8443"),
         )
         assertTrue("http://172.105.8.66:32400" in expanded)
-        assertTrue("https://172.105.8.66:8443" in expanded)
+        // Plex's cert covers *.plex.direct, so bare-IP TLS can never complete a handshake.
+        assertFalse("https://172.105.8.66:8443" in expanded)
+        assertFalse("https://172.105.8.66:32400" in expanded)
+    }
+
+    @Test
+    fun expandConnectionUrisSynthesizesNothingWhenHttpsRequired() {
+        val advertised = "https://172-105-8-66.abc.plex.direct:8443"
+
+        val expanded = expandConnectionUris(listOf(advertised), httpsRequired = true)
+
+        assertEquals(listOf(advertised), expanded)
     }
 
     @Test
@@ -103,7 +114,10 @@ class PlexServerConnectionsTest {
         )
         val ordered = server.reachableBaseUris()
         assertTrue(ordered.indexOf(remoteRelay) < ordered.indexOf(closedWan))
-        assertTrue(ordered.indexOf(remoteRelay) < ordered.indexOf("https://72.58.82.53:32400"))
+        assertTrue(
+            ordered.none { it.contains("72.58.82.53") || it.contains("45.79.202.250") },
+            "an https-only server gets no bare-IP fallbacks to waste attempts on",
+        )
     }
 
     @Test
