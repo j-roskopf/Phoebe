@@ -303,7 +303,7 @@ fun MobilePlayer(
         }
     }
 
-    LaunchedEffect(currentTrackId) {
+    LaunchedEffect(currentTrackId, currentIndex) {
         horizontalSettleOffset.snapTo(0f)
         synchronousSwipeOffsetReset = false
         horizontalSwipeCommitInProgress = false

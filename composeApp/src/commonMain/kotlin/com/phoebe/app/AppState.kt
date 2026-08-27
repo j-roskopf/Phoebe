@@ -3071,6 +3071,12 @@ class AppState(
     }
 
     private fun skipToQueueIndexInCurrentQueue(targetIndex: Int) {
+        val remote = mutableMusicAssistantRemotePlayback.value
+        if (remote != null) {
+            if (targetIndex !in remote.tracks.indices) return
+            playTracks(remote.tracks, targetIndex, preserveQueueContext = true)
+            return
+        }
         val queue = player.value.queue
         if (targetIndex !in queue.indices) return
         if (dependencies.castController.state.value.isConnected) {
