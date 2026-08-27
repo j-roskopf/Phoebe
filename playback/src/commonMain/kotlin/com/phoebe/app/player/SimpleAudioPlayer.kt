@@ -10,6 +10,7 @@ import com.phoebe.app.domain.StreamingPolicySettings
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.currentTimeMs
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -1028,7 +1029,12 @@ abstract class SimpleAudioPlayer(
         originRediscoveryGeneration = generation
         val alreadyTried = triedPlaybackUris.toSet()
         scope.launch {
-            val origins = runCatching { resolver.rediscoverOrigins() }.getOrNull().orEmpty()
+            val origins = runCatching { resolver.rediscoverOrigins() }
+                // Swallowing cancellation here would let the rest of this block publish a failure
+                // and mutate player state after the scope that owns it is already gone.
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
+                .orEmpty()
             if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
             // An empty list means the addresses did not move, so the URLs already walked are still
             // the only ones that exist. Retrying would re-time-out on every one of them, and the
