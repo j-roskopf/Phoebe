@@ -287,6 +287,7 @@ fun MobilePlayer(
     var horizontalIsDragging by remember { mutableStateOf(false) }
     var horizontalSettleJob by remember { mutableStateOf<Job?>(null) }
     var horizontalSwipePreviewDirection by remember { mutableStateOf(0) }
+    var horizontalSwipeCommitInProgress by remember { mutableStateOf(false) }
 
     val currentTrackId = track?.id
     var lastTrackId by remember { mutableStateOf(currentTrackId) }
@@ -296,13 +297,16 @@ fun MobilePlayer(
         lastTrackId = currentTrackId
         horizontalDragOffset = 0f
         horizontalSwipePreviewDirection = 0
-        synchronousSwipeOffsetReset = true
-        horizontalSettleJob?.cancel()
+        if (!horizontalSwipeCommitInProgress) {
+            synchronousSwipeOffsetReset = true
+            horizontalSettleJob?.cancel()
+        }
     }
 
     LaunchedEffect(currentTrackId) {
         horizontalSettleOffset.snapTo(0f)
         synchronousSwipeOffsetReset = false
+        horizontalSwipeCommitInProgress = false
     }
 
     val inheritedContinuousMotionEnabled = LocalContinuousMotionEnabled.current
@@ -506,6 +510,7 @@ fun MobilePlayer(
         val nextTrack = upNext.firstOrNull()
         val currentSwipeOffset = when {
             synchronousSwipeOffsetReset -> 0f
+            horizontalSwipeCommitInProgress -> 0f
             horizontalIsDragging -> horizontalDragOffset
             else -> horizontalSettleOffset.value
         }
@@ -561,30 +566,16 @@ fun MobilePlayer(
                             targetValue = -artworkSizePx,
                             animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
                         )
+                        horizontalSwipeCommitInProgress = true
                         onSkipQueueBy(skipStepsForSwipe(releaseOffset, artworkSizePx))
-                        delay(600L)
-                        horizontalSettleOffset.animateTo(
-                            0f,
-                            animationSpec = spring(
-                                stiffness = Spring.StiffnessMedium,
-                                dampingRatio = Spring.DampingRatioNoBouncy,
-                            ),
-                        )
                     }
                     releaseOffset > swipeThresholdPx && previousTrack != null -> {
                         horizontalSettleOffset.animateTo(
                             targetValue = artworkSizePx,
                             animationSpec = tween(durationMillis = 240, easing = FastOutSlowInEasing),
                         )
+                        horizontalSwipeCommitInProgress = true
                         onSkipQueueBy(-skipStepsForSwipe(releaseOffset, artworkSizePx))
-                        delay(600L)
-                        horizontalSettleOffset.animateTo(
-                            0f,
-                            animationSpec = spring(
-                                stiffness = Spring.StiffnessMedium,
-                                dampingRatio = Spring.DampingRatioNoBouncy,
-                            ),
-                        )
                     }
                     else -> {
                         horizontalSettleOffset.animateTo(
@@ -772,7 +763,6 @@ fun MobilePlayer(
                     nextTrack = nextTrack,
                     previousTrack = previousTrack,
                     swipeOffset = currentSwipeOffset / artworkLayerScaleX,
-                    swipePreviewDirection = horizontalSwipePreviewDirection,
                     modifier = Modifier.fillMaxSize(),
                 ) { t ->
                     if (visualizerPreset == NowPlayingVisualizerPreset.Artwork) {

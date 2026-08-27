@@ -3004,7 +3004,7 @@ class AppState(
         val current = player.value
         val target = current.currentIndex + 1 + index
         if (target in current.queue.indices) {
-            playTracks(current.queue, target, preserveQueueContext = true)
+            skipToQueueIndex(target)
         }
     }
     fun next() {
@@ -3045,11 +3045,39 @@ class AppState(
     }
     fun skipQueueBy(delta: Int) {
         if (delta == 0) return
+        val remote = mutableMusicAssistantRemotePlayback.value
+        if (remote != null) {
+            val target = (remote.index + delta).coerceIn(0, remote.tracks.lastIndex)
+            if (target == remote.index) return
+            playTracks(remote.tracks, target, preserveQueueContext = true)
+            return
+        }
         val current = player.value
         if (current.currentIndex < 0 || current.queue.isEmpty()) return
         val target = (current.currentIndex + delta).coerceIn(0, current.queue.lastIndex)
-        if (target == current.currentIndex) return
-        playTracks(current.queue, target, preserveQueueContext = true)
+        skipToQueueIndex(target)
+    }
+
+    fun skipToQueueIndex(targetIndex: Int) {
+        val current = player.value
+        if (targetIndex !in current.queue.indices) return
+        if (
+            targetIndex == current.currentIndex &&
+            current.currentTrack?.id == current.queue[targetIndex].id
+        ) {
+            return
+        }
+        skipToQueueIndexInCurrentQueue(targetIndex)
+    }
+
+    private fun skipToQueueIndexInCurrentQueue(targetIndex: Int) {
+        val queue = player.value.queue
+        if (targetIndex !in queue.indices) return
+        if (dependencies.castController.state.value.isConnected) {
+            playTracks(queue, targetIndex, preserveQueueContext = true)
+            return
+        }
+        dependencies.audioPlayer.play(queue, targetIndex)
     }
     fun seekTo(positionMs: Long) = dependencies.playbackTransportService.seekTo(positionMs)
     suspend fun loadLyrics(

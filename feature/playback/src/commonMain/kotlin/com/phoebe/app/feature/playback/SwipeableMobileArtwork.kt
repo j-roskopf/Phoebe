@@ -26,7 +26,6 @@ fun SwipeableMobileArtwork(
     nextTrack: Track?,
     previousTrack: Track?,
     swipeOffset: Float,
-    swipePreviewDirection: Int,
     modifier: Modifier = Modifier,
     trackContent: @Composable (Track) -> Unit,
 ) {
@@ -43,33 +42,36 @@ fun SwipeableMobileArtwork(
             modifier = Modifier
                 .fillMaxSize(),
         ) {
-            val tracksToRender = remember(track, nextTrack, previousTrack, swipePreviewDirection) {
+            // Keep neighbors mounted off-screen. Page offsets are relative to the center
+            // queue item ([previousTrack], track, [nextTrack]) so a track change with
+            // swipeOffset == 0 keeps the new center tile visually stable.
+            val pages = remember(track, nextTrack, previousTrack) {
                 buildList {
-                    if (previousTrack != null && swipePreviewDirection > 0) {
-                        add(previousTrack to -1)
+                    if (previousTrack != null) {
+                        add(previousTrack)
                     }
-                    add(track to 0)
-                    if (nextTrack != null && swipePreviewDirection < 0) {
-                        add(nextTrack to 1)
+                    add(track)
+                    if (nextTrack != null) {
+                        add(nextTrack)
                     }
                 }
             }
+            val centerPageIndex = when {
+                previousTrack != null -> 1
+                else -> 0
+            }
 
-            for ((t, position) in tracksToRender) {
-                key(t.id) {
+            for ((index, pageTrack) in pages.withIndex()) {
+                key(pageTrack.id) {
+                    val pageOffsetPx = (index - centerPageIndex) * widthPx + swipeOffset
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
                             .offset {
-                                val baseOffset = when (position) {
-                                    -1 -> -widthPx
-                                    1 -> widthPx
-                                    else -> 0f
-                                }
-                                IntOffset((baseOffset + swipeOffset).roundToInt(), 0)
+                                IntOffset(pageOffsetPx.roundToInt(), 0)
                             }
                             .graphicsLayer {
-                                if (position == 0) {
+                                if (index == centerPageIndex) {
                                     val dragProgress = (abs(swipeOffset) / widthPx).coerceIn(0f, 1f)
                                     val scale = 1f - dragProgress * 0.03f
                                     scaleX = scale
@@ -77,7 +79,7 @@ fun SwipeableMobileArtwork(
                                 }
                             },
                     ) {
-                        trackContent(t)
+                        trackContent(pageTrack)
                     }
                 }
             }

@@ -914,6 +914,19 @@ private fun PhoebeRootStateHolder(
             pendingMobilePlaybackPreview = null
         }
     }
+    fun skipQueueByFromMobile(delta: Int) {
+        if (delta == 0) return
+        val queue = playerQueue.queue
+        if (queue.isEmpty()) return
+        val baseIndex = pendingMobilePlaybackPreview?.index
+            ?: playerQueue.currentIndex.takeIf { it >= 0 }
+            ?: return
+        val target = (baseIndex + delta).coerceIn(0, queue.lastIndex)
+        if (target == baseIndex) return
+        pendingMobilePlaybackPreview = PendingMobilePlaybackPreview(queue, target)
+        state.skipToQueueIndex(target)
+    }
+
     fun requestMobilePlayback(
         tracks: List<Track>,
         index: Int,
@@ -1857,7 +1870,7 @@ private fun PhoebeRootStateHolder(
                         onToggle = state::togglePlayPause,
                         onPrevious = state::previous,
                         onNext = state::next,
-                        onSkipQueueBy = state::skipQueueBy,
+                        onSkipQueueBy = ::skipQueueByFromMobile,
                         onShuffle = state::toggleShuffle,
                         onRepeat = state::cycleRepeat,
                         onSeek = state::seekTo,
@@ -2216,7 +2229,7 @@ private fun PhoebeRootStateHolder(
                             onToggle = state::togglePlayPause,
                             onPrevious = state::previous,
                             onNext = state::next,
-                            onSkipQueueBy = state::skipQueueBy,
+                            onSkipQueueBy = ::skipQueueByFromMobile,
                             onShuffle = state::toggleShuffle,
                             onRepeat = state::cycleRepeat,
                             onSeek = state::seekTo,
