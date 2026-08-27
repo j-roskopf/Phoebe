@@ -77,16 +77,16 @@ jobs:
         if: matrix.os == 'linux'
         env:
           GALLIUM_DRIVER: softpipe
-        run: xvfb-run -a ./gradlew :composeApp:desktopTest -Pphoebe.realAudioTests=true
+        run: xvfb-run -a ./gradlew desktopTest -Pphoebe.realAudioTests=true
 
       - name: Run macOS desktop tests
         if: matrix.os == 'macos'
-        run: ./gradlew :composeApp:desktopTest -Pphoebe.realAudioTests=true
+        run: ./gradlew desktopTest -Pphoebe.realAudioTests=true
 
       - name: Run Windows desktop tests
         if: matrix.os == 'windows'
         shell: pwsh
-        run: ./gradlew.bat :composeApp:desktopTest
+        run: ./gradlew.bat desktopTest
 
       - name: Upload desktop test artifacts
         if: failure()
@@ -95,10 +95,10 @@ jobs:
           name: desktop-test-${{ matrix.os }}-artifacts
           if-no-files-found: ignore
           path: |
-            composeApp/build/reports/tests/desktopTest/**
+            **/build/reports/tests/desktopTest/**
             composeApp/build/reports/roborazzi/**
             composeApp/build/outputs/roborazzi/**
-            composeApp/build/test-results/desktopTest/**
+            **/build/test-results/desktopTest/**
 
   android-screenshots:
     name: Android screenshots
@@ -163,6 +163,37 @@ jobs:
             composeApp/build/reports/roborazzi/**
             composeApp/build/outputs/roborazzi/**
             composeApp/build/test-results/desktopTest/**
+
+  android-host-tests:
+    name: Android host tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Run Android host tests
+        run: ./gradlew testAndroidHostTest
+
+      - name: Upload Android host test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-host-test-artifacts
+          if-no-files-found: ignore
+          path: |
+            **/build/reports/tests/testAndroidHostTest/**
+            **/build/test-results/testAndroidHostTest/**
 
   ios-build:
     name: iOS build
@@ -268,7 +299,7 @@ jobs:
   wasm-test:
     name: Wasm JS tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout
@@ -292,7 +323,17 @@ jobs:
             ${{ runner.os }}-kotlin-wasm-binaryen-
 
       - name: Run wasm JS tests
-        run: ./.github/scripts/gradle-wasm-retry.sh :composeApp:wasmJsTest
+        run: ./.github/scripts/gradle-wasm-retry.sh :composeApp:wasmJsTest :playback:wasmJsTest
+
+      - name: Upload wasm test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wasm-test-artifacts
+          if-no-files-found: ignore
+          path: |
+            **/build/reports/tests/wasmJsTest/**
+            **/build/test-results/wasmJsTest/**
 
   android-instrumented-tests:
     name: Android instrumented tests

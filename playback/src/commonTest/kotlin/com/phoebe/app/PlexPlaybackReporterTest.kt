@@ -16,6 +16,7 @@ import com.phoebe.app.domain.RepeatMode
 import com.phoebe.app.domain.Track
 import com.phoebe.app.player.AudioPlayer
 import com.phoebe.app.testing.testHttpClient
+import com.phoebe.app.testing.testMockEngine
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
@@ -24,20 +25,21 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import kotlinx.coroutines.async
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.test.UnconfinedTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
 import kotlin.coroutines.coroutineContext
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -67,6 +69,7 @@ class PlexPlaybackReporterTest {
 
         try {
             reporter.start(scope, includePeriodicTimeline = false)
+            runCurrent()
 
             audioPlayer.mutableState.value = PlayerState(
                 queue = listOf(track),
@@ -75,6 +78,7 @@ class PlexPlaybackReporterTest {
                 positionMs = 1_000L,
                 durationMs = track.durationMs,
             )
+            runCurrent()
             advanceUntilIdle()
             timelineStates.awaitSize(1)
 
@@ -85,6 +89,7 @@ class PlexPlaybackReporterTest {
                 positionMs = track.durationMs,
                 durationMs = track.durationMs,
             )
+            runCurrent()
             advanceUntilIdle()
             timelineStates.awaitSize(2)
 
@@ -105,6 +110,7 @@ class PlexPlaybackReporterTest {
 
         try {
             reporter.start(scope, includePeriodicTimeline = false)
+            runCurrent()
             val changed = async(UnconfinedTestDispatcher(testScheduler)) {
                 reporter.playHistoryChanged.first()
             }
@@ -116,6 +122,7 @@ class PlexPlaybackReporterTest {
                 positionMs = 1_000L,
                 durationMs = track.durationMs,
             )
+            runCurrent()
             advanceUntilIdle()
             timelineStates.awaitSize(1)
 
@@ -126,6 +133,7 @@ class PlexPlaybackReporterTest {
                 positionMs = track.durationMs,
                 durationMs = track.durationMs,
             )
+            runCurrent()
             advanceUntilIdle()
             timelineStates.awaitSize(2)
             advanceUntilIdle()
@@ -145,7 +153,7 @@ class PlexPlaybackReporterTest {
         val keys = MutableStateFlow<List<String>>(emptyList())
         val audioPlayer = FakeAudioPlayer()
         val reporter = newReporter(
-            MockEngine { request ->
+            testMockEngine { request ->
                 requests.update { it + request.url.encodedPath }
                 when (request.url.encodedPath) {
                     "/:/scrobble" -> {
@@ -182,6 +190,7 @@ class PlexPlaybackReporterTest {
         val track = plexTrack()
 
         reporter.start(scope, includePeriodicTimeline = false)
+        runCurrent()
 
         audioPlayer.mutableState.value = PlayerState(
             queue = listOf(track),
@@ -190,10 +199,12 @@ class PlexPlaybackReporterTest {
             positionMs = 42_000L,
             durationMs = track.durationMs,
         )
+        runCurrent()
         advanceUntilIdle()
         timelineStates.awaitSize(1)
 
         scopeJob.cancelAndJoin()
+        runCurrent()
         advanceUntilIdle()
         timelineStates.awaitSize(2)
 
@@ -214,6 +225,7 @@ class PlexPlaybackReporterTest {
             reporter.markPlayed(track, playedAtMs = 123_000L)
             scrobbles.awaitSize(1)
             reporter.start(scope, includePeriodicTimeline = false)
+            runCurrent()
 
             audioPlayer.mutableState.value = PlayerState(
                 queue = listOf(track),
@@ -222,6 +234,7 @@ class PlexPlaybackReporterTest {
                 positionMs = 91_000L,
                 durationMs = track.durationMs,
             )
+            runCurrent()
             advanceUntilIdle()
 
             assertEquals(1, scrobbles.value.size)
@@ -242,6 +255,7 @@ class PlexPlaybackReporterTest {
 
         try {
             reporter.start(scope, includePeriodicTimeline = false)
+            runCurrent()
 
             audioPlayer.mutableState.value = PlayerState(
                 queue = listOf(track),
@@ -250,6 +264,7 @@ class PlexPlaybackReporterTest {
                 positionMs = 91_000L,
                 durationMs = track.durationMs,
             )
+            runCurrent()
             advanceUntilIdle()
             scrobbles.awaitSize(1)
 
@@ -271,6 +286,7 @@ class PlexPlaybackReporterTest {
 
         try {
             reporter.start(scope, includePeriodicTimeline = false)
+            runCurrent()
 
             audioPlayer.mutableState.value = PlayerState(
                 queue = listOf(track),
@@ -279,6 +295,7 @@ class PlexPlaybackReporterTest {
                 positionMs = 91_000L,
                 durationMs = track.durationMs,
             )
+            runCurrent()
             advanceUntilIdle()
             scrobbles.awaitSize(1)
 
@@ -289,6 +306,7 @@ class PlexPlaybackReporterTest {
                 positionMs = track.durationMs,
                 durationMs = track.durationMs,
             )
+            runCurrent()
             advanceUntilIdle()
 
             assertEquals(1, scrobbles.value.size)
@@ -349,7 +367,7 @@ class PlexPlaybackReporterTest {
         timelineStates: MutableStateFlow<List<String>>,
         continuingValues: MutableStateFlow<List<String?>> = MutableStateFlow(emptyList()),
         requests: MutableStateFlow<List<String>> = MutableStateFlow(emptyList()),
-    ): MockEngine = MockEngine { request ->
+    ): MockEngine = testMockEngine { request ->
         requests.update { it + request.url.encodedPath }
         when {
             request.url.encodedPath == "/identity" -> respondJson(
@@ -369,7 +387,7 @@ class PlexPlaybackReporterTest {
 
     private fun subsonicEngine(
         scrobbles: MutableStateFlow<List<Map<String, String>>>,
-    ): MockEngine = MockEngine { request ->
+    ): MockEngine = testMockEngine { request ->
         when (request.url.encodedPath) {
             "/rest/scrobble.view" -> {
                 scrobbles.update {
@@ -412,10 +430,15 @@ class PlexPlaybackReporterTest {
         )
 
     private suspend fun <T> StateFlow<List<T>>.awaitSize(size: Int) {
-        withContext(Dispatchers.Default) {
+        try {
             withTimeout(2_000L) {
-                first { it.size >= size }
+                while (value.size < size) {
+                    yield()
+                    delay(1)
+                }
             }
+        } catch (error: Throwable) {
+            throw AssertionError("Expected at least $size items, got ${value.size}: $value", error)
         }
     }
 

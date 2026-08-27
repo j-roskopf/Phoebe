@@ -56,6 +56,16 @@ kotlin {
                 implementation(libs.ktor.serialization.json)
             }
         }
+        named("androidHostTest") {
+            dependencies {
+                implementation(kotlin("test"))
+                implementation(libs.junit)
+                implementation(libs.androidx.test.core)
+                implementation(libs.androidx.test.runner)
+                implementation(libs.coroutines.test)
+                implementation(libs.robolectric)
+            }
+        }
         desktopTest {
             kotlin.srcDir("$rootDir/test-support/database/desktop/kotlin")
             kotlin.srcDir("$rootDir/test-support/platform/desktop/kotlin")

@@ -1,5 +1,6 @@
 package com.phoebe.app.player
 
+import android.app.Application
 import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
@@ -7,12 +8,17 @@ import androidx.media3.common.Player
 import androidx.media3.session.SessionResult
 import com.phoebe.app.domain.Track
 import kotlinx.coroutines.test.runTest
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35], application = Application::class)
 class BrowseMediaItemsTest {
     @Test
     fun playbackMediaItemIncludesCarDisplayMetadata() {

@@ -39,5 +39,8 @@ kotlin {
                 implementation(libs.findLibrary("compose-ui-tooling-preview").get())
             }
         }
+        findByName("androidHostTest")?.apply {
+            kotlin.srcDir("src/androidUnitTest/kotlin")
+        }
     }
 }

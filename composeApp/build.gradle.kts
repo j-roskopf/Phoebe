@@ -656,6 +656,10 @@ tasks.withType<Test>().configureEach {
         filter {
             includeTestsMatching("com.phoebe.app.PhoebeAndroid*ScreenshotTest")
         }
+    } else if (name == "testAndroidHostTest") {
+        filter {
+            excludeTestsMatching("com.phoebe.app.PhoebeAndroid*ScreenshotTest")
+        }
     }
     if (requestedAnyRoborazzi && name == "desktopTest") {
         filter {

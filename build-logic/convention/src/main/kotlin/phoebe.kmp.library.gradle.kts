@@ -33,5 +33,8 @@ kotlin {
                 implementation(libs.findLibrary("coroutines-core").get())
             }
         }
+        findByName("androidHostTest")?.apply {
+            kotlin.srcDir("src/androidUnitTest/kotlin")
+        }
     }
 }
