@@ -5,8 +5,8 @@ import com.phoebe.app.data.RadioNowPlayingRepository
 import com.phoebe.app.domain.RadioNowPlayingSource
 import com.phoebe.app.domain.RadioNowPlayingSourceType
 import com.phoebe.app.domain.Track
+import com.phoebe.app.testing.testMockEngine
 import io.ktor.client.HttpClient
-import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.respond
 import io.ktor.client.engine.mock.respondOk
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
@@ -20,7 +20,7 @@ class RadioNowPlayingRepositoryTest {
     @Test
     fun resolvesBbcRmsSegmentsMetadata() = runTest {
         val repository = RadioNowPlayingRepository(
-            HttpClient(MockEngine {
+            HttpClient(testMockEngine {
                 respondOk(
                     """
                     {
@@ -55,7 +55,7 @@ class RadioNowPlayingRepositoryTest {
     @Test
     fun resolvesKexpPlaysMetadata() = runTest {
         val repository = RadioNowPlayingRepository(
-            HttpClient(MockEngine {
+            HttpClient(testMockEngine {
                 respondOk(
                     """
                     {
@@ -102,7 +102,7 @@ class RadioNowPlayingRepositoryTest {
         icyMetadata.encodeToByteArray().copyInto(metadataBlock)
         val body = ByteArray(metaint) { 0 } + byteArrayOf(blockLength.toByte()) + metadataBlock
         val repository = RadioNowPlayingRepository(
-            HttpClient(MockEngine {
+            HttpClient(testMockEngine {
                 respond(
                     content = body,
                     headers = headersOf(

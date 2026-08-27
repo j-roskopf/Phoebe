@@ -189,6 +189,7 @@ private suspend fun ByteReadChannel.discardBytes(byteCount: Int): Boolean {
     val buffer = ByteArray(minOf(byteCount, 4096))
     var remaining = byteCount
     while (remaining > 0) {
+        if (!awaitContent()) return false
         val read = readAvailable(buffer, 0, minOf(buffer.size, remaining))
         if (read <= 0) return false
         remaining -= read
@@ -200,6 +201,7 @@ private suspend fun ByteReadChannel.readExactly(byteCount: Int): ByteArray? {
     val bytes = ByteArray(byteCount)
     var offset = 0
     while (offset < byteCount) {
+        if (!awaitContent()) return null
         val read = readAvailable(bytes, offset, byteCount - offset)
         if (read <= 0) return null
         offset += read
