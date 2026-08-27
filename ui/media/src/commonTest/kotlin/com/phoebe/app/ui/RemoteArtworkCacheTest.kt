@@ -269,7 +269,7 @@ class RemoteArtworkCacheTest {
         RemoteArtworkCache.fetchRemoteArtworkBytesForTest = { _, requestedFetchUrl ->
             requests += requestedFetchUrl
             if (requestedFetchUrl == sizedFetchUrl) {
-                delay(650L)
+                delay(400L)
                 byteArrayOf(DiskHitByte)
             } else {
                 byteArrayOf(NetworkHitByte)
@@ -279,7 +279,7 @@ class RemoteArtworkCacheTest {
             when (bytes.singleOrNull()) {
                 DiskHitByte -> {
                     val started = TimeSource.Monotonic.markNow()
-                    while (started.elapsedNow() < 200.milliseconds) {
+                    while (started.elapsedNow() < 400.milliseconds) {
                         // Keep this synchronous to mirror BitmapFactory.decodeByteArray on Android.
                     }
                     testImageBitmap(maxDecodeDimension, maxDecodeDimension)

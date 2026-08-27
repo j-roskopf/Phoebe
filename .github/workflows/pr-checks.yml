@@ -77,16 +77,16 @@ jobs:
         if: matrix.os == 'linux'
         env:
           GALLIUM_DRIVER: softpipe
-        run: xvfb-run -a ./gradlew desktopTest -Pphoebe.realAudioTests=true
+        run: xvfb-run -a ./gradlew desktopTest --continue -Pphoebe.realAudioTests=true
 
       - name: Run macOS desktop tests
         if: matrix.os == 'macos'
-        run: ./gradlew desktopTest -Pphoebe.realAudioTests=true
+        run: ./gradlew desktopTest --continue -Pphoebe.realAudioTests=true
 
       - name: Run Windows desktop tests
         if: matrix.os == 'windows'
         shell: pwsh
-        run: ./gradlew.bat desktopTest
+        run: ./gradlew.bat desktopTest --continue
 
       - name: Upload desktop test artifacts
         if: failure()
