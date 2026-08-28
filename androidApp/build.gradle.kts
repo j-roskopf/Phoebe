@@ -35,7 +35,7 @@ plugins {
 
 android {
     namespace = "com.phoebe.androidapp"
-    compileSdk = 36
+    compileSdk = 37
 
     defaultConfig {
         applicationId = "com.phoebe.app"

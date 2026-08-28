@@ -4089,11 +4089,12 @@ class AppState(
         mutableMessage.value = "Signing out…"
         scope.launch {
             val signedOut = runCatching {
+                // Clear auth first so closing the app during job teardown cannot restore a token.
+                dependencies.sessionRepository.signOut()
                 refreshJob?.cancelAndJoin()
                 historyJob?.cancelAndJoin()
                 providerHistoryJob?.cancelAndJoin()
                 lightweightSyncJob?.cancelAndJoin()
-                dependencies.sessionRepository.signOut()
                 dependencies.deleteDatabaseDataForSignOut()
             }.onFailure {
                 mutableMessage.value = it.message ?: "Something went sideways."

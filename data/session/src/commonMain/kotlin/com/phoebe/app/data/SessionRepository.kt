@@ -38,6 +38,11 @@ class SessionRepository(
     private val json = PhoebeDataJson
     private val mutableSession = MutableStateFlow<PlexSession?>(null)
     val session: StateFlow<PlexSession?> = mutableSession
+    /**
+     * Bumped on [signOut] so in-flight connection refreshes / saves started before sign-out
+     * cannot re-persist a cleared session.
+     */
+    private var sessionGeneration: Int = 0
 
     suspend fun restore(refreshConnections: Boolean = true) {
         PhoebeLog.d("SessionRepository") { "restore(refreshConnections=$refreshConnections)" }
@@ -51,8 +56,7 @@ class SessionRepository(
             val parsed = runCatching {
                 json.decodeFromString<PlexSession>(legacy)
             }.getOrNull() ?: return
-            databaseWriteGate.withWrite { persist(parsed) }
-            mutableSession.value = parsed
+            save(parsed)
             storage.delete(LegacySessionFile)
         }
         if (refreshConnections) refreshSelectedServerConnections()
@@ -64,6 +68,7 @@ class SessionRepository(
 
     /** Refresh server URLs from plex.tv so we pick up LAN addresses for timeline API calls. */
     suspend fun refreshSelectedServerConnections() {
+        val generation = sessionGeneration
         val current = mutableSession.value ?: return
         val selected = current.selectedServer ?: return
         if (current.token.isBlank()) return
@@ -74,7 +79,7 @@ class SessionRepository(
             ?: return
         if (fresh != selected) {
             PhoebeLog.d("SessionRepository") { "updated server connections for '${fresh.name}'" }
-            save(current.copy(selectedServer = fresh))
+            save(current.copy(selectedServer = fresh), expectedGeneration = generation)
         }
     }
 
@@ -90,10 +95,11 @@ class SessionRepository(
     suspend fun createPin(): PlexPin = plexClient.createPin()
 
     suspend fun completePin(pin: PlexPin): Boolean {
+        val generation = sessionGeneration
         val token = plexClient.pollPin(pin.id) ?: return false
         val session = PlexSession(token = token, userName = plexClient.userName(token), providerType = MediaProviderType.Plex)
-        save(session)
-        return true
+        save(session, expectedGeneration = generation)
+        return sessionGeneration == generation && mutableSession.value != null
     }
 
     /**
@@ -101,6 +107,7 @@ class SessionRepository(
      * parallel with resolving the Plex username so sign-in does not wait on three serial calls.
      */
     suspend fun completePinAndListServers(pin: PlexPin): List<PlexServer>? {
+        val generation = sessionGeneration
         val token = plexClient.pollPin(pin.id) ?: return null
         PhoebeLog.d("SessionRepository") { "pin complete, loading servers" }
         return coroutineScope {
@@ -108,12 +115,17 @@ class SessionRepository(
                 runCatching { plexClient.userName(token) }.getOrNull() ?: "Plex listener"
             }
             val serversDeferred = async { plexClient.servers(token) }
-            save(PlexSession(token = token, userName = userNameDeferred.await(), providerType = MediaProviderType.Plex))
+            save(
+                PlexSession(token = token, userName = userNameDeferred.await(), providerType = MediaProviderType.Plex),
+                expectedGeneration = generation,
+            )
+            if (sessionGeneration != generation || mutableSession.value == null) return@coroutineScope null
             serversDeferred.await()
         }
     }
 
     suspend fun signInJellyfin(serverUrl: String, username: String, password: String): PlexServer {
+        val generation = sessionGeneration
         val session = providerRegistry.adapterFor(MediaProviderType.Jellyfin)
             ?.signIn(serverUrl, username, password)
             ?: run {
@@ -126,14 +138,21 @@ class SessionRepository(
                     userId = auth.userId,
                 )
             }
-        save(session)
+        save(session, expectedGeneration = generation)
+        check(sessionGeneration == generation && mutableSession.value != null) {
+            "Signed out while signing in to Jellyfin."
+        }
         return session.selectedServer ?: error("Jellyfin did not return a server.")
     }
 
     suspend fun signInProvider(type: MediaProviderType, serverUrl: String, username: String, password: String): PlexServer {
+        val generation = sessionGeneration
         val adapter = providerRegistry.adapterFor(type) ?: error("${type.name} is not available.")
         val session = adapter.signIn(serverUrl, username, password)
-        save(session)
+        save(session, expectedGeneration = generation)
+        check(sessionGeneration == generation && mutableSession.value != null) {
+            "Signed out while signing in to ${type.name}."
+        }
         return session.selectedServer ?: error("${type.name} did not return a server.")
     }
 
@@ -141,6 +160,7 @@ class SessionRepository(
         jellyfinClient.initiateQuickConnect(serverUrl)
 
     suspend fun completeJellyfinQuickConnect(serverUrl: String, secret: String): PlexServer {
+        val generation = sessionGeneration
         val auth = jellyfinClient.authenticateQuickConnect(serverUrl, secret)
         save(
             PlexSession(
@@ -150,7 +170,11 @@ class SessionRepository(
                 providerType = MediaProviderType.Jellyfin,
                 userId = auth.userId,
             ),
+            expectedGeneration = generation,
         )
+        check(sessionGeneration == generation && mutableSession.value != null) {
+            "Signed out while completing Jellyfin Quick Connect."
+        }
         return auth.server
     }
 
@@ -162,6 +186,7 @@ class SessionRepository(
     }
 
     suspend fun libraries(server: PlexServer): List<MusicLibrary> {
+        val generation = sessionGeneration
         val current = mutableSession.value ?: return emptyList()
         if (!current.isPlex()) {
             providerRegistry.adapterFor(current)?.let { return it.libraries(current, server) }
@@ -178,12 +203,13 @@ class SessionRepository(
                 PhoebeLog.d("SessionRepository") { "Plex server base probe failed for '${resolved.name}': ${error.message}" }
             }
             .getOrDefault(resolved)
-        persistSelectedServerIfChanged(current, apiServer)
+        persistSelectedServerIfChanged(current, apiServer, expectedGeneration = generation)
         return plexClient.musicLibraries(apiServer, apiServer.authToken(token))
     }
 
     suspend fun selectServer(server: PlexServer, refreshConnections: Boolean = true): PlexServer {
         PhoebeLog.d("SessionRepository") { "selectServer '${server.name}' (refreshConnections=$refreshConnections)" }
+        val generation = sessionGeneration
         mutableSession.value?.let { session ->
             val resolved = if (session.isPlex()) {
                 runCatching { plexClient.resolveApiServer(server, server.authToken(session.token)) }
@@ -194,7 +220,7 @@ class SessionRepository(
             } else {
                 server
             }
-            save(session.copy(selectedServer = resolved, selectedLibrary = null))
+            save(session.copy(selectedServer = resolved, selectedLibrary = null), expectedGeneration = generation)
         }
         if (refreshConnections) refreshSelectedServerConnections()
         return mutableSession.value?.selectedServer ?: server
@@ -202,39 +228,54 @@ class SessionRepository(
 
     suspend fun selectLibrary(library: MusicLibrary, jellyfinSyncMode: JellyfinSyncMode? = null) {
         PhoebeLog.d("SessionRepository") { "selectLibrary '${library.title}'" }
+        val generation = sessionGeneration
         mutableSession.value?.let { session ->
             save(
                 session.copy(
                     selectedLibrary = library,
                     jellyfinSyncMode = jellyfinSyncMode ?: session.jellyfinSyncMode,
                 ),
+                expectedGeneration = generation,
             )
         }
     }
 
     suspend fun signOut() {
         PhoebeLog.d("SessionRepository") { "signOut" }
+        sessionGeneration += 1
+        val generation = sessionGeneration
         mutableSession.value = null
+        storage.delete(LegacySessionFile)
         databaseWriteGate.withWrite {
+            if (sessionGeneration != generation) return@withWrite
             database.sessionQueries.clear()
         }
     }
 
-    private suspend fun save(session: PlexSession) {
-        mutableSession.value = session
+    private suspend fun save(
+        session: PlexSession,
+        expectedGeneration: Int = sessionGeneration,
+    ) {
         databaseWriteGate.withWrite {
+            if (sessionGeneration != expectedGeneration) return@withWrite
             if (session.token.isBlank()) {
+                mutableSession.value = null
                 database.sessionQueries.clear()
             } else {
+                mutableSession.value = session
                 persist(session)
             }
         }
     }
 
-    private suspend fun persistSelectedServerIfChanged(current: PlexSession, server: PlexServer) {
+    private suspend fun persistSelectedServerIfChanged(
+        current: PlexSession,
+        server: PlexServer,
+        expectedGeneration: Int = sessionGeneration,
+    ) {
         val selected = current.selectedServer ?: return
         if (selected.id != server.id || selected == server) return
-        save(current.copy(selectedServer = server))
+        save(current.copy(selectedServer = server), expectedGeneration = expectedGeneration)
     }
 
     private suspend fun persist(session: PlexSession) {
