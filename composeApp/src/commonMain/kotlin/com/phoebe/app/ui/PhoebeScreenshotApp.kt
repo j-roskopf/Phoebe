@@ -67,6 +67,7 @@ import com.phoebe.app.feature.playback.MobilePlaybackRoute
 import com.phoebe.app.feature.playback.MobilePlaybackRouteActions
 import com.phoebe.app.feature.playback.MobilePlaybackRouteState
 import com.phoebe.app.feature.playback.MobilePlayer
+import com.phoebe.app.feature.radio.LocalRadioStationRemoteArtworkEnabled
 import com.phoebe.app.feature.search.LocalSearchHistory
 import com.phoebe.app.feature.search.SearchResultsFactory
 import com.phoebe.app.feature.search.SearchHistoryState
@@ -366,6 +367,8 @@ internal fun PhoebeScreenshotApp(
             LocalSharedElementTransitionsEnabled provides false,
             LocalContinuousMotionEnabled provides false,
             LocalLibrarySectionIndexForceScrub provides forceCustomLibraryScrollIndex,
+            // Remote favicons race in Robolectric/CI; keep Radio screenshots on seed artwork.
+            LocalRadioStationRemoteArtworkEnabled provides (scenario != PhoebeScreenshotScenario.Radio),
         ) {
             BoxWithConstraints(modifier.fillMaxSize()) {
                 if (maxWidth < 900.dp) {
