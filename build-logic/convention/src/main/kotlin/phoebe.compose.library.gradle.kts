@@ -1,6 +1,7 @@
 import phoebe.configurePhoebeKmp
 import phoebe.libraryNamespace
 import phoebe.libs
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -13,9 +14,16 @@ plugins {
 kotlin {
     configurePhoebeKmp(this)
 
+    // Compose 1.12+ requires an executable wasmJs binary so Skiko can load for browser UI tests
+    // (CMP-4906 / checkComposeUiTestConfigurationForWasmJs).
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        binaries.executable()
+    }
+
     android {
         namespace = libraryNamespace()
-        compileSdk = 36
+        compileSdk = 37
         minSdk = 26
         androidResources {
             enable = true

@@ -130,7 +130,6 @@ internal actual fun RadioMapHost(
 
     SwingPanel(
         modifier = modifier,
-        background = Color(0xFF080B12),
         factory = {
             browserHolder.panel.also {
                 val snapshot = server.update(items, selectedItem, startingStationIds)

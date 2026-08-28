@@ -1,9 +1,11 @@
 package com.phoebe.app
 
+import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
+import com.phoebe.app.data.PhoebeDataJson
 import com.phoebe.app.data.PlexClient
-import com.phoebe.app.data.SessionRepository
 import com.phoebe.app.domain.PlexPin
 import com.phoebe.app.domain.PlexServer
+import com.phoebe.app.domain.PlexSession
 import com.phoebe.app.platform.PlatformStorage
 import com.phoebe.app.testing.newInMemoryPhoebeDatabase
 import com.phoebe.app.testing.testHttpClient
@@ -14,11 +16,32 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
 import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 class SessionRepositoryDesktopTest {
+    @get:Rule
+    val temp = TemporaryFolder()
+
+    @Before
+    fun storageRoot() {
+        System.setProperty("phoebe.storage.root", temp.newFolder("kv").absolutePath)
+    }
+
+    @After
+    fun clearStorageRoot() {
+        System.clearProperty("phoebe.storage.root")
+    }
+
     @Test
     fun selectServerCanSkipResourceRefreshAfterFreshSignInServerList() = runBlocking {
         val (database, driver) = newInMemoryPhoebeDatabase()
@@ -154,6 +177,170 @@ class SessionRepositoryDesktopTest {
             assertEquals("http://second.example:32400", selected.uri)
             assertEquals("http://second.example:32400", repository.session.value?.selectedServer?.uri)
         } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun signOutClearsPersistedSessionSoRestoreStaysSignedOut() = runBlocking {
+        val (database, driver) = newInMemoryPhoebeDatabase()
+        val storage = PlatformStorage()
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/api/v2/pins/1" -> respondJson("""{"id":1,"code":"ABCD","authToken":"user-token"}""")
+                "/api/v2/user" -> respondJson("""{"username":"Plex listener"}""")
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
+        val repository = testSessionRepository(
+            plexClient = client,
+            database = database,
+            storage = storage,
+            httpClient = testHttpClient(engine),
+        )
+
+        try {
+            assertTrue(repository.completePin(PlexPin(id = 1, code = "ABCD", authUrl = "https://plex.example/auth")))
+            repository.selectServer(
+                PlexServer(
+                    id = "server-id",
+                    name = "Studio Plex",
+                    uri = "https://plex.example:32400",
+                    owned = true,
+                    accessToken = "server-token",
+                ),
+                refreshConnections = false,
+            )
+            assertEquals("user-token", repository.session.value?.token)
+
+            repository.signOut()
+            assertNull(repository.session.value)
+            assertNull(database.sessionQueries.selectCurrent().awaitAsOneOrNull())
+
+            val restored = testSessionRepository(
+                plexClient = client,
+                database = database,
+                storage = storage,
+                httpClient = testHttpClient(engine),
+            )
+            restored.restore(refreshConnections = false)
+            assertNull(restored.session.value)
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun signOutDeletesLegacySessionFile() = runBlocking {
+        val (database, driver) = newInMemoryPhoebeDatabase()
+        val storage = PlatformStorage()
+        storage.writeText(
+            "session.json",
+            PhoebeDataJson.encodeToString(
+                PlexSession.serializer(),
+                PlexSession(token = "legacy-token", userName = "Legacy"),
+            ),
+        )
+        val engine = MockEngine { respond("", HttpStatusCode.NotFound) }
+        val repository = testSessionRepository(
+            plexClient = PlexClient.withoutResolver(testHttpClient(engine)),
+            database = database,
+            storage = storage,
+            httpClient = testHttpClient(engine),
+        )
+
+        try {
+            repository.signOut()
+            assertNull(storage.readText("session.json"))
+
+            val restored = testSessionRepository(
+                plexClient = PlexClient.withoutResolver(testHttpClient(engine)),
+                database = database,
+                storage = storage,
+                httpClient = testHttpClient(engine),
+            )
+            restored.restore(refreshConnections = false)
+            assertNull(restored.session.value)
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
+    fun inFlightConnectionRefreshCannotResurrectSessionAfterSignOut() = runBlocking {
+        val (database, driver) = newInMemoryPhoebeDatabase()
+        val storage = PlatformStorage()
+        val resourcesGate = CompletableDeferred<Unit>()
+        val resourcesStarted = CompletableDeferred<Unit>()
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/api/v2/pins/1" -> respondJson("""{"id":1,"code":"ABCD","authToken":"user-token"}""")
+                "/api/v2/user" -> respondJson("""{"username":"Plex listener"}""")
+                "/api/v2/resources" -> {
+                    resourcesStarted.complete(Unit)
+                    resourcesGate.await()
+                    respondJson(
+                        """
+                        [
+                          {
+                            "name": "Studio Plex",
+                            "product": "Plex Media Server",
+                            "clientIdentifier": "server-id",
+                            "owned": true,
+                            "provides": "server",
+                            "accessToken": "refreshed-server-token",
+                            "connections": [
+                              { "uri": "https://refreshed.plex.example:32400", "local": false }
+                            ]
+                          }
+                        ]
+                        """.trimIndent(),
+                    )
+                }
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
+        val repository = testSessionRepository(
+            plexClient = client,
+            database = database,
+            storage = storage,
+            httpClient = testHttpClient(engine),
+        )
+
+        try {
+            repository.completePin(PlexPin(id = 1, code = "ABCD", authUrl = "https://plex.example/auth"))
+            repository.selectServer(
+                PlexServer(
+                    id = "server-id",
+                    name = "Studio Plex",
+                    uri = "https://plex.example:32400",
+                    owned = true,
+                    accessToken = "server-token",
+                ),
+                refreshConnections = false,
+            )
+
+            val refresh = async { repository.refreshSelectedServerConnections() }
+            resourcesStarted.await()
+            repository.signOut()
+            resourcesGate.complete(Unit)
+            refresh.await()
+
+            assertNull(repository.session.value)
+            assertNull(database.sessionQueries.selectCurrent().awaitAsOneOrNull())
+
+            val restored = testSessionRepository(
+                plexClient = client,
+                database = database,
+                storage = storage,
+                httpClient = testHttpClient(engine),
+            )
+            restored.restore(refreshConnections = false)
+            assertNull(restored.session.value)
+        } finally {
+            resourcesGate.complete(Unit)
             driver.close()
         }
     }

@@ -2,14 +2,14 @@ package com.phoebe.app
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.v2.runDesktopComposeUiTest
 import androidx.compose.ui.unit.dp
-import com.phoebe.app.feature.radio.LocalRadioStationRemoteArtworkEnabled
+import com.github.takahirom.roborazzi.RoborazziOptions
 import com.phoebe.app.ui.PhoebeDesignSystem
 import com.phoebe.app.ui.PhoebeScreenshotApp
 import com.phoebe.app.ui.PhoebeScreenshotScenario
@@ -60,7 +60,7 @@ class PhoebeDesktopScreenshotTest {
                 }
             }
             waitForIdle()
-            onRoot().captureRoboImage(
+            onRoot().captureDesktopScreenshot(
                 filePath = "src/screenshotTest/roborazzi/desktop-${scenario.name.lowercase()}-dark.png",
             )
         }
@@ -79,7 +79,7 @@ class PhoebeDesktopScreenshotTest {
                 }
             }
             waitForIdle()
-            onRoot().captureRoboImage(
+            onRoot().captureDesktopScreenshot(
                 filePath = "src/screenshotTest/roborazzi/desktop-$slug-old-artwork-layout-dark.png",
             )
         }
@@ -98,7 +98,7 @@ class PhoebeDesktopScreenshotTest {
                 }
             }
             waitForIdle()
-            onRoot().captureRoboImage(
+            onRoot().captureDesktopScreenshot(
                 filePath = "src/screenshotTest/roborazzi/desktop-$slug-dark.png",
             )
         }
@@ -109,13 +109,11 @@ class PhoebeDesktopScreenshotTest {
     fun desktopRadioDark() = runDesktopComposeUiTest(width = 1365, height = 900) {
         setContent {
             Box(Modifier.size(1365.dp, 900.dp)) {
-                CompositionLocalProvider(LocalRadioStationRemoteArtworkEnabled provides false) {
-                    PhoebeScreenshotApp(scenario = PhoebeScreenshotScenario.Radio)
-                }
+                PhoebeScreenshotApp(scenario = PhoebeScreenshotScenario.Radio)
             }
         }
         waitForIdle()
-        onRoot().captureRoboImage(
+        onRoot().captureDesktopScreenshot(
             filePath = "src/screenshotTest/roborazzi/desktop-radio-dark.png",
         )
     }
@@ -129,7 +127,7 @@ class PhoebeDesktopScreenshotTest {
             }
         }
         waitForIdle()
-        onRoot().captureRoboImage(
+        onRoot().captureDesktopScreenshot(
             filePath = "src/screenshotTest/roborazzi/desktop-library-scrollbar-dark.png",
         )
     }
@@ -152,7 +150,7 @@ class PhoebeDesktopScreenshotTest {
                 }
             }
             waitForIdle()
-            onRoot().captureRoboImage(
+            onRoot().captureDesktopScreenshot(
                 filePath = "src/screenshotTest/roborazzi/desktop-${scenario.name.lowercase()}-light.png",
             )
         }
@@ -178,7 +176,7 @@ class PhoebeDesktopScreenshotTest {
                 }
             }
             waitForIdle()
-            onRoot().captureRoboImage(
+            onRoot().captureDesktopScreenshot(
                 filePath = "src/screenshotTest/roborazzi/desktop-player-visualizer-$slug-dark.png",
             )
         }
@@ -193,7 +191,7 @@ class PhoebeDesktopScreenshotTest {
             }
         }
         waitForIdle()
-        onRoot().captureRoboImage(
+        onRoot().captureDesktopScreenshot(
             filePath = "src/screenshotTest/roborazzi/desktop-player-visualizer-tv-frame-dark.png",
         )
     }
@@ -215,7 +213,7 @@ class PhoebeDesktopScreenshotTest {
                 }
             }
             waitForIdle()
-            onRoot().captureRoboImage(
+            onRoot().captureDesktopScreenshot(
                 filePath = "src/screenshotTest/roborazzi/desktop-${scenario.name.lowercase()}-red-tint-dark.png",
             )
         }
@@ -235,7 +233,7 @@ class PhoebeDesktopScreenshotTest {
                 }
             }
             waitForIdle()
-            onRoot().captureRoboImage(
+            onRoot().captureDesktopScreenshot(
                 filePath = "src/screenshotTest/roborazzi/desktop-settings-blue-tint-${if (useLightAppearance) "light" else "dark"}.png",
             )
         }
@@ -257,7 +255,7 @@ class PhoebeDesktopScreenshotTest {
                         }
                     }
                     waitForIdle()
-                    onRoot().captureRoboImage(
+                    onRoot().captureDesktopScreenshot(
                         filePath = "src/screenshotTest/roborazzi/desktop-${design.id}-${scenario.name.lowercase()}-${if (useLightAppearance) "light" else "dark"}.png",
                     )
                 }
@@ -277,7 +275,7 @@ class PhoebeDesktopScreenshotTest {
             }
         }
         waitForIdle()
-        onRoot().captureRoboImage(
+        onRoot().captureDesktopScreenshot(
             filePath = "src/screenshotTest/roborazzi/desktop-brutalist-library-scrollbar-dark.png",
         )
     }
@@ -295,8 +293,23 @@ class PhoebeDesktopScreenshotTest {
             }
         }
         waitForIdle()
-        onRoot().captureRoboImage(
+        onRoot().captureDesktopScreenshot(
             filePath = "src/screenshotTest/roborazzi/desktop-nocturne-player-queue-dark.png",
         )
     }
+}
+
+/**
+ * Compose 1.12 desktop captures show tiny AA/font variance across CI hosts.
+ * Allow a small changed-pixel budget (still stricter than catching real layout shifts).
+ */
+private val desktopScreenshotOptions = RoborazziOptions(
+    compareOptions = RoborazziOptions.CompareOptions(changeThreshold = 0.001F),
+)
+
+private fun SemanticsNodeInteraction.captureDesktopScreenshot(filePath: String) {
+    captureRoboImage(
+        filePath = filePath,
+        roborazziOptions = desktopScreenshotOptions,
+    )
 }
