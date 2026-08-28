@@ -245,11 +245,13 @@ class SessionRepository(
         sessionGeneration += 1
         val generation = sessionGeneration
         mutableSession.value = null
-        storage.delete(LegacySessionFile)
+        // Durable clear first: legacy-file I/O can cancel/throw on app close and must not
+        // leave a DB row that restore() would revive.
         databaseWriteGate.withWrite {
             if (sessionGeneration != generation) return@withWrite
             database.sessionQueries.clear()
         }
+        runCatching { storage.delete(LegacySessionFile) }
     }
 
     private suspend fun save(
