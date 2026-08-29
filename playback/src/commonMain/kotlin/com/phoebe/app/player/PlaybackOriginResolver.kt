@@ -30,6 +30,12 @@ interface PlaybackOriginResolver {
      */
     suspend fun rediscoverOrigins(): List<String> = emptyList()
 
+    /**
+     * Drop a stream origin that just failed (handshake, connection refused, timeout) so the
+     * next play does not hydrate it from disk and stall on the same dead relay.
+     */
+    fun forgetOrigin(origin: String) = Unit
+
     companion object {
         const val DefaultPlayResolveDeadlineMs = 700L
     }

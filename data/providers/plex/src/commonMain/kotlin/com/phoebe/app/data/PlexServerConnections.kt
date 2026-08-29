@@ -1,15 +1,16 @@
 package com.phoebe.app.data
 
 import com.phoebe.app.domain.PlexServer
+import com.phoebe.app.platform.NetworkIdentity
+import com.phoebe.app.platform.ipv4Slash24Prefix
 
 /**
  * Ordered Plex server base URLs — Plex-advertised LAN first, synthesized fallbacks last.
  *
  * Plex often advertises `https://172-105-8-66.<token>.plex.direct:8443` alongside
- * `http://192.168.x.x:32400`. We synthesize `http://172.105.8.66:32400` from the plex.direct
- * hostname, but that address is usually the server's *public* IP and is often unreachable on
- * LAN; real local URLs from Plex must win. Servers requiring HTTPS get no synthesized entries
- * at all — see [expandConnectionUris].
+ * `http://192.168.x.x:32400`. We only synthesize `http://<ip>:32400` when the plex.direct
+ * host encodes a *private* address; a WAN IP on :32400 is usually closed and burns failover
+ * budget. Servers requiring HTTPS get no synthesized entries at all — see [expandConnectionUris].
  *
  * When [demoteLocalOrigins] is true (cellular / unknown Wi-Fi), LAN-only hosts sort after
  * remote relays so playback and API probes do not burn seconds on dead private addresses.
@@ -97,10 +98,10 @@ fun bestReachableBaseUri(
 /**
  * Advertised URLs first, then synthesized plain-IP fallbacks derived from plex.direct hosts.
  *
- * `http://<ip>:32400` is the only variant worth synthesizing. Plex's certificate covers
+ * `http://<private-ip>:32400` is the only variant worth synthesizing. Plex's certificate covers
  * `*.<hash>.plex.direct`, so an `https://` URL built from the bare IP can never finish a TLS
- * handshake, and a server with [httpsRequired] refuses the plain-HTTP port outright. Emitting
- * either one just burns entries in the caller's fallback budget on addresses that cannot work.
+ * handshake. A public `http://<wan-ip>:32400` is usually closed (remote access is the 8443
+ * relay). A server with [httpsRequired] refuses the plain-HTTP port outright.
  */
 fun expandConnectionUris(
     advertisedUris: List<String>,
@@ -111,7 +112,8 @@ fun expandConnectionUris(
         addAll(advertised)
         if (httpsRequired) return@buildList
         for (uri in advertised) {
-            decodedIpFromPlexDirect(uri)?.let { ip -> add("http://$ip:32400") }
+            val ip = decodedIpFromPlexDirect(uri) ?: continue
+            if (isPrivateOrLoopbackIpv4(ip)) add("http://$ip:32400")
         }
     }.distinct()
 
@@ -160,11 +162,58 @@ fun isLocalOnlyServerOrigin(uri: String): Boolean {
     if (scheme != "http" && scheme != "https") return false
     val host = uri.substringAfter("://").substringBefore(':').substringBefore('/').lowercase()
     if (host.isBlank() || host == "localhost" || host.endsWith(".local")) return true
-    val ip = when {
-        host.split('.').let { parts -> parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 } } -> host
-        else -> decodedIpFromPlexDirect(uri)
-    } ?: return false
+    val ip = ipv4FromServerOrigin(uri) ?: return false
     return isPrivateOrLoopbackIpv4(ip)
+}
+
+/**
+ * `http://<public-ipv4>:32400` that was not advertised by Plex. Remote access uses the 8443
+ * relay; this port is usually a synthesized WAN fallback and burns playback failover budget.
+ *
+ * When [advertisedUris] contains this origin, it is kept — some servers do expose :32400
+ * on a public address on purpose.
+ */
+fun isPublicSynthesizedPlexHttpOrigin(
+    uri: String,
+    advertisedUris: Collection<String> = emptyList(),
+): Boolean {
+    if (!uri.startsWith("http://", ignoreCase = true)) return false
+    if (isLocalOnlyServerOrigin(uri)) return false
+    val rest = uri.substringAfter("://")
+    val host = rest.substringBefore(':').substringBefore('/')
+    val port = rest.substringAfter(':', missingDelimiterValue = "80")
+        .substringBefore('/')
+        .toIntOrNull() ?: 80
+    if (port != 32400) return false
+    val parts = host.split('.')
+    if (parts.size != 4 || parts.any { it.toIntOrNull() !in 0..255 }) return false
+    val origin = "http://$host:$port"
+    return advertisedUris.none { it.trimEnd('/') == origin }
+}
+
+/**
+ * True when this device has IPv4 prefixes and none of them match the server's advertised
+ * LAN addresses — e.g. Windows on `192.168.4.0` vs Plex's `172.16.1.2`.
+ */
+fun NetworkIdentity.shouldSkipAdvertisedLan(server: PlexServer): Boolean {
+    if (localIpv4Prefixes.isEmpty()) return false
+    val locals = (listOf(server.uri) + server.localConnectionUris + server.advertisedConnectionUris)
+        .distinct()
+        .filter { isLocalOnlyServerOrigin(it) }
+    if (locals.isEmpty()) return false
+    return locals.none { origin ->
+        val ip = ipv4FromServerOrigin(origin) ?: return@none false
+        ipv4Slash24Prefix(ip) in localIpv4Prefixes
+    }
+}
+
+internal fun ipv4FromServerOrigin(uri: String): String? {
+    val host = uri.substringAfter("://").substringBefore(':').substringBefore('/').lowercase()
+    if (host.isBlank()) return null
+    host.split('.').let { parts ->
+        if (parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 }) return host
+    }
+    return decodedIpFromPlexDirect(uri)
 }
 
 private fun isPrivateOrLoopbackIpv4(ip: String): Boolean {

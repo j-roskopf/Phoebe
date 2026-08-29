@@ -93,7 +93,7 @@ private val DesktopVirtualInterfaceNamePrefixes = listOf(
 )
 
 private fun desktopNetworkIdentity(): NetworkIdentity {
-    val material = runCatching {
+    val prefixes = runCatching {
         NetworkInterface.getNetworkInterfaces()
             ?.toList()
             .orEmpty()
@@ -113,20 +113,20 @@ private fun desktopNetworkIdentity(): NetworkIdentity {
                     .mapNotNull { address ->
                         val host = address.hostAddress ?: return@mapNotNull null
                         if (address.isLinkLocalAddress) return@mapNotNull null
-                        val parts = host.split('.')
-                        if (parts.size != 4) return@mapNotNull null
-                        "${parts[0]}.${parts[1]}.${parts[2]}.0"
+                        ipv4Slash24Prefix(host)
                     }
             }
             .distinct()
             .sorted()
-            .joinToString("|")
-    }.getOrDefault("")
+            .toList()
+    }.getOrDefault(emptyList())
+    val material = prefixes.joinToString("|")
     val transport = if (material.isBlank()) NetworkTransport.None else NetworkTransport.Other
     return NetworkIdentity(
         transport = transport,
         fingerprint = networkFingerprint(transport, material.ifBlank { transport.name.lowercase() }),
         metering = NetworkMeteringStatus(),
+        localIpv4Prefixes = prefixes,
     )
 }
 

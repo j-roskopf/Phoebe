@@ -35,12 +35,27 @@ data class NetworkIdentity(
     val transport: NetworkTransport = NetworkTransport.Other,
     val fingerprint: String = "",
     val metering: NetworkMeteringStatus = NetworkMeteringStatus(),
+    /**
+     * /24 prefixes of this device's current IPv4 interfaces, e.g. `192.168.4.0`.
+     * Empty when the platform cannot observe addresses (web) — callers must not
+     * treat empty as "on the server LAN".
+     */
+    val localIpv4Prefixes: List<String> = emptyList(),
 ) {
     val demotesLocalOrigins: Boolean
         get() = transport == NetworkTransport.Cellular ||
             transport == NetworkTransport.None ||
             metering.isCellular ||
             metering.isMetered && transport != NetworkTransport.Wifi && transport != NetworkTransport.Ethernet
+}
+
+/** `192.168.4.27` → `192.168.4.0`. */
+fun ipv4Slash24Prefix(host: String): String? {
+    val parts = host.split('.')
+    if (parts.size != 4) return null
+    val octets = parts.map { it.toIntOrNull() ?: return null }
+    if (octets.any { it !in 0..255 }) return null
+    return "${octets[0]}.${octets[1]}.${octets[2]}.0"
 }
 
 expect fun currentNetworkMeteringStatus(): NetworkMeteringStatus

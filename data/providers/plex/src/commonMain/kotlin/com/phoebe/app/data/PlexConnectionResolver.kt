@@ -51,6 +51,9 @@ class PlexConnectionResolver(
     private val memoryCache = mutableMapOf<CacheKey, String>()
     /** Last origin that worked for a server, kept across fingerprint flaps (VPN/docker ifaces). */
     private val lastGoodByServer = mutableMapOf<String, String>()
+    /** Dropped until [remember] / a race adopts them again, so hydrate cannot reload a dead row. */
+    private val forgottenOrigins = mutableSetOf<ForgottenOrigin>()
+    private val forgottenServers = mutableSetOf<String>()
     private val mutableIdentity = MutableStateFlow(currentNetworkIdentity())
     val networkIdentity: StateFlow<NetworkIdentity> = mutableIdentity
 
@@ -94,7 +97,9 @@ class PlexConnectionResolver(
 
     fun demoteLocalOrigins(identity: NetworkIdentity = mutableIdentity.value): Boolean {
         if (!preferLocalNetworkProvider()) return true
-        return identity.demotesLocalOrigins
+        if (identity.demotesLocalOrigins) return true
+        val server = lastServer ?: return false
+        return identity.shouldSkipAdvertisedLan(server)
     }
 
     fun cached(server: PlexServer, identity: NetworkIdentity = mutableIdentity.value): String? {
@@ -124,6 +129,8 @@ class PlexConnectionResolver(
     }
 
     suspend fun hydrateFromDisk(server: PlexServer) {
+        lastServer = server
+        if (server.id in forgottenServers) return
         val fingerprint = mutableIdentity.value.fingerprint
         val key = CacheKey(server.id, fingerprint)
         if (memoryCache.containsKey(key)) return
@@ -132,6 +139,7 @@ class PlexConnectionResolver(
                 .selectOrigin(server.id, fingerprint)
                 .awaitAsOneOrNull()
         }?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return
+        if (ForgottenOrigin(server.id, origin) in forgottenOrigins) return
         memoryCache[key] = origin
         lastGoodByServer[server.id] = origin
         PhoebeLog.d("PlexConnectionResolver") {
@@ -142,6 +150,10 @@ class PlexConnectionResolver(
     /**
      * Parallel `/identity` race. Returns the first reachable base within [deadlineMs],
      * preferring a warm cache hit when present.
+     *
+     * Cache hits return immediately so Android/AppState (Main) and catalog warmup never block
+     * on a dead relay. Validation happens in the background; [resolveFresh] is the probed path
+     * for in-flight playback failover.
      */
     suspend fun resolve(
         server: PlexServer,
@@ -153,9 +165,8 @@ class PlexConnectionResolver(
         val identity = mutableIdentity.value
         hydrateFromDisk(server)
         cached(server, identity)?.let { warm ->
-            // Still confirm quickly if demoting local and the warm entry is LAN-only.
             if (!(demoteLocalOrigins(identity) && isLocalOnlyServerOrigin(warm))) {
-                scope.launch { warmKeepAlive(warm, token) }
+                scope.launch { validateCachedOrigin(server, token, warm, identity) }
                 return warm
             }
         }
@@ -164,8 +175,73 @@ class PlexConnectionResolver(
             return cached(server, identity)
         }
         try {
-            cached(server, identity)?.let { return it }
             return raceBases(server, token, deadlineMs, identity)
+        } finally {
+            resolveMutex.unlock()
+        }
+    }
+
+    /**
+     * Confirm the cached origin with `/identity`, then race if it is dead. Safe to call from
+     * a background dispatcher during playback — not from Android AppState on Main.
+     */
+    suspend fun resolveFresh(
+        server: PlexServer,
+        token: String,
+        deadlineMs: Long = RemoteProbeTimeoutMs,
+    ): String? {
+        lastServer = server
+        lastToken = token
+        val identity = mutableIdentity.value
+        hydrateFromDisk(server)
+        var probedDead: String? = null
+        cached(server, identity)?.let { warm ->
+            if (!(demoteLocalOrigins(identity) && isLocalOnlyServerOrigin(warm))) {
+                val confirmed = withTimeoutOrNull(probeTimeoutMs(warm, deadlineMs)) {
+                    probeIdentity(warm, token)
+                } == true
+                if (confirmed) return warm
+                probedDead = warm
+                PhoebeLog.d("PlexConnectionResolver") {
+                    "cached origin missed probe origin=$warm; racing"
+                }
+            }
+        }
+        return resolveMutex.withLock {
+            cached(server, identity)?.let { warm ->
+                val alreadyFailed = probedDead?.equals(warm, ignoreCase = true) == true
+                if (!alreadyFailed &&
+                    !(demoteLocalOrigins(identity) && isLocalOnlyServerOrigin(warm))
+                ) {
+                    val confirmed = withTimeoutOrNull(probeTimeoutMs(warm, deadlineMs)) {
+                        probeIdentity(warm, token)
+                    } == true
+                    if (confirmed) return@withLock warm
+                }
+            }
+            raceBases(server, token, deadlineMs, identity)
+        }
+    }
+
+    private suspend fun validateCachedOrigin(
+        server: PlexServer,
+        token: String,
+        warm: String,
+        identity: NetworkIdentity,
+    ) {
+        val confirmed = withTimeoutOrNull(probeTimeoutMs(warm, RemoteProbeTimeoutMs)) {
+            probeIdentity(warm, token)
+        } == true
+        if (confirmed) {
+            warmKeepAlive(warm, token)
+            return
+        }
+        PhoebeLog.d("PlexConnectionResolver") {
+            "cached origin missed background probe origin=$warm; racing"
+        }
+        if (!resolveMutex.tryLock()) return
+        try {
+            raceBases(server, token, RemoteProbeTimeoutMs, identity)
         } finally {
             resolveMutex.unlock()
         }
@@ -173,6 +249,8 @@ class PlexConnectionResolver(
 
     fun remember(serverId: String, origin: String) {
         val trimmed = origin.trimEnd('/').takeIf { it.isNotBlank() } ?: return
+        forgottenServers.remove(serverId)
+        forgottenOrigins.remove(ForgottenOrigin(serverId, trimmed))
         val fingerprint = mutableIdentity.value.fingerprint
         memoryCache[CacheKey(serverId, fingerprint)] = trimmed
         lastGoodByServer[serverId] = trimmed
@@ -185,12 +263,29 @@ class PlexConnectionResolver(
         val fingerprint = mutableIdentity.value.fingerprint
         val key = CacheKey(serverId, fingerprint)
         if (origin == null) {
+            forgottenServers.add(serverId)
+            forgottenOrigins.removeAll { it.serverId == serverId }
             memoryCache.remove(key)
             lastGoodByServer.remove(serverId)
+            scope.launch {
+                databaseWriteGate.withWrite {
+                    database.plexResolvedOriginQueries.deleteForServer(serverId)
+                }
+            }
         } else {
             val trimmed = origin.trimEnd('/')
+            forgottenOrigins.add(ForgottenOrigin(serverId, trimmed))
             if (memoryCache[key] == trimmed) memoryCache.remove(key)
             if (lastGoodByServer[serverId] == trimmed) lastGoodByServer.remove(serverId)
+            scope.launch {
+                databaseWriteGate.withWrite {
+                    database.plexResolvedOriginQueries.deleteOrigin(
+                        serverId = serverId,
+                        networkFingerprint = fingerprint,
+                        origin = trimmed,
+                    )
+                }
+            }
         }
     }
 
@@ -269,6 +364,8 @@ class PlexConnectionResolver(
     }
 
     private suspend fun adoptWinner(serverId: String, origin: String, fingerprint: String) {
+        forgottenServers.remove(serverId)
+        forgottenOrigins.remove(ForgottenOrigin(serverId, origin))
         memoryCache[CacheKey(serverId, fingerprint)] = origin
         lastGoodByServer[serverId] = origin
         persist(serverId, fingerprint, origin)
@@ -298,6 +395,11 @@ class PlexConnectionResolver(
     private data class CacheKey(
         val serverId: String,
         val fingerprint: String,
+    )
+
+    private data class ForgottenOrigin(
+        val serverId: String,
+        val origin: String,
     )
 
     companion object {

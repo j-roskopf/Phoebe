@@ -261,6 +261,54 @@ class PlaybackUrlOriginsTest {
     }
 
     @Test
+    fun playbackOriginCandidatesOmitPublicHttp32400Fallbacks() {
+        val relay = "https://45-33-97-28.abc.plex.direct:8443"
+        val closedWan = "http://45.33.97.28:32400"
+        val server = PlexServer(
+            id = "plex",
+            name = "Plex",
+            uri = relay,
+            owned = true,
+            connectionUris = listOf(relay, closedWan),
+            advertisedConnectionUris = listOf(relay),
+        )
+        val origins = playbackOriginCandidates(server = server, preferredOrigin = relay)
+        assertEquals(relay, origins.first())
+        assertFalse(closedWan in origins)
+    }
+
+    @Test
+    fun playbackOriginCandidatesKeepAdvertisedPublicHttp32400() {
+        val relay = "https://45-33-97-28.abc.plex.direct:8443"
+        val advertisedWan = "http://45.33.97.28:32400"
+        val server = PlexServer(
+            id = "plex",
+            name = "Plex",
+            uri = relay,
+            owned = true,
+            connectionUris = listOf(relay, advertisedWan),
+            advertisedConnectionUris = listOf(relay, advertisedWan),
+        )
+        val origins = playbackOriginCandidates(server = server, preferredOrigin = relay)
+        assertTrue(advertisedWan in origins)
+    }
+
+    @Test
+    fun failoverSkipsSynthesizedPublicHttp32400() {
+        val relay = "https://45-33-97-28.abc.plex.direct:8443/library/parts/18901/file.mp3"
+        val closedWan = "http://45.33.97.28:32400/library/parts/18901/file.mp3"
+        val nextRelay = "https://23-239-17-63.abc.plex.direct:8443/library/parts/18901/file.mp3"
+        assertEquals(
+            nextRelay,
+            nextPlaybackFailoverCandidate(
+                candidates = listOf(relay, closedWan, nextRelay),
+                tried = setOf(relay),
+                failedUri = relay,
+            ),
+        )
+    }
+
+    @Test
     fun transcodeFailureFallsBackToOriginalPartUrl() {
         val original = "https://23-92-30-53.abc.plex.direct:8443/library/parts/9.flac?X-Plex-Token=token"
         val transcode =
