@@ -21,5 +21,9 @@ VALUES (?, ?, ?, ?);
 deleteForServer:
 DELETE FROM PlexResolvedOriginRow WHERE serverId = ?;
 
+deleteOrigin:
+DELETE FROM PlexResolvedOriginRow
+WHERE serverId = ? AND networkFingerprint = ? AND origin = ?;
+
 clearAll:
 DELETE FROM PlexResolvedOriginRow;

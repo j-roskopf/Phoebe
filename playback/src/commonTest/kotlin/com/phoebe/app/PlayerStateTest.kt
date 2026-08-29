@@ -157,8 +157,9 @@ class PlayerStateTest {
             assertTrue(player.state.value.isBuffering)
             advanceTimeBy(25)
             runCurrent()
-            // Background resolve learns the winner for later tracks without restarting.
-            assertEquals(warm, player.state.value.queue.first().streamUrl)
+            // Probe won a different origin while still buffering — switch now, don't wait for timeout.
+            assertEquals(warm, player.state.value.currentTrack?.streamUrl)
+            assertEquals(2, player.fullLoads)
         } finally {
             PlaybackOriginResolverHolder.resolver = null
         }

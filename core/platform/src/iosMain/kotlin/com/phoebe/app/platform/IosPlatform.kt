@@ -138,6 +138,7 @@ private fun iosNetworkIdentitySnapshot(): NetworkIdentity {
         transport = transport,
         fingerprint = networkFingerprint(transport, material.ifBlank { transport.name.lowercase() }),
         metering = NetworkMeteringStatus(isMetered = isCellular, isCellular = isCellular),
+        localIpv4Prefixes = listOfNotNull(material.takeIf { it.contains(".0") }),
     )
 }
 
@@ -171,6 +172,11 @@ private fun iosNetworkIdentityFromPath(path: platform.Network.nw_path_t?): Netwo
             isMetered = expensive || constrained || isCellular,
             isCellular = isCellular,
         ),
+        localIpv4Prefixes = if (transport == NetworkTransport.Cellular) {
+            emptyList()
+        } else {
+            listOfNotNull(iosIpv4SubnetMaterial().takeIf { it.isNotBlank() })
+        },
     )
 }
 

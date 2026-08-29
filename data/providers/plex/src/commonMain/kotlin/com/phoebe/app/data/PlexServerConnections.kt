@@ -1,6 +1,8 @@
 package com.phoebe.app.data
 
 import com.phoebe.app.domain.PlexServer
+import com.phoebe.app.platform.NetworkIdentity
+import com.phoebe.app.platform.ipv4Slash24Prefix
 
 /**
  * Ordered Plex server base URLs — Plex-advertised LAN first, synthesized fallbacks last.
@@ -160,11 +162,50 @@ fun isLocalOnlyServerOrigin(uri: String): Boolean {
     if (scheme != "http" && scheme != "https") return false
     val host = uri.substringAfter("://").substringBefore(':').substringBefore('/').lowercase()
     if (host.isBlank() || host == "localhost" || host.endsWith(".local")) return true
-    val ip = when {
-        host.split('.').let { parts -> parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 } } -> host
-        else -> decodedIpFromPlexDirect(uri)
-    } ?: return false
+    val ip = ipv4FromServerOrigin(uri) ?: return false
     return isPrivateOrLoopbackIpv4(ip)
+}
+
+/**
+ * `http://<public-ipv4>:32400` synthesized from a plex.direct WAN host. Remote access uses
+ * the 8443 relay; this port is usually closed and burns playback failover budget.
+ */
+fun isPublicSynthesizedPlexHttpOrigin(uri: String): Boolean {
+    if (!uri.startsWith("http://", ignoreCase = true)) return false
+    if (isLocalOnlyServerOrigin(uri)) return false
+    val rest = uri.substringAfter("://")
+    val host = rest.substringBefore(':').substringBefore('/')
+    val port = rest.substringAfter(':', missingDelimiterValue = "80")
+        .substringBefore('/')
+        .toIntOrNull() ?: 80
+    if (port != 32400) return false
+    val parts = host.split('.')
+    return parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 }
+}
+
+/**
+ * True when this device has IPv4 prefixes and none of them match the server's advertised
+ * LAN addresses — e.g. Windows on `192.168.4.0` vs Plex's `172.16.1.2`.
+ */
+fun NetworkIdentity.shouldSkipAdvertisedLan(server: PlexServer): Boolean {
+    if (localIpv4Prefixes.isEmpty()) return false
+    val locals = (listOf(server.uri) + server.localConnectionUris + server.advertisedConnectionUris)
+        .distinct()
+        .filter { isLocalOnlyServerOrigin(it) }
+    if (locals.isEmpty()) return false
+    return locals.none { origin ->
+        val ip = ipv4FromServerOrigin(origin) ?: return@none false
+        ipv4Slash24Prefix(ip) in localIpv4Prefixes
+    }
+}
+
+internal fun ipv4FromServerOrigin(uri: String): String? {
+    val host = uri.substringAfter("://").substringBefore(':').substringBefore('/').lowercase()
+    if (host.isBlank()) return null
+    host.split('.').let { parts ->
+        if (parts.size == 4 && parts.all { it.toIntOrNull() in 0..255 }) return host
+    }
+    return decodedIpFromPlexDirect(uri)
 }
 
 private fun isPrivateOrLoopbackIpv4(ip: String): Boolean {

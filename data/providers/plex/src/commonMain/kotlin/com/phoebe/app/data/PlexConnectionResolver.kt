@@ -94,7 +94,9 @@ class PlexConnectionResolver(
 
     fun demoteLocalOrigins(identity: NetworkIdentity = mutableIdentity.value): Boolean {
         if (!preferLocalNetworkProvider()) return true
-        return identity.demotesLocalOrigins
+        if (identity.demotesLocalOrigins) return true
+        val server = lastServer ?: return false
+        return identity.shouldSkipAdvertisedLan(server)
     }
 
     fun cached(server: PlexServer, identity: NetworkIdentity = mutableIdentity.value): String? {
@@ -124,6 +126,7 @@ class PlexConnectionResolver(
     }
 
     suspend fun hydrateFromDisk(server: PlexServer) {
+        lastServer = server
         val fingerprint = mutableIdentity.value.fingerprint
         val key = CacheKey(server.id, fingerprint)
         if (memoryCache.containsKey(key)) return
@@ -142,6 +145,10 @@ class PlexConnectionResolver(
     /**
      * Parallel `/identity` race. Returns the first reachable base within [deadlineMs],
      * preferring a warm cache hit when present.
+     *
+     * Cache hits return immediately so Android/AppState (Main) and catalog warmup never block
+     * on a dead relay. Validation happens in the background; [resolveFresh] is the probed path
+     * for in-flight playback failover.
      */
     suspend fun resolve(
         server: PlexServer,
@@ -153,9 +160,8 @@ class PlexConnectionResolver(
         val identity = mutableIdentity.value
         hydrateFromDisk(server)
         cached(server, identity)?.let { warm ->
-            // Still confirm quickly if demoting local and the warm entry is LAN-only.
             if (!(demoteLocalOrigins(identity) && isLocalOnlyServerOrigin(warm))) {
-                scope.launch { warmKeepAlive(warm, token) }
+                scope.launch { validateCachedOrigin(server, token, warm, identity) }
                 return warm
             }
         }
@@ -164,8 +170,65 @@ class PlexConnectionResolver(
             return cached(server, identity)
         }
         try {
-            cached(server, identity)?.let { return it }
             return raceBases(server, token, deadlineMs, identity)
+        } finally {
+            resolveMutex.unlock()
+        }
+    }
+
+    /**
+     * Confirm the cached origin with `/identity`, then race if it is dead. Safe to call from
+     * a background dispatcher during playback — not from Android AppState on Main.
+     */
+    suspend fun resolveFresh(
+        server: PlexServer,
+        token: String,
+        deadlineMs: Long = RemoteProbeTimeoutMs,
+    ): String? {
+        lastServer = server
+        lastToken = token
+        val identity = mutableIdentity.value
+        hydrateFromDisk(server)
+        cached(server, identity)?.let { warm ->
+            if (!(demoteLocalOrigins(identity) && isLocalOnlyServerOrigin(warm))) {
+                val confirmed = withTimeoutOrNull(probeTimeoutMs(warm, deadlineMs)) {
+                    probeIdentity(warm, token)
+                } == true
+                if (confirmed) return warm
+                PhoebeLog.d("PlexConnectionResolver") {
+                    "cached origin missed probe origin=$warm; racing"
+                }
+            }
+        }
+        if (!resolveMutex.tryLock()) {
+            return cached(server, identity)
+        }
+        try {
+            return raceBases(server, token, deadlineMs, identity)
+        } finally {
+            resolveMutex.unlock()
+        }
+    }
+
+    private suspend fun validateCachedOrigin(
+        server: PlexServer,
+        token: String,
+        warm: String,
+        identity: NetworkIdentity,
+    ) {
+        val confirmed = withTimeoutOrNull(probeTimeoutMs(warm, RemoteProbeTimeoutMs)) {
+            probeIdentity(warm, token)
+        } == true
+        if (confirmed) {
+            warmKeepAlive(warm, token)
+            return
+        }
+        PhoebeLog.d("PlexConnectionResolver") {
+            "cached origin missed background probe origin=$warm; racing"
+        }
+        if (!resolveMutex.tryLock()) return
+        try {
+            raceBases(server, token, RemoteProbeTimeoutMs, identity)
         } finally {
             resolveMutex.unlock()
         }
@@ -187,10 +250,24 @@ class PlexConnectionResolver(
         if (origin == null) {
             memoryCache.remove(key)
             lastGoodByServer.remove(serverId)
+            scope.launch {
+                databaseWriteGate.withWrite {
+                    database.plexResolvedOriginQueries.deleteForServer(serverId)
+                }
+            }
         } else {
             val trimmed = origin.trimEnd('/')
             if (memoryCache[key] == trimmed) memoryCache.remove(key)
             if (lastGoodByServer[serverId] == trimmed) lastGoodByServer.remove(serverId)
+            scope.launch {
+                databaseWriteGate.withWrite {
+                    database.plexResolvedOriginQueries.deleteOrigin(
+                        serverId = serverId,
+                        networkFingerprint = fingerprint,
+                        origin = trimmed,
+                    )
+                }
+            }
         }
     }
 

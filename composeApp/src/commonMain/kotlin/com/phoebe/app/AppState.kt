@@ -79,6 +79,7 @@ import com.phoebe.app.data.PlayHistoryRankedEntries
 import com.phoebe.app.data.PlexPlayHistorySyncResult
 import com.phoebe.app.data.PlexClient
 import com.phoebe.app.data.defaultPlexRadioStations
+import com.phoebe.app.data.shouldSkipAdvertisedLan
 import com.phoebe.app.playlists.PlaylistExportFormat
 import com.phoebe.app.player.MusicAssistantRemotePlayback
 import com.phoebe.app.player.PlaybackOriginResolver
@@ -2750,7 +2751,9 @@ class AppState(
                 val current = session.value ?: return null
                 val server = current.selectedServer ?: return null
                 val token = current.serverAuthToken() ?: return null
-                return resolver.resolve(server, token, deadlineMs = deadlineMs)
+                return withContext(Dispatchers.Default) {
+                    resolver.resolveFresh(server, token, deadlineMs = deadlineMs)
+                }
             }
 
             override fun demoteLocalOrigins(): Boolean = resolver.demoteLocalOrigins()
@@ -2769,6 +2772,11 @@ class AppState(
                     preferredOrigin = currentPlaybackOrigin(),
                     demoteLocalOrigins = resolver.demoteLocalOrigins(),
                 )
+            }
+
+            override fun forgetOrigin(origin: String) {
+                val server = session.value?.selectedServer ?: return
+                resolver.forget(server.id, origin)
             }
         }
         val server = session.value?.selectedServer
@@ -4199,9 +4207,10 @@ internal fun Track.withFreshPlaybackUrls(
     session: PlexSession,
     liveOrigin: String? = null,
 ): Track {
+    val identity = currentNetworkIdentity()
     val demoteLocalOrigins = StreamingPlaybackPolicyHolder.settings.shouldDemoteLocalOrigins(
-        currentNetworkIdentity().demotesLocalOrigins,
-    )
+        identity.demotesLocalOrigins,
+    ) || session.selectedServer?.let { identity.shouldSkipAdvertisedLan(it) } == true
     val origins = playbackOriginCandidates(
         server = session.selectedServer,
         preferredOrigin = liveOrigin,

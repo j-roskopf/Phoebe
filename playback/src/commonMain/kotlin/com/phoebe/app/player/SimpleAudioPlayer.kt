@@ -174,37 +174,56 @@ abstract class SimpleAudioPlayer(
         clearStickyIfDemoted()
         val knownOrigin = acceptedPlaybackOrigin(resolver?.cachedOrigin())
             ?: acceptedPlaybackOrigin(stickyPlaybackOrigin)
-        if (knownOrigin != null) {
-            launchPreparedPlayback(
-                queue = queue.withResolvedOrigin(knownOrigin),
-                startIndex = startIndex,
-                generation = generation,
-                sameQueue = sameQueue,
-                origin = knownOrigin,
-            )
-            return
-        }
-        // Cold start: play the already-stamped queue URLs now; learn the winner in the background.
         launchPreparedPlayback(
-            queue = queue,
+            queue = if (knownOrigin != null) queue.withResolvedOrigin(knownOrigin) else queue,
             startIndex = startIndex,
             generation = generation,
             sameQueue = sameQueue,
-            origin = null,
+            origin = knownOrigin,
         )
         if (resolver == null) return
+        followOriginResolutionInBackground(generation, resolver)
+    }
+
+    /**
+     * Cache can be a dead relay from last launch. Probe in the background and switch the
+     * in-flight buffer if a different origin wins, instead of waiting out JavaFX's 10s hang.
+     */
+    private fun followOriginResolutionInBackground(
+        generation: Int,
+        resolver: PlaybackOriginResolver,
+    ) {
         scope.launch {
             val resolved = runCatching {
                 resolver.resolveOrigin(PlaybackOriginResolver.DefaultPlayResolveDeadlineMs)
-            }.getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return@launch
-            if (!isPlayRequestCurrent(generation)) return@launch
-            rememberStickyPlaybackOrigin(resolved)
+            }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return@launch
+            if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
+            val accepted = acceptedPlaybackOrigin(resolved) ?: resolved
+            rememberStickyPlaybackOrigin(accepted)
             val current = mutableState.value
             if (current.queue.isEmpty()) return@launch
-            val rebased = current.queue.withResolvedOrigin(resolved)
-            if (rebased === current.queue) return@launch
-            mutableState.value = current.copy(queue = rebased)
-            onQueueEdited(rebased, current.currentIndex)
+            val playing = current.currentTrack ?: return@launch
+            val currentUri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(playing)
+                .ifBlank { playing.streamUrl }
+            val rebased = current.queue.withResolvedOrigin(accepted)
+            if (rebased !== current.queue) {
+                mutableState.value = current.copy(queue = rebased)
+                onQueueEdited(rebased, current.currentIndex)
+            }
+            if (!mutableState.value.isBuffering) return@launch
+            val nextTrack = rebased.getOrNull(current.currentIndex) ?: playing
+            val nextUri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(nextTrack)
+                .ifBlank { nextTrack.streamUrl }
+            if (nextUri.isBlank()) return@launch
+            val currentOrigin = playbackOriginOf(currentUri)
+            val nextOrigin = playbackOriginOf(nextUri) ?: return@launch
+            if (currentOrigin != null && currentOrigin.equals(nextOrigin, ignoreCase = true)) return@launch
+            if (nextUri in triedPlaybackUris) return@launch
+            forgetFailedPlaybackOrigin(currentUri)
+            notePlaybackUri(currentUri, generation)
+            startFailoverAttempt(generation, nextUri)
         }
     }
 
@@ -976,6 +995,7 @@ abstract class SimpleAudioPlayer(
 
     protected fun replayWithFailoverUri(generation: Int, failedUri: String?): Boolean {
         if (!isPlayRequestCurrent(generation) || !playWhenReady) return false
+        forgetFailedPlaybackOrigin(failedUri)
         val next = nextPlaybackFailoverUri(generation, failedUri)
             ?: return rediscoverOriginsAndRetry(generation, failedUri)
         val trackId = mutableState.value.currentTrack?.id
@@ -1010,6 +1030,14 @@ abstract class SimpleAudioPlayer(
             startPositionMs = resumePositionMs,
         )
         return true
+    }
+
+    private fun forgetFailedPlaybackOrigin(failedUri: String?) {
+        val origin = failedUri?.let(::playbackOriginOf)?.takeIf { it.isNotBlank() } ?: return
+        if (stickyPlaybackOrigin?.let { playbackOriginOf(it) }?.equals(origin, ignoreCase = true) == true) {
+            stickyPlaybackOrigin = null
+        }
+        PlaybackOriginResolverHolder.resolver?.forgetOrigin(origin)
     }
 
     /**

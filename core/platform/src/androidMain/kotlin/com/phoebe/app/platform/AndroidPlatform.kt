@@ -197,16 +197,35 @@ private fun androidNetworkIdentity(
         isMetered = connectivity.isActiveNetworkMetered,
         isCellular = transport == NetworkTransport.Cellular,
     )
+    val linkProperties = connectivity.getLinkProperties(network)
+    val prefixes = if (transport == NetworkTransport.Cellular || transport == NetworkTransport.None) {
+        emptyList()
+    } else {
+        androidLocalIpv4Prefixes(linkProperties)
+    }
     val material = when (transport) {
         NetworkTransport.Cellular -> "cellular"
         NetworkTransport.None -> ""
-        else -> androidNetworkMaterial(connectivity.getLinkProperties(network))
+        else -> androidNetworkMaterial(linkProperties)
     }
     return NetworkIdentity(
         transport = transport,
         fingerprint = networkFingerprint(transport, material),
         metering = metering,
+        localIpv4Prefixes = prefixes,
     )
+}
+
+private fun androidLocalIpv4Prefixes(linkProperties: LinkProperties?): List<String> {
+    if (linkProperties == null) return emptyList()
+    return linkProperties.linkAddresses
+        .mapNotNull { address ->
+            val host = address.address?.hostAddress ?: return@mapNotNull null
+            if (':' in host) return@mapNotNull null
+            ipv4Slash24Prefix(host)
+        }
+        .distinct()
+        .sorted()
 }
 
 private fun androidNetworkMaterial(linkProperties: LinkProperties?): String {

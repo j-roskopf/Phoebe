@@ -1,6 +1,7 @@
 package com.phoebe.app.player
 
 import com.phoebe.app.data.isLocalOnlyServerOrigin
+import com.phoebe.app.data.isPublicSynthesizedPlexHttpOrigin
 import com.phoebe.app.data.reachableBaseUris
 import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.Track
@@ -70,7 +71,7 @@ fun playbackOriginCandidates(
     val fromServer = server?.reachableBaseUris(
         preferredFirst = preferred,
         demoteLocalOrigins = demoteLocalOrigins,
-    ).orEmpty().map { it.trimEnd('/') }
+    ).orEmpty().map { it.trimEnd('/') }.filterNot(::isPublicSynthesizedPlexHttpOrigin)
     // reachableBaseUris already applies demotion to preferredFirst; do not re-prepend
     // server.uri / a stale LAN preferred and undo remote-first ordering.
     if (fromServer.isNotEmpty()) return fromServer
@@ -114,7 +115,8 @@ internal fun nextPlaybackFailoverCandidate(
     return candidates.firstOrNull { candidate ->
         candidate.isNotBlank() &&
             candidate !in tried &&
-            !(skipLocalOrigins && isLocalOnlyPlaybackOrigin(candidate))
+            !(skipLocalOrigins && isLocalOnlyPlaybackOrigin(candidate)) &&
+            !isPublicSynthesizedPlexHttpOrigin(candidate)
     }
 }
 
