@@ -77,6 +77,7 @@ class ImportExportService(
         appSettingsRepository.setCrossfadeSeconds(backup.settings.crossfadeSeconds)
         appSettingsRepository.setScanLibraryOnLaunch(backup.settings.scanLibraryOnLaunch)
         appSettingsRepository.setNotifyWhenDownloadFinishes(backup.settings.notifyWhenDownloadFinishes)
+        appSettingsRepository.setNotifyOnTrackChange(backup.settings.notifyOnTrackChange)
         appSettingsRepository.setNowPlayingVisualizerPreset(backup.settings.nowPlayingVisualizerPreset)
         appSettingsRepository.setNowPlayingVisualizerInTvFrame(backup.settings.nowPlayingVisualizerInTvFrame)
         appSettingsRepository.setBlurredArtworkAppearance(backup.settings.blurredArtworkAppearance)

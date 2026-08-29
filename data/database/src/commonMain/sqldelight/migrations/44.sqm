@@ -1,0 +1,1 @@
+ALTER TABLE AppSettingsRow ADD COLUMN notifyOnTrackChange INTEGER NOT NULL DEFAULT 0;

@@ -40,6 +40,7 @@ import com.phoebe.app.di.RouteViewModelFactory
 import com.phoebe.app.di.createPhoebeAppGraph
 import com.phoebe.app.platform.PlatformStorage
 import com.phoebe.app.platform.DownloadNotifier
+import com.phoebe.app.platform.NowPlayingNotifier
 import com.phoebe.app.platform.SecureCredentialStore
 import com.phoebe.app.player.AudioPlayer
 import com.phoebe.app.player.CastController
@@ -91,6 +92,7 @@ class AppDependencies(
     val playbackTransportService: PlaybackTransportService,
     val systemVolume: SystemVolumeController,
     val downloadNotifier: DownloadNotifier,
+    val nowPlayingNotifier: NowPlayingNotifier,
     val navigationService: AppNavigationService,
     val appUpdateService: AppUpdateService,
     val routeViewModelFactory: RouteViewModelFactory,
@@ -185,6 +187,7 @@ class AppDependencies(
                 playbackTransportService = services.playbackTransportService,
                 systemVolume = services.systemVolumeController,
                 downloadNotifier = services.downloadNotifier,
+                nowPlayingNotifier = services.nowPlayingNotifier,
                 navigationService = services.navigationService,
                 appUpdateService = services.appUpdateService,
                 routeViewModelFactory = services.routeViewModelFactory,

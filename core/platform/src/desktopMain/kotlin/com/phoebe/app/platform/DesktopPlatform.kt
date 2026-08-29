@@ -137,7 +137,9 @@ private fun isDesktopVirtualInterfaceName(name: String): Boolean {
     }
 }
 
-private val storageRoot: File by lazy {
+// internal rather than private: NowPlayingNotifierDesktop resolves its cover-art
+// cache against the same storage root.
+internal val storageRoot: File by lazy {
     desktopStorageRoot()
 }
 

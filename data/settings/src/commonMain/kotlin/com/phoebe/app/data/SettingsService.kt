@@ -42,6 +42,10 @@ class SettingsService(
         appSettingsRepository.setNotifyWhenDownloadFinishes(enabled)
     }
 
+    suspend fun setNotifyOnTrackChange(enabled: Boolean) {
+        appSettingsRepository.setNotifyOnTrackChange(enabled)
+    }
+
     suspend fun setKeepPlayingEnabled(enabled: Boolean) {
         appSettingsRepository.setKeepPlayingEnabled(enabled)
     }

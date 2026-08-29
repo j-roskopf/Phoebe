@@ -74,6 +74,12 @@ class AppSettingsRepository(
         }
     }
 
+    suspend fun setNotifyOnTrackChange(enabled: Boolean) {
+        updateAndSave { current ->
+            current.copy(notifyOnTrackChange = enabled)
+        }
+    }
+
     suspend fun setKeepPlayingEnabled(enabled: Boolean) {
         saveMutex.withLock {
             mutableState.update { current ->
@@ -221,6 +227,7 @@ class AppSettingsRepository(
                         crossfadeSeconds = persisted.crossfadeSeconds.toLong(),
                         scanLibraryOnLaunch = persisted.scanLibraryOnLaunch.toDb(),
                         notifyWhenDownloadFinishes = persisted.notifyWhenDownloadFinishes.toDb(),
+                        notifyOnTrackChange = persisted.notifyOnTrackChange.toDb(),
                         keepPlayingEnabled = persisted.keepPlayingEnabled.toDb(),
                         persistEqualizerSettings = persisted.persistEqualizerSettings.toDb(),
                         persistVolumeSettings = persisted.persistVolumeSettings.toDb(),
@@ -252,6 +259,7 @@ class AppSettingsRepository(
             crossfadeSeconds = crossfadeSeconds.toInt(),
             scanLibraryOnLaunch = scanLibraryOnLaunch.toBool(),
             notifyWhenDownloadFinishes = notifyWhenDownloadFinishes.toBool(),
+            notifyOnTrackChange = notifyOnTrackChange.toBool(),
             keepPlayingEnabled = keepPlayingEnabled.toBool(),
             persistEqualizerSettings = persistEqualizerSettings.toBool(),
             persistVolumeSettings = persistVolumeSettings.toBool(),

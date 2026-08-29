@@ -782,3 +782,16 @@ private external fun requestBrowserNotificationPermission(callback: (String) -> 
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun("(title, body) => { new Notification(title, { body }); }")
 private external fun showBrowserNotification(title: String, body: String)
+
+/**
+ * No-op: this platform surfaces now-playing through its own mechanism, so a
+ * notification would duplicate it.
+ */
+actual class NowPlayingNotifier actual constructor() {
+    actual suspend fun notifyNowPlaying(
+        title: String,
+        artist: String,
+        album: String,
+        artworkUrl: String,
+    ): Boolean = false
+}

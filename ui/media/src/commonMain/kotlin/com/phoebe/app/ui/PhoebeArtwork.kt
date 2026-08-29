@@ -924,7 +924,7 @@ private fun String.isRemoteArtworkUrl(): Boolean =
     startsWith("http://") || startsWith("https://")
 
 /** Ask remote servers for a smaller JPEG when the URL supports sizing query params. */
-internal fun remoteArtworkRequestUrls(url: String, maxDecodeDimension: Int): List<String> {
+fun remoteArtworkRequestUrls(url: String, maxDecodeDimension: Int): List<String> {
     val sized = url.withRequestImageSize(maxDecodeDimension)
     return if (sized == url) listOf(url) else listOf(sized, url)
 }

@@ -673,3 +673,16 @@ private val platformNetworkJson = Json {
 
 private const val JellyfinDiscoveryPort = 7359
 internal const val PhoebeDownloadWorkerName = "phoebe-download-runner"
+
+/**
+ * No-op: this platform surfaces now-playing through its own mechanism, so a
+ * notification would duplicate it.
+ */
+actual class NowPlayingNotifier actual constructor() {
+    actual suspend fun notifyNowPlaying(
+        title: String,
+        artist: String,
+        album: String,
+        artworkUrl: String,
+    ): Boolean = false
+}

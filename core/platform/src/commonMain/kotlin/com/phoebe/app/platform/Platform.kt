@@ -137,6 +137,21 @@ expect class DownloadNotifier() {
     suspend fun notifyDownloadFinished(title: String, body: String): Boolean
 }
 
+/**
+ * Notifies the desktop when a new track starts. Implemented on Linux via
+ * org.freedesktop.Notifications; a no-op elsewhere, since Android already posts a
+ * playback notification, iOS has its own now-playing UI, and macOS surfaces the same
+ * information through its media session.
+ */
+expect class NowPlayingNotifier() {
+    suspend fun notifyNowPlaying(
+        title: String,
+        artist: String,
+        album: String,
+        artworkUrl: String,
+    ): Boolean
+}
+
 @Serializable
 internal data class JellyfinDiscoveryResponse(
     val Address: String? = null,

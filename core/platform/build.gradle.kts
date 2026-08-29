@@ -67,6 +67,8 @@ kotlin {
                 implementation(libs.jna)
                 implementation(libs.jna.platform)
                 implementation(libs.sentry.kotlin.multiplatform)
+                implementation(libs.dbus.java.core)
+                implementation(libs.dbus.java.transport.native.unixsocket)
             }
         }
         wasmJsMain {

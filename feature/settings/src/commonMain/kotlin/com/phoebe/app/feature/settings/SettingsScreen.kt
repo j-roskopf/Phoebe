@@ -149,6 +149,7 @@ fun SettingsDesktopView(
     onCrossfadeSeconds: (Int) -> Unit,
     onScanLibraryOnLaunch: (Boolean) -> Unit,
     onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
+    onNotifyOnTrackChange: (Boolean) -> Unit,
     onKeepPlayingEnabled: (Boolean) -> Unit = {},
     onPersistEqualizerSettings: (Boolean) -> Unit = {},
     onPersistVolumeSettings: (Boolean) -> Unit = {},
@@ -315,6 +316,7 @@ fun SettingsDesktopView(
                     SettingsCategory.Notifications -> NotificationsSettingsCard(
                         settings = appSettings,
                         onNotifyWhenDownloadFinishes = onNotifyWhenDownloadFinishes,
+                        onNotifyOnTrackChange = onNotifyOnTrackChange,
                     )
                     SettingsCategory.About -> AboutSettingsCard(
                         updateState = appUpdateState,
@@ -357,6 +359,7 @@ fun SettingsMobileView(
     onCrossfadeSeconds: (Int) -> Unit,
     onScanLibraryOnLaunch: (Boolean) -> Unit,
     onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
+    onNotifyOnTrackChange: (Boolean) -> Unit,
     onKeepPlayingEnabled: (Boolean) -> Unit = {},
     onPersistEqualizerSettings: (Boolean) -> Unit = {},
     onPersistVolumeSettings: (Boolean) -> Unit = {},
@@ -499,6 +502,7 @@ fun SettingsMobileView(
         NotificationsSettingsCard(
             settings = appSettings,
             onNotifyWhenDownloadFinishes = onNotifyWhenDownloadFinishes,
+            onNotifyOnTrackChange = onNotifyOnTrackChange,
         )
         SectionLabel("ABOUT", PhoebeUi.accentLight)
         AboutSettingsCard(
@@ -1113,15 +1117,22 @@ private fun capabilitySubtitle(capability: FeatureCapability, supported: String)
 private fun NotificationsSettingsCard(
     settings: AppSettings,
     onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
+    onNotifyOnTrackChange: (Boolean) -> Unit,
 ) {
     SettingsCard {
         Text("Notifications", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text("Download alerts", color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
+        Text("Alerts", color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
         SettingsSwitchRow(
             title = "Download finished",
             subtitle = "Be notified when something finishes downloading",
             checked = settings.notifyWhenDownloadFinishes,
             onCheckedChange = onNotifyWhenDownloadFinishes,
+        )
+        SettingsSwitchRow(
+            title = "Now playing",
+            subtitle = "Show a notification when a new track starts",
+            checked = settings.notifyOnTrackChange,
+            onCheckedChange = onNotifyOnTrackChange,
         )
     }
 }

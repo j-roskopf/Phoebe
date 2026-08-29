@@ -291,6 +291,7 @@ internal data class SettingsActions(
     val onCrossfadeSeconds: (Int) -> Unit,
     val onScanLibraryOnLaunch: (Boolean) -> Unit,
     val onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
+    val onNotifyOnTrackChange: (Boolean) -> Unit,
     val onKeepPlayingEnabled: (Boolean) -> Unit = {},
     val onPersistEqualizerSettings: (Boolean) -> Unit = {},
     val onPersistVolumeSettings: (Boolean) -> Unit = {},

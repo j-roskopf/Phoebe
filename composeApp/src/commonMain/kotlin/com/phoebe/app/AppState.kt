@@ -105,6 +105,7 @@ import com.phoebe.app.platform.openExternalUrl
 import com.phoebe.app.platform.requestNotificationPermission
 import com.phoebe.app.ui.AppNavigationRequest
 import com.phoebe.app.ui.CollectionMixSeed
+import com.phoebe.app.ui.remoteArtworkRequestUrls
 import com.phoebe.app.updates.AppUpdateState
 import io.ktor.http.Url
 import kotlin.random.Random
@@ -604,6 +605,7 @@ class AppState(
         recordPlaybackHistory()
         surfacePlaybackFailures()
         surfaceCastMessages()
+        notifyNowPlayingChanges()
         monitorKeepPlaying()
         dependencies.plexPlaybackReporter.start(scope)
         syncPlayHistoryAfterProviderReports()
@@ -653,6 +655,41 @@ class AppState(
         mutableArtistEvents.value = emptyMap()
         mutableAlbumMusicBrainzMetadata.value = emptyMap()
         mutableArtistMusicBrainzArtwork.value = emptyMap()
+    }
+
+    /**
+     * Posts a desktop notification when a new track starts.
+     *
+     * Keyed on track id rather than on player state: position updates arrive
+     * continuously during playback, so anything broader would notify on every tick.
+     * The isPlaying guard keeps a merely-queued track from notifying.
+     */
+    private fun notifyNowPlayingChanges() {
+        scope.launch {
+            var lastNotifiedTrackId: String? = null
+            dependencies.audioPlayer.state
+                .map { state -> state.currentTrack?.takeIf { state.isPlaying } }
+                .distinctUntilChanged()
+                .collect { track ->
+                    if (track == null) return@collect
+                    if (track.id == lastNotifiedTrackId) return@collect
+                    if (!appSettings.value.notifyOnTrackChange) return@collect
+                    lastNotifiedTrackId = track.id
+                    val artworkUrl = track.localArtworkUri?.takeIf { it.isNotBlank() }
+                        ?: track.thumbUrl.orEmpty()
+                    dependencies.nowPlayingNotifier.notifyNowPlaying(
+                        title = track.title,
+                        artist = track.artist.orEmpty(),
+                        album = track.album.orEmpty(),
+                        // Ask the server for a thumbnail rather than the original. Plex
+                        // artwork URLs return full-size images -- routinely 2400x2400
+                        // and several megabytes -- which is absurd to download for
+                        // something a notification daemon draws at around 64px, and it
+                        // would leave the cache holding hundreds of megabytes.
+                        artworkUrl = remoteArtworkRequestUrls(artworkUrl, NotificationArtworkPixels).first(),
+                    )
+                }
+        }
     }
 
     private fun surfacePlaybackFailures() {
@@ -3303,6 +3340,13 @@ class AppState(
         }
     }
 
+    fun setNotifyOnTrackChange(enabled: Boolean) = scope.launch {
+        dependencies.settingsService.setNotifyOnTrackChange(enabled)
+        if (enabled) {
+            requestNotificationPermission()
+        }
+    }
+
     fun setKeepPlayingEnabled(enabled: Boolean) = scope.launch {
         dependencies.settingsService.setKeepPlayingEnabled(enabled)
         if (enabled) {
@@ -4400,6 +4444,13 @@ private fun List<Track>.singleProviderTypeOrNull(): MediaProviderType? {
 }
 
 private fun Long?.orZero(): Long = this ?: 0L
+
+/**
+ * Requested edge length for artwork shown in a track-change notification. Notification
+ * daemons draw these small -- mako defaults to 64px -- so this only needs to be large
+ * enough to look sharp on a HiDPI display.
+ */
+private const val NotificationArtworkPixels = 256
 
 private const val PlaybackHistoryDedupeWindowMs = 30_000L
 

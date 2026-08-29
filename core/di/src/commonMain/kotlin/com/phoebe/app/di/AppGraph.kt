@@ -46,6 +46,7 @@ import com.phoebe.app.data.UserArtifactsRepository
 import com.phoebe.app.data.db.DatabaseWriteGate
 import com.phoebe.app.db.PhoebeDatabase
 import com.phoebe.app.platform.DownloadNotifier
+import com.phoebe.app.platform.NowPlayingNotifier
 import com.phoebe.app.platform.PlatformStorage
 import com.phoebe.app.platform.SecureCredentialStore
 import com.phoebe.app.platform.createPlatformHttpClient
@@ -133,6 +134,7 @@ data class AppGraphServices(
     val playbackTransportService: PlaybackTransportService,
     val systemVolumeController: SystemVolumeController,
     val downloadNotifier: DownloadNotifier,
+    val nowPlayingNotifier: NowPlayingNotifier,
     val navigationService: AppNavigationService,
     val appUpdateService: AppUpdateService,
     val routeViewModelFactory: RouteViewModelFactory,
@@ -192,6 +194,7 @@ interface AppGraphContributions {
     val playbackTransportService: PlaybackTransportService
     val systemVolumeController: SystemVolumeController
     val downloadNotifier: DownloadNotifier
+    val nowPlayingNotifier: NowPlayingNotifier
     val updateInstaller: PlatformUpdateInstaller
     val updateRepository: GitHubReleaseUpdateRepository
     val appUpdateCoordinator: AppUpdateCoordinator
@@ -253,6 +256,7 @@ interface AppGraphProviders {
         playbackTransportService: PlaybackTransportService,
         systemVolumeController: SystemVolumeController,
         downloadNotifier: DownloadNotifier,
+        nowPlayingNotifier: NowPlayingNotifier,
         navigationService: AppNavigationService,
         appUpdateService: AppUpdateService,
         routeViewModelFactory: RouteViewModelFactory,
@@ -298,6 +302,7 @@ interface AppGraphProviders {
             playbackTransportService = playbackTransportService,
             systemVolumeController = systemVolumeController,
             downloadNotifier = downloadNotifier,
+            nowPlayingNotifier = nowPlayingNotifier,
             navigationService = navigationService,
             appUpdateService = appUpdateService,
             routeViewModelFactory = routeViewModelFactory,
@@ -348,6 +353,10 @@ interface AppGraphProviders {
     @Provides
     @SingleIn(AppScope::class)
     fun provideDownloadNotifier(): DownloadNotifier = DownloadNotifier()
+
+    @Provides
+    @SingleIn(AppScope::class)
+    fun provideNowPlayingNotifier(): NowPlayingNotifier = NowPlayingNotifier()
 
     @Provides
     @SingleIn(AppScope::class)

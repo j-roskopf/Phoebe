@@ -1081,6 +1081,7 @@ data class AppSettings(
     val crossfadeSeconds: Int = 0,
     val scanLibraryOnLaunch: Boolean = false,
     val notifyWhenDownloadFinishes: Boolean = false,
+    val notifyOnTrackChange: Boolean = false,
     val keepPlayingEnabled: Boolean = false,
     val persistEqualizerSettings: Boolean = false,
     val persistVolumeSettings: Boolean = false,

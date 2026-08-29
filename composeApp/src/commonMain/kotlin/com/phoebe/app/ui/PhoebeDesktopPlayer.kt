@@ -334,6 +334,7 @@ internal fun DesktopPlayer(
     val onCrossfadeSeconds = settingsActions.onCrossfadeSeconds
     val onScanLibraryOnLaunch = settingsActions.onScanLibraryOnLaunch
     val onNotifyWhenDownloadFinishes = settingsActions.onNotifyWhenDownloadFinishes
+    val onNotifyOnTrackChange = settingsActions.onNotifyOnTrackChange
     val onKeepPlayingEnabled = settingsActions.onKeepPlayingEnabled
     val onPersistEqualizerSettingsFromSettings = settingsActions.onPersistEqualizerSettings
     val onPersistVolumeSettingsFromSettings = settingsActions.onPersistVolumeSettings
@@ -960,6 +961,7 @@ internal fun DesktopPlayer(
                                             onCrossfadeSeconds = onCrossfadeSeconds,
                                             onScanLibraryOnLaunch = onScanLibraryOnLaunch,
                                             onNotifyWhenDownloadFinishes = onNotifyWhenDownloadFinishes,
+                                            onNotifyOnTrackChange = onNotifyOnTrackChange,
                                             onKeepPlayingEnabled = onKeepPlayingEnabled,
                                             onPersistEqualizerSettings = onPersistEqualizerSettingsFromSettings,
                                             onPersistVolumeSettings = onPersistVolumeSettingsFromSettings,
