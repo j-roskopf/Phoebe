@@ -51,6 +51,9 @@ class PlexConnectionResolver(
     private val memoryCache = mutableMapOf<CacheKey, String>()
     /** Last origin that worked for a server, kept across fingerprint flaps (VPN/docker ifaces). */
     private val lastGoodByServer = mutableMapOf<String, String>()
+    /** Dropped until [remember] / a race adopts them again, so hydrate cannot reload a dead row. */
+    private val forgottenOrigins = mutableSetOf<ForgottenOrigin>()
+    private val forgottenServers = mutableSetOf<String>()
     private val mutableIdentity = MutableStateFlow(currentNetworkIdentity())
     val networkIdentity: StateFlow<NetworkIdentity> = mutableIdentity
 
@@ -127,6 +130,7 @@ class PlexConnectionResolver(
 
     suspend fun hydrateFromDisk(server: PlexServer) {
         lastServer = server
+        if (server.id in forgottenServers) return
         val fingerprint = mutableIdentity.value.fingerprint
         val key = CacheKey(server.id, fingerprint)
         if (memoryCache.containsKey(key)) return
@@ -135,6 +139,7 @@ class PlexConnectionResolver(
                 .selectOrigin(server.id, fingerprint)
                 .awaitAsOneOrNull()
         }?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return
+        if (ForgottenOrigin(server.id, origin) in forgottenOrigins) return
         memoryCache[key] = origin
         lastGoodByServer[server.id] = origin
         PhoebeLog.d("PlexConnectionResolver") {
@@ -189,24 +194,32 @@ class PlexConnectionResolver(
         lastToken = token
         val identity = mutableIdentity.value
         hydrateFromDisk(server)
+        var probedDead: String? = null
         cached(server, identity)?.let { warm ->
             if (!(demoteLocalOrigins(identity) && isLocalOnlyServerOrigin(warm))) {
                 val confirmed = withTimeoutOrNull(probeTimeoutMs(warm, deadlineMs)) {
                     probeIdentity(warm, token)
                 } == true
                 if (confirmed) return warm
+                probedDead = warm
                 PhoebeLog.d("PlexConnectionResolver") {
                     "cached origin missed probe origin=$warm; racing"
                 }
             }
         }
-        if (!resolveMutex.tryLock()) {
-            return cached(server, identity)
-        }
-        try {
-            return raceBases(server, token, deadlineMs, identity)
-        } finally {
-            resolveMutex.unlock()
+        return resolveMutex.withLock {
+            cached(server, identity)?.let { warm ->
+                val alreadyFailed = probedDead?.equals(warm, ignoreCase = true) == true
+                if (!alreadyFailed &&
+                    !(demoteLocalOrigins(identity) && isLocalOnlyServerOrigin(warm))
+                ) {
+                    val confirmed = withTimeoutOrNull(probeTimeoutMs(warm, deadlineMs)) {
+                        probeIdentity(warm, token)
+                    } == true
+                    if (confirmed) return@withLock warm
+                }
+            }
+            raceBases(server, token, deadlineMs, identity)
         }
     }
 
@@ -236,6 +249,8 @@ class PlexConnectionResolver(
 
     fun remember(serverId: String, origin: String) {
         val trimmed = origin.trimEnd('/').takeIf { it.isNotBlank() } ?: return
+        forgottenServers.remove(serverId)
+        forgottenOrigins.remove(ForgottenOrigin(serverId, trimmed))
         val fingerprint = mutableIdentity.value.fingerprint
         memoryCache[CacheKey(serverId, fingerprint)] = trimmed
         lastGoodByServer[serverId] = trimmed
@@ -248,6 +263,8 @@ class PlexConnectionResolver(
         val fingerprint = mutableIdentity.value.fingerprint
         val key = CacheKey(serverId, fingerprint)
         if (origin == null) {
+            forgottenServers.add(serverId)
+            forgottenOrigins.removeAll { it.serverId == serverId }
             memoryCache.remove(key)
             lastGoodByServer.remove(serverId)
             scope.launch {
@@ -257,6 +274,7 @@ class PlexConnectionResolver(
             }
         } else {
             val trimmed = origin.trimEnd('/')
+            forgottenOrigins.add(ForgottenOrigin(serverId, trimmed))
             if (memoryCache[key] == trimmed) memoryCache.remove(key)
             if (lastGoodByServer[serverId] == trimmed) lastGoodByServer.remove(serverId)
             scope.launch {
@@ -346,6 +364,8 @@ class PlexConnectionResolver(
     }
 
     private suspend fun adoptWinner(serverId: String, origin: String, fingerprint: String) {
+        forgottenServers.remove(serverId)
+        forgottenOrigins.remove(ForgottenOrigin(serverId, origin))
         memoryCache[CacheKey(serverId, fingerprint)] = origin
         lastGoodByServer[serverId] = origin
         persist(serverId, fingerprint, origin)
@@ -375,6 +395,11 @@ class PlexConnectionResolver(
     private data class CacheKey(
         val serverId: String,
         val fingerprint: String,
+    )
+
+    private data class ForgottenOrigin(
+        val serverId: String,
+        val origin: String,
     )
 
     companion object {

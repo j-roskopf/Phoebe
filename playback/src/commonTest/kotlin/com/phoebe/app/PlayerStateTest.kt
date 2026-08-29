@@ -166,6 +166,46 @@ class PlayerStateTest {
     }
 
     @Test
+    fun backgroundResolveDoesNotRestoreDemotedLanOrigin() = runTest {
+        val lanOrigin = "http://192.168.1.9:32400"
+        PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
+            override fun cachedOrigin(): String? = null
+            override suspend fun resolveOrigin(deadlineMs: Long): String {
+                delay(20)
+                return lanOrigin
+            }
+            override fun demoteLocalOrigins(): Boolean = true
+        }
+        try {
+            val player = QueueAwareTestPlayer(this)
+            val remote = "https://relay.example/library/parts/1/file.mp3"
+            player.play(
+                listOf(
+                    Track(
+                        id = "t1",
+                        title = "One",
+                        artist = "Artist",
+                        album = "Album",
+                        durationMs = 60_000,
+                        streamUrl = remote,
+                        downloadUrl = "",
+                        playbackFallbackUrls = listOf("$lanOrigin/library/parts/1/file.mp3"),
+                    ),
+                ),
+                0,
+            )
+            assertEquals(1, player.fullLoads)
+            assertEquals(remote, player.state.value.currentTrack?.streamUrl)
+            advanceTimeBy(25)
+            runCurrent()
+            assertEquals(remote, player.state.value.currentTrack?.streamUrl)
+            assertEquals(1, player.fullLoads)
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
+        }
+    }
+
+    @Test
     fun stalledPlatformStartupFailsInsteadOfBufferingForever() = runTest {
         val player = TimeoutTestPlayer(this)
         val tracks = listOf(

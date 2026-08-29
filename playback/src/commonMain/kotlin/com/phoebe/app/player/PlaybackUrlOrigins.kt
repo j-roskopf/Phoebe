@@ -68,10 +68,15 @@ fun playbackOriginCandidates(
 ): List<String> {
     val preferred = preferredOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }
         ?: server?.uri?.trimEnd('/')?.takeIf { it.isNotBlank() }
-    val fromServer = server?.reachableBaseUris(
-        preferredFirst = preferred,
-        demoteLocalOrigins = demoteLocalOrigins,
-    ).orEmpty().map { it.trimEnd('/') }.filterNot(::isPublicSynthesizedPlexHttpOrigin)
+    val fromServer = server?.let { plex ->
+        plex.reachableBaseUris(
+            preferredFirst = preferred,
+            demoteLocalOrigins = demoteLocalOrigins,
+        ).map { it.trimEnd('/') }
+            .filterNot { origin ->
+                isPublicSynthesizedPlexHttpOrigin(origin, plex.advertisedConnectionUris)
+            }
+    }.orEmpty()
     // reachableBaseUris already applies demotion to preferredFirst; do not re-prepend
     // server.uri / a stale LAN preferred and undo remote-first ordering.
     if (fromServer.isNotEmpty()) return fromServer

@@ -278,6 +278,22 @@ class PlaybackUrlOriginsTest {
     }
 
     @Test
+    fun playbackOriginCandidatesKeepAdvertisedPublicHttp32400() {
+        val relay = "https://45-33-97-28.abc.plex.direct:8443"
+        val advertisedWan = "http://45.33.97.28:32400"
+        val server = PlexServer(
+            id = "plex",
+            name = "Plex",
+            uri = relay,
+            owned = true,
+            connectionUris = listOf(relay, advertisedWan),
+            advertisedConnectionUris = listOf(relay, advertisedWan),
+        )
+        val origins = playbackOriginCandidates(server = server, preferredOrigin = relay)
+        assertTrue(advertisedWan in origins)
+    }
+
+    @Test
     fun failoverSkipsSynthesizedPublicHttp32400() {
         val relay = "https://45-33-97-28.abc.plex.direct:8443/library/parts/18901/file.mp3"
         val closedWan = "http://45.33.97.28:32400/library/parts/18901/file.mp3"

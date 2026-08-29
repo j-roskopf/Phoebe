@@ -200,7 +200,7 @@ abstract class SimpleAudioPlayer(
                 .onFailure { if (it is CancellationException) throw it }
                 .getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return@launch
             if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
-            val accepted = acceptedPlaybackOrigin(resolved) ?: resolved
+            val accepted = acceptedPlaybackOrigin(resolved) ?: return@launch
             rememberStickyPlaybackOrigin(accepted)
             val current = mutableState.value
             if (current.queue.isEmpty()) return@launch

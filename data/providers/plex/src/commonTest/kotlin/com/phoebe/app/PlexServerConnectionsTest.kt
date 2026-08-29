@@ -25,14 +25,22 @@ class PlexServerConnectionsTest {
     }
 
     @Test
-    fun expandConnectionUrisAddsOnlyThePlainIpPort() {
+    fun expandConnectionUrisAddsOnlyThePlainLanIpPort() {
         val expanded = expandConnectionUris(
-            listOf("https://172-105-8-66.abc.plex.direct:8443"),
+            listOf("https://172-16-1-2.abc.plex.direct:32400"),
         )
-        assertTrue("http://172.105.8.66:32400" in expanded)
+        assertTrue("http://172.16.1.2:32400" in expanded)
         // Plex's cert covers *.plex.direct, so bare-IP TLS can never complete a handshake.
-        assertFalse("https://172.105.8.66:8443" in expanded)
-        assertFalse("https://172.105.8.66:32400" in expanded)
+        assertFalse("https://172.16.1.2:8443" in expanded)
+        assertFalse("https://172.16.1.2:32400" in expanded)
+    }
+
+    @Test
+    fun expandConnectionUrisDoesNotSynthesizePublicWanHttp32400() {
+        val advertised = "https://172-105-8-66.abc.plex.direct:8443"
+        val expanded = expandConnectionUris(listOf(advertised))
+        assertEquals(listOf(advertised), expanded)
+        assertFalse("http://172.105.8.66:32400" in expanded)
     }
 
     @Test
@@ -63,8 +71,8 @@ class PlexServerConnectionsTest {
     }
 
     @Test
-    fun reachableBaseUrisAdvertisedBeforeSynthesizedIp() {
-        val advertised = listOf("https://172-105-8-66.abc.plex.direct:8443")
+    fun reachableBaseUrisAdvertisedBeforeSynthesizedLanIp() {
+        val advertised = listOf("https://172-16-1-2.abc.plex.direct:32400")
         val server = PlexServer(
             id = "s1",
             name = "plex",
@@ -75,7 +83,7 @@ class PlexServerConnectionsTest {
         )
         val ordered = server.reachableBaseUris()
         assertEquals(advertised.first(), ordered.first())
-        assertTrue(ordered.indexOf("http://172.105.8.66:32400") > 0)
+        assertTrue(ordered.indexOf("http://172.16.1.2:32400") > 0)
     }
 
     @Test
@@ -225,6 +233,12 @@ class PlexServerConnectionsTest {
         assertFalse(isPublicSynthesizedPlexHttpOrigin("http://192.168.4.9:32400"))
         assertFalse(isPublicSynthesizedPlexHttpOrigin("https://45-33-97-28.abc.plex.direct:8443"))
         assertFalse(isPublicSynthesizedPlexHttpOrigin("https://72-58-82-53.abc.plex.direct:32400"))
+        assertFalse(
+            isPublicSynthesizedPlexHttpOrigin(
+                "http://45.33.97.28:32400",
+                advertisedUris = listOf("http://45.33.97.28:32400"),
+            ),
+        )
     }
 
     @Test
