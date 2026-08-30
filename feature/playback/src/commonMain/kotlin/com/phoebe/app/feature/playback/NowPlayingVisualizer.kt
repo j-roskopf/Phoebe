@@ -57,11 +57,8 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.zIndex
 import com.phoebe.app.domain.AudioAnalysisFrame
-import com.phoebe.app.domain.AudioAnalysisSource
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.Track
-import com.phoebe.app.platform.currentTimeMs
-import com.phoebe.app.player.AudioAnalysisAccumulator
 import kotlin.math.abs
 import kotlin.math.PI
 import kotlin.math.cos
@@ -69,14 +66,12 @@ import kotlin.math.min
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-private const val VisualizerFrameStaleMs = 900L
 private const val FullTurn = (PI * 2.0).toFloat()
 
 @Composable
 fun NowPlayingVisualizerSurface(
     preset: NowPlayingVisualizerPreset,
     track: Track?,
-    audioAnalysis: AudioAnalysisFrame,
     isPlaying: Boolean,
     positionMs: Long,
     modifier: Modifier = Modifier,
@@ -96,7 +91,6 @@ fun NowPlayingVisualizerSurface(
             NowPlayingVisualizerDisplay(
                 preset = preset,
                 track = track,
-                audioAnalysis = audioAnalysis,
                 isPlaying = isPlaying,
                 positionMs = positionMs,
                 modifier = Modifier.fillMaxSize(),
@@ -125,7 +119,6 @@ fun NowPlayingVisualizerSurface(
         FullscreenVisualizerDialog(
             preset = preset,
             track = track,
-            audioAnalysis = audioAnalysis,
             isPlaying = isPlaying,
             positionMs = positionMs,
             onDismiss = { fullscreen = false },
@@ -139,7 +132,6 @@ fun NowPlayingVisualizerSurface(
 private fun FullscreenVisualizerDialog(
     preset: NowPlayingVisualizerPreset,
     track: Track?,
-    audioAnalysis: AudioAnalysisFrame,
     isPlaying: Boolean,
     positionMs: Long,
     onDismiss: () -> Unit,
@@ -158,7 +150,6 @@ private fun FullscreenVisualizerDialog(
             NowPlayingVisualizerDisplay(
                 preset = preset,
                 track = track,
-                audioAnalysis = audioAnalysis,
                 isPlaying = isPlaying,
                 positionMs = positionMs,
                 modifier = Modifier.fillMaxSize(),
@@ -184,7 +175,6 @@ private fun FullscreenVisualizerDialog(
 private fun NowPlayingVisualizerDisplay(
     preset: NowPlayingVisualizerPreset,
     track: Track?,
-    audioAnalysis: AudioAnalysisFrame,
     isPlaying: Boolean,
     positionMs: Long,
     modifier: Modifier = Modifier,
@@ -197,7 +187,6 @@ private fun NowPlayingVisualizerDisplay(
             NowPlayingVisualizerContent(
                 preset = preset,
                 track = track,
-                audioAnalysis = audioAnalysis,
                 isPlaying = isPlaying,
                 positionMs = positionMs,
                 modifier = Modifier.fillMaxSize(),
@@ -209,7 +198,6 @@ private fun NowPlayingVisualizerDisplay(
         NowPlayingVisualizerContent(
             preset = preset,
             track = track,
-            audioAnalysis = audioAnalysis,
             isPlaying = isPlaying,
             positionMs = positionMs,
             modifier = modifier,
@@ -223,7 +211,6 @@ private fun NowPlayingVisualizerDisplay(
 private fun NowPlayingVisualizerContent(
     preset: NowPlayingVisualizerPreset,
     track: Track?,
-    audioAnalysis: AudioAnalysisFrame,
     isPlaying: Boolean,
     positionMs: Long,
     modifier: Modifier = Modifier,
@@ -251,39 +238,17 @@ private fun NowPlayingVisualizerContent(
     }
 
     val motionEnabled = LocalContinuousMotionEnabled.current && isPlaying
-    val phase = if (motionEnabled) {
-        val transition = rememberInfiniteTransition(label = "visualizer-motion")
-        val cycle by transition.animateFloat(
-            initialValue = 0f,
-            targetValue = FullTurn,
-            animationSpec = infiniteRepeatable(tween(7_200, easing = LinearEasing)),
-            label = "visualizer-phase",
-        )
-        cycle
-    } else {
-        (positionMs.coerceAtLeast(0L).toFloat() / 900f) % FullTurn
-    }
-    val frame = remember(audioAnalysis, track?.id, isPlaying, positionMs) {
-        val freshRealFrame = audioAnalysis.source != AudioAnalysisSource.None &&
-            audioAnalysis.bands.isNotEmpty() &&
-            currentTimeMs() - audioAnalysis.timestampMs <= VisualizerFrameStaleMs
-        if (freshRealFrame) {
-            audioAnalysis.normalized()
-        } else {
-            AudioAnalysisAccumulator.fallbackFrame(
-                seed = track?.id ?: track?.title.orEmpty(),
-                positionMs = positionMs,
-                isPlaying = isPlaying,
-                timestampMs = currentTimeMs(),
-            )
-        }
-    }
+    val audioAnalysis = LocalVisualizerAudioAnalysis.current
+    val trackSeed = track?.id ?: track?.title.orEmpty()
+    fun latestFrame(): AudioAnalysisFrame = resolvedVisualizerFrame(
+        analysis = audioAnalysis.value,
+        trackSeed = trackSeed,
+        isPlaying = isPlaying,
+        positionMs = positionMs,
+    )
     if (preset.isFilament3DVisualizer()) {
         var wireframeYaw by remember { mutableFloatStateOf(0f) }
         var wireframePitch by remember { mutableFloatStateOf(0f) }
-        val renderState = remember(frame, positionMs, isPlaying) {
-            AudioVisualizerRenderState.from(frame, positionMs, isPlaying)
-        }
         val fallbackInteraction = Modifier.pointerInput(Unit) {
             detectDragGestures { change, dragAmount ->
                 change.consume()
@@ -295,11 +260,35 @@ private fun NowPlayingVisualizerContent(
             .clipToBounds()
             .background(Brush.radialGradient(preset.backgroundColors(), radius = 900f))
             .semantics { contentDescription = "${preset.label} visualizer" }
+        val fallbackMesh = remember { WireframeSpectrumMesh.create() }
+        val fallbackPhaseState = if (motionEnabled) {
+            val transition = rememberInfiniteTransition(label = "wireframe-fallback-motion")
+            transition.animateFloat(
+                initialValue = 0f,
+                targetValue = FullTurn,
+                animationSpec = infiniteRepeatable(tween(7_200, easing = LinearEasing)),
+                label = "wireframe-fallback-phase",
+            )
+        } else {
+            remember(positionMs) {
+                mutableFloatStateOf((positionMs.coerceAtLeast(0L).toFloat() / 1_000f) % FullTurn)
+            }
+        }
         val fallbackContent: @Composable (Modifier) -> Unit = { fallbackModifier ->
             Canvas(fallbackModifier.then(fallbackInteraction)) {
+                val frame = latestFrame()
+                val bands = AudioVisualizerRenderState.normalizedBands(frame)
+                val envelope = AudioVisualizerRenderState.envelopeFor(frame, bands)
+                val phase = fallbackPhaseState.value
+                fallbackMesh.updateHeights(bands, envelope, phase, isPlaying)
                 drawRect(Color.Black.copy(alpha = 0.18f))
                 drawWireframeSpectrum3D(
-                    state = renderState,
+                    state = AudioVisualizerRenderState(
+                        bands = bands,
+                        envelope = envelope,
+                        phase = phase,
+                        mesh = fallbackMesh,
+                    ),
                     yaw = wireframeYaw,
                     pitch = wireframePitch,
                 )
@@ -308,9 +297,10 @@ private fun NowPlayingVisualizerContent(
         if (useFilamentVisualizers) {
             FilamentVisualizerHost(
                 preset = preset,
-                renderState = renderState,
                 isPlaying = isPlaying,
                 motionEnabled = motionEnabled,
+                positionMs = positionMs,
+                trackSeed = trackSeed,
                 modifier = visualizerModifier,
                 fallback = fallbackContent,
             )
@@ -320,12 +310,28 @@ private fun NowPlayingVisualizerContent(
         return
     }
 
+    val phaseState = if (motionEnabled) {
+        val transition = rememberInfiniteTransition(label = "visualizer-motion")
+        transition.animateFloat(
+            initialValue = 0f,
+            targetValue = FullTurn,
+            animationSpec = infiniteRepeatable(tween(7_200, easing = LinearEasing)),
+            label = "visualizer-phase",
+        )
+    } else {
+        remember(positionMs) {
+            mutableFloatStateOf((positionMs.coerceAtLeast(0L).toFloat() / 900f) % FullTurn)
+        }
+    }
+
     Canvas(
         modifier
             .clipToBounds()
             .background(Brush.radialGradient(preset.backgroundColors(), radius = 900f))
             .semantics { contentDescription = "${preset.label} visualizer" },
     ) {
+        val phase = phaseState.value
+        val frame = latestFrame()
         drawRect(Color.Black.copy(alpha = 0.18f))
         when (preset) {
             NowPlayingVisualizerPreset.Alchemy -> drawAlchemy(frame, phase)
@@ -564,7 +570,6 @@ internal fun VisualizerPresetSelector(
 fun DesktopNowPlayingVisualizerView(
     track: Track?,
     preset: NowPlayingVisualizerPreset,
-    audioAnalysis: AudioAnalysisFrame,
     isPlaying: Boolean,
     positionMs: Long,
     onPreset: (NowPlayingVisualizerPreset) -> Unit,
@@ -609,7 +614,6 @@ fun DesktopNowPlayingVisualizerView(
             NowPlayingVisualizerSurface(
                 preset = preset,
                 track = track,
-                audioAnalysis = audioAnalysis,
                 isPlaying = isPlaying,
                 positionMs = positionMs,
                 modifier = Modifier.fillMaxSize(),
@@ -1064,7 +1068,7 @@ private fun DrawScope.drawHaloSpectrum(frame: AudioAnalysisFrame, phase: Float) 
         val startX = center.x + cosF(angle) * dynamicRadius
         val startY = center.y + sinF(angle) * dynamicRadius
         
-        val length = size.minDimension * 0.2f * band
+        val length = size.minDimension * 0.2f * (band * 0.6f + amp * 0.4f)
         val endX = startX + cosF(angle) * length
         val endY = startY + sinF(angle) * length
         

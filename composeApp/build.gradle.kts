@@ -428,6 +428,7 @@ compose.desktop {
             "-XX:MinHeapFreeRatio=5",
             "-XX:MaxHeapFreeRatio=20",
             "-XX:+UseStringDeduplication",
+            "--enable-native-access=ALL-UNNAMED",
             // Skia's GPU resource cache limit is sized at runtime from the display
             // (see configureSkiaGpuResourceCache in Main.kt) because a fixed budget
             // that fits a 1080p screen thrashes on a large or HiDPI one.
@@ -591,11 +592,31 @@ val syncMacMediaKeyResources = tasks.register<Sync>("syncMacMediaKeyResources") 
     into(macMediaKeysAppResources.map { it.dir(macMediaKeysResourceDirName.get()) })
 }
 
+val syncLinuxFilamentLibcxxResources = tasks.register<Sync>("syncLinuxFilamentLibcxxResources") {
+    onlyIf { System.getProperty("os.name").lowercase().contains("linux") }
+    dependsOn(":feature:playback:fetchLinuxFilamentLibcxx")
+    from(
+        rootProject.layout.projectDirectory.dir(
+            "feature/playback/build/generated/filament-linux-libcxx-resources/filament-linux-libcxx",
+        ),
+    )
+    into(macMediaKeysAppResources.map { it.dir("linux-x64") })
+}
+
 tasks.named("compileKotlinDesktop") { dependsOn(compileMacMediaKeysNative) }
-tasks.matching { it.name in setOf("prepareAppResources", "createDistributable", "runDistributable", "packageDmg", "packagePkg") }
-    .configureEach {
-        dependsOn(syncMacMediaKeyResources)
-    }
+tasks.matching {
+    it.name in setOf(
+        "prepareAppResources",
+        "createDistributable",
+        "runDistributable",
+        "packageDmg",
+        "packagePkg",
+        "packageDeb",
+    )
+}.configureEach {
+    dependsOn(syncMacMediaKeyResources)
+    dependsOn(syncLinuxFilamentLibcxxResources)
+}
 
 val desktopDevRunTaskNames = setOf("run", "hotRunDesktop", "hotDevDesktop", "desktopRunHot")
 
@@ -605,6 +626,7 @@ tasks.withType<JavaExec>().configureEach {
     javaLauncher.set(desktopJavaLauncher)
     doFirst {
         setExecutable(desktopJavaExecutable.get())
+        prependLinuxFilamentLibcxxToLdLibraryPath()
     }
     systemProperty("phoebe.debug", "true")
     System.getProperty("phoebe.desktop.navigationPath")
@@ -643,6 +665,7 @@ tasks.withType<Test>().configureEach {
         javaLauncher.set(desktopJavaLauncher)
         systemProperty("phoebe.debug", "true")
         jvmArgs(linuxX64SuperWordWorkaroundJvmArgs)
+        doFirst { prependLinuxFilamentLibcxxToLdLibraryPath() }
     }
     systemProperty("phoebe.realAudioTests", phoebeRealAudioTests.get().toString())
     if (phoebeRealAudioTests.get() && name.contains("desktop", ignoreCase = true)) {
@@ -666,4 +689,22 @@ tasks.withType<Test>().configureEach {
             includeTestsMatching("com.phoebe.app.PhoebeDesktopScreenshotTest")
         }
     }
+}
+
+tasks.matching { it.name in desktopDevRunTaskNames }.configureEach {
+    dependsOn(":feature:playback:fetchLinuxFilamentLibcxx")
+}
+
+private fun org.gradle.process.ProcessForkOptions.prependLinuxFilamentLibcxxToLdLibraryPath() {
+    if (!System.getProperty("os.name").lowercase().contains("linux")) return
+    val libcxx = rootProject.layout.projectDirectory
+        .dir("feature/playback/build/generated/filament-linux-libcxx-resources/filament-linux-libcxx")
+        .asFile
+    if (!libcxx.isDirectory) return
+    val existing = environment["LD_LIBRARY_PATH"] as String?
+        ?: System.getenv("LD_LIBRARY_PATH")
+    environment(
+        "LD_LIBRARY_PATH",
+        if (existing.isNullOrBlank()) libcxx.absolutePath else "${libcxx.absolutePath}:$existing",
+    )
 }

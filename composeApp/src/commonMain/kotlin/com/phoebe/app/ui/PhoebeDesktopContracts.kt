@@ -19,7 +19,6 @@ import com.phoebe.app.domain.AppScreen
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.ArtistEventsLoadState
 import com.phoebe.app.domain.ArtistRadioAvailability
-import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.AudioProcessingCapabilities
 import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.CatalogSnapshot
@@ -97,7 +96,6 @@ internal data class PlaybackUiState(
     val visualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
     val showVisualizerInTvFrame: Boolean = false,
     val showUltimateGuitarButton: Boolean = true,
-    val audioAnalysis: AudioAnalysisFrame = AudioAnalysisFrame.Empty,
     val useFilamentVisualizers: Boolean = true,
 )
 

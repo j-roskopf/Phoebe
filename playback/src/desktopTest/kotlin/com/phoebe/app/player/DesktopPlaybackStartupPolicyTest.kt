@@ -66,13 +66,23 @@ class DesktopPlaybackStartupPolicyTest {
                 "https://music.example.test/library/track.mp3?token=abc",
             ),
         )
-        assertFalse(
-            DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
-                uri = "https://music.example.test/library/track.mp3?token=abc",
-                isKnownLiveStream = false,
-                preferredJavaFxExtension = "mp3",
-            ),
-        )
+        if (DesktopPlaybackStartupPolicy.isLinuxDesktop()) {
+            assertTrue(
+                DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
+                    uri = "https://music.example.test/library/track.mp3?token=abc",
+                    isKnownLiveStream = false,
+                    preferredJavaFxExtension = "mp3",
+                ),
+            )
+        } else {
+            assertFalse(
+                DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
+                    uri = "https://music.example.test/library/track.mp3?token=abc",
+                    isKnownLiveStream = false,
+                    preferredJavaFxExtension = "mp3",
+                ),
+            )
+        }
     }
 
     @Test
@@ -85,13 +95,23 @@ class DesktopPlaybackStartupPolicyTest {
                 uri = "https://music.example.test/rest/stream.view?id=abc",
             ),
         )
-        assertFalse(
-            DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
-                uri = "https://music.example.test/rest/stream.view?id=abc",
-                isKnownLiveStream = false,
-                preferredJavaFxExtension = "mp3",
-            ),
-        )
+        if (DesktopPlaybackStartupPolicy.isLinuxDesktop()) {
+            assertTrue(
+                DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
+                    uri = "https://music.example.test/rest/stream.view?id=abc",
+                    isKnownLiveStream = false,
+                    preferredJavaFxExtension = "mp3",
+                ),
+            )
+        } else {
+            assertFalse(
+                DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
+                    uri = "https://music.example.test/rest/stream.view?id=abc",
+                    isKnownLiveStream = false,
+                    preferredJavaFxExtension = "mp3",
+                ),
+            )
+        }
     }
 
     @Test
@@ -103,6 +123,42 @@ class DesktopPlaybackStartupPolicyTest {
                 preferredJavaFxExtension = "mp3",
             ),
         )
+    }
+
+    @Test
+    fun linuxLocalMp3UsesPcmBeforeJavaFx() {
+        val localMp3 = DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
+            uri = "file:///tmp/song.mp3",
+            isKnownLiveStream = false,
+            preferredJavaFxExtension = "mp3",
+        )
+        assertEquals(DesktopPlaybackStartupPolicy.isLinuxDesktop(), localMp3)
+    }
+
+    @Test
+    fun ffmpegPcmCommandOmitsHttpReconnectOptionsForLocalFiles() {
+        val command = desktopFfmpegPcmCommand(
+            ffmpeg = "/usr/bin/ffmpeg",
+            uri = "/tmp/song.mp3",
+            startPositionMs = 0L,
+            sampleRateHz = 44_100,
+            channels = 2,
+        )
+        assertFalse(command.contains("-reconnect"))
+        assertTrue(command.contains("/tmp/song.mp3"))
+    }
+
+    @Test
+    fun ffmpegPcmCommandIncludesHttpReconnectOptionsForRemoteUrls() {
+        val command = desktopFfmpegPcmCommand(
+            ffmpeg = "/usr/bin/ffmpeg",
+            uri = "https://plex.example/library/parts/1/file.mp3",
+            startPositionMs = 0L,
+            sampleRateHz = 44_100,
+            channels = 2,
+        )
+        assertTrue(command.contains("-reconnect"))
+        assertTrue(command.contains("-reconnect_streamed"))
     }
 
     @Test
@@ -132,27 +188,27 @@ class DesktopPlaybackStartupPolicyTest {
                 label = "remote mp3",
                 uri = "https://music.example.test/library/track.mp3?token=abc",
                 audioCodec = "mp3",
-                expectedPath = DesktopPlaybackStartupPath.JavaFxMediaPlayer,
+                expectedPath = linuxJavaFxOrFfmpeg(),
             ),
             RemoteStartupCase(
                 label = "extensionless remote mp3",
                 uri = "https://music.example.test/rest/stream.view?id=abc",
                 audioCodec = "mp3",
                 filepath = "/music/Artist/Album/Track.mp3",
-                expectedPath = DesktopPlaybackStartupPath.JavaFxMediaPlayer,
+                expectedPath = linuxJavaFxOrFfmpeg(),
             ),
             RemoteStartupCase(
                 label = "remote aac",
                 uri = "https://music.example.test/library/track.m4a?token=abc",
                 audioCodec = "aac",
-                expectedPath = DesktopPlaybackStartupPath.JavaFxMediaPlayer,
+                expectedPath = linuxJavaFxOrFfmpeg(),
             ),
             RemoteStartupCase(
                 label = "extensionless remote aac",
                 uri = "https://music.example.test/Audio/1/stream?static=true",
                 audioCodec = "aac",
                 filepath = "/music/Artist/Album/Track.m4a",
-                expectedPath = DesktopPlaybackStartupPath.JavaFxMediaPlayer,
+                expectedPath = linuxJavaFxOrFfmpeg(),
             ),
             RemoteStartupCase(
                 label = "remote wav",
@@ -522,6 +578,13 @@ class DesktopPlaybackStartupPolicyTest {
             durationMs = case.durationMs,
             isFlatpakSandbox = false,
         )
+
+    private fun linuxJavaFxOrFfmpeg(): DesktopPlaybackStartupPath =
+        if (DesktopPlaybackStartupPolicy.isLinuxDesktop()) {
+            DesktopPlaybackStartupPath.FfmpegPcmStream
+        } else {
+            DesktopPlaybackStartupPath.JavaFxMediaPlayer
+        }
 
     private fun sampledExtension(case: RemoteStartupCase): String? =
         DesktopPlaybackStartupPolicy.sampledPlaybackExtensionFromSuffix(case.audioCodec.orEmpty())

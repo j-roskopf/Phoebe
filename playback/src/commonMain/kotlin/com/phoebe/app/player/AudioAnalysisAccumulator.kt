@@ -4,7 +4,7 @@ import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.AudioAnalysisSource
 import kotlin.math.PI
 import kotlin.math.cos
-import kotlin.math.ln
+import kotlin.math.log10
 import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sin
@@ -15,9 +15,11 @@ class AudioAnalysisAccumulator(
     private val minPublishIntervalMs: Long = DefaultPublishIntervalMs,
 ) {
     private var lastPublishedAtMs = Long.MIN_VALUE
+    private var smoothedBands = FloatArray(bandsSize())
 
     fun reset() {
         lastPublishedAtMs = Long.MIN_VALUE
+        smoothedBands = FloatArray(bandsSize())
     }
 
     fun observePcm(
@@ -30,14 +32,16 @@ class AudioAnalysisAccumulator(
         if (samples.isEmpty() || sampleRateHz <= 0f) {
             return publish(AudioAnalysisFrame(timestampMs = timestampMs, source = source))
         }
-        val trimmed = downsample(samples, AnalysisSampleLimit)
+        val trimmed = recentWindow(samples, AnalysisSampleLimit)
         var sumSquares = 0.0
-        trimmed.forEach { sample ->
-            val coerced = sample.coerceIn(-1f, 1f)
+        for (index in trimmed.indices) {
+            val coerced = trimmed[index].coerceIn(-1f, 1f)
+            trimmed[index] = coerced
             sumSquares += coerced * coerced
         }
         val amplitude = sqrt(sumSquares / trimmed.size.toDouble()).toFloat().coerceIn(0f, 1f)
-        val bands = frequencyBands(trimmed, sampleRateHz)
+        val raw = frequencyBands(trimmed, sampleRateHz)
+        val bands = shapeBands(raw, timestampMs)
         return publish(
             AudioAnalysisFrame(
                 amplitude = amplitude,
@@ -57,7 +61,7 @@ class AudioAnalysisAccumulator(
         if (magnitudesDb.isEmpty()) {
             return publish(AudioAnalysisFrame(timestampMs = timestampMs, source = source))
         }
-        val bands = FloatArray(bandCount.coerceAtLeast(1)) { band ->
+        val raw = FloatArray(bandsSize()) { band ->
             val start = (band * magnitudesDb.size) / bandsSize()
             val end = (((band + 1) * magnitudesDb.size) / bandsSize()).coerceAtLeast(start + 1)
             var peak = 0f
@@ -65,7 +69,10 @@ class AudioAnalysisAccumulator(
                 peak = max(peak, magnitudeDbToUnit(magnitudesDb[index]))
             }
             peak
-        }.toList()
+        }
+        // JavaFX/GStreamer spectrum is already temporally smoothed. A second
+        // attack/release pass made kicks look even rarer than the song.
+        val bands = raw.map { it.coerceIn(0f, 1f) }
         val amplitude = sqrt(bands.fold(0.0) { acc, band -> acc + band * band } / bands.size).toFloat()
         return publish(
             AudioAnalysisFrame(
@@ -89,16 +96,43 @@ class AudioAnalysisAccumulator(
 
     private fun bandsSize(): Int = bandCount.coerceAtLeast(1)
 
-    private fun frequencyBands(samples: FloatArray, sampleRateHz: Float): List<Float> {
-        val count = bandCount.coerceAtLeast(1)
-        return FloatArray(count) { index ->
-            val frequency = logFrequency(index, count)
-            goertzelMagnitude(samples, sampleRateHz, frequency)
+    private fun frequencyBands(samples: FloatArray, sampleRateHz: Float): FloatArray {
+        val n = AnalysisSampleLimit
+        val re = DoubleArray(n)
+        val im = DoubleArray(n)
+        val copy = minOf(n, samples.size)
+        for (index in 0 until copy) {
+            re[index] = samples[index].toDouble()
         }
-            .let { raw ->
-                val peak = raw.maxOrNull()?.takeIf { it > 0f } ?: 1f
-                raw.map { (it / peak).coerceIn(0f, 1f) }
-            }
+        fftRadix2(re, im)
+        val nyquistBins = n / 2
+        val count = bandsSize()
+        return FloatArray(count) { index ->
+            val frequencyHz = logFrequency(index, count)
+            val bin = ((frequencyHz / sampleRateHz) * n).toInt().coerceIn(1, nyquistBins - 1)
+            val magnitude = sqrt(re[bin] * re[bin] + im[bin] * im[bin]).toFloat() / n
+            magnitudeDbToUnit(linearMagnitudeToDb(magnitude))
+        }
+    }
+
+    private fun shapeBands(raw: FloatArray, timestampMs: Long): List<Float> {
+        val count = bandsSize()
+        if (smoothedBands.size != count) {
+            smoothedBands = FloatArray(count)
+        }
+        val dtSeconds = if (lastPublishedAtMs == Long.MIN_VALUE) {
+            minPublishIntervalMs.coerceAtLeast(1L) / 1_000f
+        } else {
+            (timestampMs - lastPublishedAtMs).coerceAtLeast(0L) / 1_000f
+        }
+        val release = 1f - 0.5.pow((dtSeconds / BandReleaseHalfLifeSeconds).toDouble()).toFloat()
+        for (index in 0 until count) {
+            val target = raw.getOrElse(index) { 0f }.coerceIn(0f, 1f)
+            val current = smoothedBands[index]
+            val mix = if (target >= current) BandAttack else release
+            smoothedBands[index] = (current + (target - current) * mix).coerceIn(0f, 1f)
+        }
+        return smoothedBands.toList()
     }
 
     private fun logFrequency(index: Int, count: Int): Float {
@@ -108,29 +142,14 @@ class AudioAnalysisAccumulator(
         return (min * (max / min).pow(t)).coerceIn(min, max)
     }
 
-    private fun goertzelMagnitude(samples: FloatArray, sampleRateHz: Float, targetFrequencyHz: Float): Float {
-        val normalizedFrequency = targetFrequencyHz.coerceAtMost(sampleRateHz * 0.48f)
-        if (normalizedFrequency <= 0f) return 0f
-        val omega = 2.0 * PI * normalizedFrequency.toDouble() / sampleRateHz.toDouble()
-        val coeff = 2.0 * cos(omega)
-        var s0: Double
-        var s1 = 0.0
-        var s2 = 0.0
-        samples.forEach { sample ->
-            s0 = sample.coerceIn(-1f, 1f).toDouble() + coeff * s1 - s2
-            s2 = s1
-            s1 = s0
-        }
-        val power = s1 * s1 + s2 * s2 - coeff * s1 * s2
-        return sqrt(power.coerceAtLeast(0.0)).toFloat() / samples.size.coerceAtLeast(1)
-    }
-
     companion object {
         const val DefaultBandCount = 128
-        const val DefaultPublishIntervalMs = 45L
-        private const val AnalysisSampleLimit = 2048
+        const val DefaultPublishIntervalMs = 8L
+        internal const val AnalysisSampleLimit = 256
         private const val MinFrequencyHz = 60f
         private const val MaxFrequencyHz = 12_000f
+        private const val BandReleaseHalfLifeSeconds = 0.045f
+        private const val BandAttack = 1f
 
         fun fallbackFrame(
             seed: String,
@@ -158,15 +177,65 @@ class AudioAnalysisAccumulator(
     }
 }
 
+private fun fftRadix2(re: DoubleArray, im: DoubleArray) {
+    val n = re.size
+    var j = 0
+    for (i in 1 until n) {
+        var bit = n shr 1
+        while (j and bit != 0) {
+            j = j xor bit
+            bit = bit shr 1
+        }
+        j = j xor bit
+        if (i < j) {
+            val swapRe = re[i]
+            re[i] = re[j]
+            re[j] = swapRe
+            val swapIm = im[i]
+            im[i] = im[j]
+            im[j] = swapIm
+        }
+    }
+    var len = 2
+    while (len <= n) {
+        val angle = -2.0 * PI / len
+        val wLenRe = cos(angle)
+        val wLenIm = sin(angle)
+        var start = 0
+        while (start < n) {
+            var wRe = 1.0
+            var wIm = 0.0
+            val half = len / 2
+            for (k in 0 until half) {
+                val even = start + k
+                val odd = even + half
+                val tRe = re[odd] * wRe - im[odd] * wIm
+                val tIm = re[odd] * wIm + im[odd] * wRe
+                re[odd] = re[even] - tRe
+                im[odd] = im[even] - tIm
+                re[even] += tRe
+                im[even] += tIm
+                val nextWRe = wRe * wLenRe - wIm * wLenIm
+                wIm = wRe * wLenIm + wIm * wLenRe
+                wRe = nextWRe
+            }
+            start += len
+        }
+        len = len shl 1
+    }
+}
+
+private fun linearMagnitudeToDb(magnitude: Float): Float {
+    if (!magnitude.isFinite() || magnitude <= 1e-8f) return -80f
+    return (20.0 * log10(magnitude.toDouble())).toFloat()
+}
+
 private fun magnitudeDbToUnit(db: Float): Float {
     if (!db.isFinite()) return 0f
     return ((db.coerceIn(-80f, 0f) + 80f) / 80f).coerceIn(0f, 1f)
 }
 
-private fun downsample(samples: FloatArray, maxSamples: Int): FloatArray {
-    if (samples.size <= maxSamples) return samples
-    val step = samples.size.toFloat() / maxSamples.toFloat()
-    return FloatArray(maxSamples) { index ->
-        samples[(index * step).toInt().coerceIn(samples.indices)]
-    }
+private fun recentWindow(samples: FloatArray, maxSamples: Int): FloatArray {
+    if (samples.size <= maxSamples) return samples.copyOf()
+    return samples.copyOfRange(samples.size - maxSamples, samples.size)
 }

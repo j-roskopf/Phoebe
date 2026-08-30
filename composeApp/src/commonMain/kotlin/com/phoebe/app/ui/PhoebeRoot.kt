@@ -216,6 +216,7 @@ import com.phoebe.app.feature.home.personalMixIdentityKey
 import com.phoebe.app.feature.home.rememberHomeFeatureState
 import com.phoebe.app.feature.lyrics.LyricsRoute
 import com.phoebe.app.feature.lyrics.LyricsRouteState
+import com.phoebe.app.feature.playback.LocalVisualizerAudioAnalysis
 import com.phoebe.app.feature.playback.MobilePlaybackRoute
 import com.phoebe.app.feature.playback.MobilePlaybackRouteActions
 import com.phoebe.app.feature.playback.MobilePlaybackRouteState
@@ -236,7 +237,6 @@ import com.phoebe.app.domain.Album
 import com.phoebe.app.domain.AppScreen
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.ArtistEventsLoadState
-import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.CollectionEntry
 import com.phoebe.app.domain.CollectionTarget
 import com.phoebe.app.domain.DownloadItem
@@ -1363,6 +1363,7 @@ private fun PhoebeRootStateHolder(
         LocalDragDrop provides dragDrop,
         LocalSearchHistory provides searchHistory,
         LocalSavedSearchActions provides savedSearchActions,
+        LocalVisualizerAudioAnalysis provides state.audioAnalysis,
     ) {
     if (showEventsDebugMenu && isDebugBuild()) {
         EventsDebugMenuDialog(
@@ -2264,18 +2265,6 @@ private fun PhoebeRootStateHolder(
                 }
                 }
             } else {
-                // Analysis frames arrive ~20x/sec and rebuild PlaybackUiState on every
-                // one, so only collect them while the visualizer route is actually
-                // showing a visualizer. Mirrors the mobile gate in PhoebePlayerOverlay.
-                val collectAudioAnalysis = screen == AppScreen.Player &&
-                    appSettings.nowPlayingVisualizerPreset != NowPlayingVisualizerPreset.Artwork
-                val audioAnalysis by produceState(AudioAnalysisFrame.Empty, collectAudioAnalysis) {
-                    if (collectAudioAnalysis) {
-                        state.audioAnalysis.collect { value = it }
-                    } else {
-                        value = AudioAnalysisFrame.Empty
-                    }
-                }
                 DesktopPlayer(
                     playerFlow = state.player,
                     shellState = DesktopShellState(
@@ -2312,7 +2301,6 @@ private fun PhoebeRootStateHolder(
                         visualizerPreset = appSettings.nowPlayingVisualizerPreset,
                         showVisualizerInTvFrame = appSettings.nowPlayingVisualizerInTvFrame,
                         showUltimateGuitarButton = appSettings.showUltimateGuitarButton,
-                        audioAnalysis = audioAnalysis,
                     ),
                     playbackActions = PlaybackActions(
                         onToggle = state::togglePlayPause,
@@ -3000,15 +2988,6 @@ private fun MobilePlayerHost(
     val shellPlayback by appState.shellPlayback.collectAsState()
     val playerTransport by appState.playerTransport.collectAsState()
     val appSettings by appState.appSettings.collectAsState()
-    val collectAudioAnalysis = expansionFraction > 0.6f &&
-        appSettings.nowPlayingVisualizerPreset != NowPlayingVisualizerPreset.Artwork
-    val audioAnalysis by produceState(AudioAnalysisFrame.Empty, collectAudioAnalysis) {
-        if (collectAudioAnalysis) {
-            appState.audioAnalysis.collect { value = it }
-        } else {
-            value = AudioAnalysisFrame.Empty
-        }
-    }
     val equalizerProfile by appState.equalizerProfile.collectAsState()
     val equalizerRemoteUnavailable by appState.equalizerRemoteUnavailable.collectAsState()
     val listenBrainzFeedbackTarget by appState.listenBrainzFeedbackTarget.collectAsState()
@@ -3038,7 +3017,6 @@ private fun MobilePlayerHost(
             showUltimateGuitarButton = appSettings.showUltimateGuitarButton,
             blurredArtworkAppearance = appSettings.blurredArtworkAppearance,
             tintedBackgroundGradient = appSettings.tintedBackgroundGradient,
-            audioAnalysis = audioAnalysis,
             handleSystemBack = handleSystemBack,
             expansionFraction = expansionFraction,
             effectiveStreamingQuality = appSettings.streamingPolicy.effectiveQuality(

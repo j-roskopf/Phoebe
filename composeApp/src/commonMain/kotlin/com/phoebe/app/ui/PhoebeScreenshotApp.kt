@@ -63,6 +63,7 @@ import com.phoebe.app.feature.favorites.FavoritePlaylistsRouteState
 import com.phoebe.app.feature.home.*
 import com.phoebe.app.feature.home.deriveHomeUiState
 import com.phoebe.app.feature.library.*
+import com.phoebe.app.feature.playback.LocalVisualizerAudioAnalysis
 import com.phoebe.app.feature.playback.MobilePlaybackRoute
 import com.phoebe.app.feature.playback.MobilePlaybackRouteActions
 import com.phoebe.app.feature.playback.MobilePlaybackRouteState
@@ -141,6 +142,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.flow.MutableStateFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -324,6 +326,15 @@ internal fun PhoebeScreenshotApp(
     modifier: Modifier = Modifier,
 ) {
     val fixture = remember { PhoebeScreenshotFixture }
+    val screenshotAudioAnalysis = remember(scenario) {
+        MutableStateFlow(
+            if (scenario.visualizerPreset().isVisualizer) {
+                ScreenshotAudioAnalysisFrame
+            } else {
+                AudioAnalysisFrame.Empty
+            },
+        )
+    }
     val settingsInitialCategory = if (scenario == PhoebeScreenshotScenario.Settings &&
         (PhoebeDesignSystem.fromId(designId) != PhoebeDesignSystem.Default || tintId != PhoebeTintOption.Purple.id)
     ) {
@@ -366,6 +377,7 @@ internal fun PhoebeScreenshotApp(
             LocalDragDrop provides DragDropController(),
             LocalSharedElementTransitionsEnabled provides false,
             LocalContinuousMotionEnabled provides false,
+            LocalVisualizerAudioAnalysis provides screenshotAudioAnalysis,
             LocalLibrarySectionIndexForceScrub provides forceCustomLibraryScrollIndex,
             // Remote favicons race in Robolectric/CI; keep Radio screenshots on seed artwork.
             LocalRadioStationRemoteArtworkEnabled provides (scenario != PhoebeScreenshotScenario.Radio),
@@ -513,7 +525,6 @@ internal fun PhoebeDesktopScreenshotScenario(
             currentIndex = 0,
             visualizerPreset = visualizerPreset,
             showVisualizerInTvFrame = scenario == PhoebeScreenshotScenario.PlayerVisualizerTvFrame,
-            audioAnalysis = if (visualizerPreset.isVisualizer) ScreenshotAudioAnalysisFrame else AudioAnalysisFrame.Empty,
             useFilamentVisualizers = false,
         ),
         playbackActions = PlaybackActions(
@@ -889,11 +900,6 @@ internal fun PhoebeMobileScreenshotScenario(
                     currentIndex = 0,
                     visualizerPreset = scenario.visualizerPreset(),
                     showVisualizerInTvFrame = scenario == PhoebeScreenshotScenario.PlayerVisualizerTvFrame,
-                    audioAnalysis = if (scenario.visualizerPreset().isVisualizer) {
-                        ScreenshotAudioAnalysisFrame
-                    } else {
-                        AudioAnalysisFrame.Empty
-                    },
                     useFilamentVisualizers = false,
                     blurredArtworkAppearance = scenario != PhoebeScreenshotScenario.PlayerBlurredArtworkOff,
                     initialUpNextExpanded = scenario == PhoebeScreenshotScenario.PlayerUpNextExpanded,
@@ -1035,7 +1041,6 @@ internal fun PhoebeMobileScreenshotScenario(
                     bufferedPositionMs = 172_000L,
                     currentIndex = 0,
                     visualizerPreset = NowPlayingVisualizerPreset.Default,
-                    audioAnalysis = AudioAnalysisFrame.Empty,
                     blurredArtworkAppearance = true,
                     onToggle = {},
                     onPrevious = {},

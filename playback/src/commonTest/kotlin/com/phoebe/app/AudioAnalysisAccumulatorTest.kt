@@ -76,6 +76,44 @@ class AudioAnalysisAccumulatorTest {
     }
 
     @Test
+    fun quieterSameShapePcmDoesNotRenormalizeToFullScale() {
+        val accumulator = AudioAnalysisAccumulator(bandCount = 16, minPublishIntervalMs = 0)
+        val sampleRate = 44_100f
+        fun tone(amplitude: Float) = FloatArray(1024) { index ->
+            sin((2.0 * PI * 440.0 * index) / sampleRate).toFloat() * amplitude
+        }
+
+        val loud = accumulator.observePcm(tone(0.8f), sampleRateHz = sampleRate, timestampMs = 1_000L)
+        val quiet = accumulator.observePcm(tone(0.2f), sampleRateHz = sampleRate, timestampMs = 1_016L)
+
+        assertNotNull(loud)
+        assertNotNull(quiet)
+        val loudPeak = loud.bands.maxOrNull()!!
+        val quietPeak = quiet.bands.maxOrNull()!!
+        assertTrue(loudPeak > 0.5f)
+        assertTrue(quietPeak < loudPeak)
+        assertTrue(quietPeak < 0.95f)
+    }
+
+    @Test
+    fun quieterSameShapePcmDecaysOverTime() {
+        val accumulator = AudioAnalysisAccumulator(bandCount = 16, minPublishIntervalMs = 0)
+        val sampleRate = 44_100f
+        fun tone(amplitude: Float) = FloatArray(1024) { index ->
+            sin((2.0 * PI * 440.0 * index) / sampleRate).toFloat() * amplitude
+        }
+
+        val loud = accumulator.observePcm(tone(0.8f), sampleRateHz = sampleRate, timestampMs = 1_000L)
+        val soonAfter = accumulator.observePcm(tone(0.2f), sampleRateHz = sampleRate, timestampMs = 1_016L)
+        val later = accumulator.observePcm(tone(0.2f), sampleRateHz = sampleRate, timestampMs = 1_120L)
+
+        assertNotNull(loud)
+        assertNotNull(soonAfter)
+        assertNotNull(later)
+        assertTrue(later.bands.maxOrNull()!! < soonAfter.bands.maxOrNull()!!)
+    }
+
+    @Test
     fun fallbackFramesAreDeterministicForSameSeedAndPosition() {
         val first = AudioAnalysisAccumulator.fallbackFrame(
             seed = "track-1",

@@ -6,7 +6,6 @@ import androidx.compose.runtime.Immutable
 import androidx.compose.ui.Modifier
 import com.phoebe.app.data.ListenBrainzFeedbackScore
 import com.phoebe.app.data.ListenBrainzFeedbackTarget
-import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.RepeatMode
@@ -40,7 +39,6 @@ data class MobilePlaybackRouteState(
     val showUltimateGuitarButton: Boolean = true,
     val blurredArtworkAppearance: Boolean = true,
     val tintedBackgroundGradient: Boolean = false,
-    val audioAnalysis: AudioAnalysisFrame = AudioAnalysisFrame.Empty,
     val useFilamentVisualizers: Boolean = true,
     val handleSystemBack: Boolean = true,
     val initialUpNextExpanded: Boolean = false,
@@ -105,7 +103,6 @@ data class DesktopVisualizerRouteState(
     val track: Track?,
     val preset: NowPlayingVisualizerPreset,
     val showInTvFrame: Boolean = false,
-    val audioAnalysis: AudioAnalysisFrame,
     val isPlaying: Boolean,
     val positionMs: Long,
     val useFilamentVisualizers: Boolean = true,
@@ -141,7 +138,6 @@ fun MobilePlaybackRoute(
         showUltimateGuitarButton = state.showUltimateGuitarButton,
         blurredArtworkAppearance = state.blurredArtworkAppearance,
         tintedBackgroundGradient = state.tintedBackgroundGradient,
-        audioAnalysis = state.audioAnalysis,
         useFilamentVisualizers = state.useFilamentVisualizers,
         onToggle = actions.onToggle,
         onPrevious = actions.onPrevious,
@@ -216,7 +212,6 @@ fun DesktopVisualizerRoute(
     DesktopNowPlayingVisualizerView(
         track = state.track,
         preset = state.preset,
-        audioAnalysis = state.audioAnalysis,
         isPlaying = state.isPlaying,
         positionMs = state.positionMs,
         onPreset = onPreset,

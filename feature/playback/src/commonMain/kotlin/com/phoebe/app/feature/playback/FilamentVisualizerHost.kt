@@ -7,9 +7,10 @@ import com.phoebe.app.domain.NowPlayingVisualizerPreset
 @Composable
 internal expect fun FilamentVisualizerHost(
     preset: NowPlayingVisualizerPreset,
-    renderState: AudioVisualizerRenderState,
     isPlaying: Boolean,
     motionEnabled: Boolean,
+    positionMs: Long,
+    trackSeed: String,
     modifier: Modifier = Modifier,
     fallback: @Composable (Modifier) -> Unit,
 )

@@ -55,7 +55,7 @@ data class AudioAnalysisFrame(
     fun normalized(maxBands: Int = MaxBands): AudioAnalysisFrame {
         val bandLimit = maxBands.coerceAtLeast(1)
         // Frames are normalized on publish and again where they are consumed, and
-        // at ~20 frames a second the redundant pass allocated two 128-element band
+        // at ~60 frames a second the redundant pass allocated two 128-element band
         // lists each time. Already-normalized frames now cost a scan and no copy.
         if (isNormalized(bandLimit)) return this
         val normalizedBands = bands

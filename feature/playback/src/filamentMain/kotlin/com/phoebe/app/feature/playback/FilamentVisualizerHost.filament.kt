@@ -2,16 +2,22 @@ package com.phoebe.app.feature.playback
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import io.github.erkko68.filament.Box as FilamentBox
 import io.github.erkko68.filament.Engine
@@ -20,10 +26,10 @@ import io.github.erkko68.filament.Material
 import io.github.erkko68.filament.MaterialInstance
 import io.github.erkko68.filament.RenderableManager
 import io.github.erkko68.filament.VertexBuffer
+import io.github.erkko68.filament.compose.FilamentEffect
 import io.github.erkko68.filament.compose.FilamentSceneScope
 import io.github.erkko68.filament.compose.FilamentSceneView
 import io.github.erkko68.filament.compose.LocalFilamentEngine
-import io.github.erkko68.filament.compose.LocalFilamentScene
 import io.github.erkko68.filament.compose.orbitGestures
 import io.github.erkko68.filament.compose.rememberOrbitCameraState
 import io.github.erkko68.filament.compose.scene.AntiAliasing
@@ -43,38 +49,93 @@ import io.github.erkko68.filament.toBytes
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.max
 import kotlin.math.pow
 import kotlin.math.sin
+import kotlinx.coroutines.flow.StateFlow
 
 @Composable
 internal actual fun FilamentVisualizerHost(
     preset: NowPlayingVisualizerPreset,
-    renderState: AudioVisualizerRenderState,
     isPlaying: Boolean,
     motionEnabled: Boolean,
+    positionMs: Long,
+    trackSeed: String,
     modifier: Modifier,
     fallback: @Composable (Modifier) -> Unit,
 ) {
+    val filamentReady = remember { filamentNativeRuntimeAvailable }
+    if (!filamentReady) {
+        fallback(modifier)
+        return
+    }
+
     Box(modifier.background(Color.Black)) {
-        FilamentWireframeSpectrumHost(
-            preset = preset,
-            renderState = renderState,
-            isPlaying = isPlaying,
-            motionEnabled = motionEnabled,
-            modifier = Modifier.fillMaxSize(),
-        )
+        FilamentFramebufferScaledBox(Modifier.fillMaxSize()) { scaledModifier ->
+            FilamentWireframeSpectrumHost(
+                preset = preset,
+                isPlaying = isPlaying,
+                motionEnabled = motionEnabled,
+                positionMs = positionMs,
+                trackSeed = trackSeed,
+                modifier = scaledModifier,
+            )
+        }
+    }
+}
+
+@Composable
+private fun FilamentFramebufferScaledBox(
+    modifier: Modifier,
+    content: @Composable (Modifier) -> Unit,
+) {
+    val maxEdge = filamentVisualizerMaxFramebufferEdgePx
+    if (maxEdge == null) {
+        content(modifier)
+        return
+    }
+    BoxWithConstraints(modifier) {
+        val longEdgePx = with(LocalDensity.current) { max(maxWidth.toPx(), maxHeight.toPx()) }
+        val scale = (maxEdge.toFloat() / longEdgePx).coerceIn(0.4f, 1f)
+        if (scale >= 0.99f) {
+            content(Modifier.fillMaxSize())
+            return@BoxWithConstraints
+        }
+        Box(
+            Modifier
+                .requiredSize(maxWidth * scale, maxHeight * scale)
+                .graphicsLayer {
+                    scaleX = 1f / scale
+                    scaleY = 1f / scale
+                    transformOrigin = TransformOrigin(0f, 0f)
+                },
+        ) {
+            content(Modifier.fillMaxSize())
+        }
     }
 }
 
 @Composable
 private fun FilamentWireframeSpectrumHost(
     preset: NowPlayingVisualizerPreset,
-    renderState: AudioVisualizerRenderState,
     isPlaying: Boolean,
     motionEnabled: Boolean,
+    positionMs: Long,
+    trackSeed: String,
     modifier: Modifier,
 ) {
     val style = remember(preset) { preset.wireframeStyle() }
+    val playback = remember { WireframePlaybackSnapshot() }
+    val audioAnalysis = LocalVisualizerAudioAnalysis.current
+    playback.audioAnalysis = audioAnalysis
+    SideEffect {
+        playback.isPlaying = isPlaying
+        playback.motionEnabled = motionEnabled
+        playback.positionPhase = positionMs.coerceAtLeast(0L) / 1000f
+        playback.trackSeed = trackSeed
+        playback.positionMs = positionMs
+        playback.audioAnalysis = audioAnalysis
+    }
     val cameraState = rememberCameraState(
         eye = Position(style.cameraX, style.cameraY, style.cameraZ),
         target = Position(0f, 0f, 0f),
@@ -95,7 +156,7 @@ private fun FilamentWireframeSpectrumHost(
     val postProcessing = remember(style) {
         PostProcessing(
             bloom = Bloom(strength = style.bloomStrength),
-            antiAliasing = AntiAliasing(fxaaEnabled = true),
+            antiAliasing = AntiAliasing(fxaaEnabled = false),
         )
     }
 
@@ -107,14 +168,13 @@ private fun FilamentWireframeSpectrumHost(
         cameraState = cameraState,
         skyboxState = skybox,
         postProcessing = postProcessing,
+        shadows = null,
     ) {
         val material = rememberWireframeMaterial() ?: return@FilamentSceneView
-        WireframeSpectrumLines(
-            renderState = renderState,
-            style = style,
+        WireframeSpectrumEffect(
             material = material,
-            isPlaying = isPlaying,
-            motionEnabled = motionEnabled,
+            style = style,
+            playback = playback,
         )
     }
 }
@@ -170,66 +230,47 @@ private fun rememberWireframeMaterial(): Material? {
 }
 
 @Composable
-private fun FilamentSceneScope.WireframeSpectrumLines(
-    renderState: AudioVisualizerRenderState,
-    style: WireframeVisualizerStyle,
+private fun FilamentSceneScope.WireframeSpectrumEffect(
     material: Material,
-    isPlaying: Boolean,
-    motionEnabled: Boolean,
+    style: WireframeVisualizerStyle,
+    playback: WireframePlaybackSnapshot,
 ) {
-    val brightness = style.brightnessBase + renderState.envelope * if (isPlaying || motionEnabled) {
-        style.brightnessReactive
-    } else {
-        style.brightnessIdle
-    }
-    val mesh = renderState.mesh.toFilamentWireframeGroups(style)
-    val centerMaterial = rememberWireframeMaterialInstance(
-        material = material,
-        color = style.centerColor,
-        intensity = brightness * style.centerIntensity,
-    )
-    val greenMaterial = rememberWireframeMaterialInstance(
-        material = material,
-        color = style.peakColor,
-        intensity = brightness * style.peakIntensity,
-    )
-    val cyanMaterial = rememberWireframeMaterialInstance(
-        material = material,
-        color = style.upperColor,
-        intensity = brightness * style.upperIntensity,
-    )
-    val blueMaterial = rememberWireframeMaterialInstance(
-        material = material,
-        color = style.traceColor,
-        intensity = brightness * style.traceIntensity,
-    )
-    val roseMaterial = rememberWireframeMaterialInstance(
-        material = material,
-        color = style.lowerColor,
-        intensity = brightness * style.lowerIntensity,
-    )
+    val centerMaterial = rememberWireframeMaterialInstance(material, style.centerColor)
+    val greenMaterial = rememberWireframeMaterialInstance(material, style.peakColor)
+    val cyanMaterial = rememberWireframeMaterialInstance(material, style.upperColor)
+    val blueMaterial = rememberWireframeMaterialInstance(material, style.traceColor)
+    val roseMaterial = rememberWireframeMaterialInstance(material, style.lowerColor)
 
-    WireframeLineRenderable(mesh.center, centerMaterial)
-    WireframeLineRenderable(mesh.greenPeaks, greenMaterial)
-    WireframeLineRenderable(mesh.cyanUpper, cyanMaterial)
-    WireframeLineRenderable(mesh.blueTrace, blueMaterial)
-    WireframeLineRenderable(mesh.roseLower, roseMaterial)
+    FilamentEffect(style, material) {
+        val runtime = WireframeGpuRuntime(
+            engine = engine,
+            scene = scene,
+            style = style,
+            centerMaterial = centerMaterial,
+            greenMaterial = greenMaterial,
+            cyanMaterial = cyanMaterial,
+            blueMaterial = blueMaterial,
+            roseMaterial = roseMaterial,
+        )
+        runtime.attach()
+        onFrame { frameInfo ->
+            runtime.tick(frameInfo.elapsedSeconds, playback)
+        }
+        onDispose { runtime.detach() }
+    }
 }
 
 @Composable
 private fun rememberWireframeMaterialInstance(
     material: Material,
     color: WireframeColor,
-    intensity: Float,
 ): MaterialInstance {
     val engine = LocalFilamentEngine.current
     val instance = remember(material, color) {
         material.createInstance().also {
             it.setParameter("color", color.r, color.g, color.b, color.a)
+            it.setParameter("intensity", 1f)
         }
-    }
-    SideEffect {
-        instance.setParameter("intensity", intensity)
     }
     DisposableEffect(instance) {
         onDispose { engine.destroyMaterialInstance(instance) }
@@ -237,79 +278,184 @@ private fun rememberWireframeMaterialInstance(
     return instance
 }
 
-@Composable
-private fun FilamentSceneScope.WireframeLineRenderable(
-    mesh: FilamentLineMesh,
-    material: MaterialInstance,
+private class WireframePlaybackSnapshot {
+    @Volatile var bands: List<Float> = emptyList()
+    @Volatile var envelope: Float = 0f
+    @Volatile var isPlaying: Boolean = false
+    @Volatile var motionEnabled: Boolean = false
+    @Volatile var positionPhase: Float = 0f
+    @Volatile var positionMs: Long = 0L
+    @Volatile var trackSeed: String = ""
+    @Volatile var audioAnalysis: StateFlow<AudioAnalysisFrame>? = null
+}
+
+private class WireframeGpuRuntime(
+    private val engine: Engine,
+    private val scene: io.github.erkko68.filament.Scene,
+    private val style: WireframeVisualizerStyle,
+    centerMaterial: MaterialInstance,
+    greenMaterial: MaterialInstance,
+    cyanMaterial: MaterialInstance,
+    blueMaterial: MaterialInstance,
+    roseMaterial: MaterialInstance,
 ) {
-    if (mesh.positions.isEmpty() || mesh.indices.isEmpty()) return
+    private val mesh = WireframeSpectrumMesh.create()
+    private val scratch = FilamentWireframeScratch()
+    private val groups = arrayOf(
+        GpuLineGroup(centerMaterial),
+        GpuLineGroup(greenMaterial),
+        GpuLineGroup(cyanMaterial),
+        GpuLineGroup(blueMaterial),
+        GpuLineGroup(roseMaterial),
+    )
 
-    val engine = LocalFilamentEngine.current
-    val scene = LocalFilamentScene.current
-    val vertexCount = mesh.positions.size / FloatComponentsPerPosition
-    val indexCount = mesh.indices.size
-    val buffers = remember(engine, vertexCount, indexCount) { mesh.upload(engine) }
-    SideEffect {
-        buffers.vertexBuffer.setBufferAt(engine, 0, mesh.positions.toBytes())
+    fun attach() {
+        tick(elapsedSeconds = 0f, playback = WireframePlaybackSnapshot())
     }
-    DisposableEffect(buffers) {
-        onDispose {
-            engine.destroyVertexBuffer(buffers.vertexBuffer)
-            engine.destroyIndexBuffer(buffers.indexBuffer)
+
+    fun tick(elapsedSeconds: Float, playback: WireframePlaybackSnapshot) {
+        val analysis = playback.audioAnalysis?.value?.let { frame ->
+            resolvedVisualizerFrame(
+                analysis = frame,
+                trackSeed = playback.trackSeed,
+                isPlaying = playback.isPlaying,
+                positionMs = playback.positionMs,
+            )
         }
+        val bands = if (analysis != null) {
+            AudioVisualizerRenderState.normalizedBands(analysis)
+        } else {
+            playback.bands
+        }
+        val envelope = if (analysis != null) {
+            AudioVisualizerRenderState.envelopeFor(analysis, bands)
+        } else {
+            playback.envelope
+        }
+        playback.bands = bands
+        playback.envelope = envelope
+        val phase = if (playback.motionEnabled) elapsedSeconds else playback.positionPhase
+        mesh.updateHeights(bands, envelope, phase, playback.isPlaying)
+        mesh.writeFilamentGroups(style, scratch)
+        groups[0].sync(engine, scene, scratch.center)
+        groups[1].sync(engine, scene, scratch.greenPeaks)
+        groups[2].sync(engine, scene, scratch.cyanUpper)
+        groups[3].sync(engine, scene, scratch.blueTrace)
+        groups[4].sync(engine, scene, scratch.roseLower)
+        val brightness = style.brightnessBase + playback.envelope * if (playback.isPlaying || playback.motionEnabled) {
+            style.brightnessReactive
+        } else {
+            style.brightnessIdle
+        }
+        groups[0].material.setParameter("intensity", brightness * style.centerIntensity)
+        groups[1].material.setParameter("intensity", brightness * style.peakIntensity)
+        groups[2].material.setParameter("intensity", brightness * style.upperIntensity)
+        groups[3].material.setParameter("intensity", brightness * style.traceIntensity)
+        groups[4].material.setParameter("intensity", brightness * style.lowerIntensity)
     }
 
-    val entity = remember(buffers, material) {
-        engine.getEntityManager().create().also { entity ->
+    fun detach() {
+        groups.forEach { it.destroy(engine, scene) }
+    }
+}
+
+private class GpuLineGroup(
+    val material: MaterialInstance,
+) {
+    private var buffers: FilamentLineBuffers? = null
+    private var entity: Int? = null
+    private var vertexCount: Int = 0
+    private var indexCount: Int = 0
+
+    fun sync(engine: Engine, scene: io.github.erkko68.filament.Scene, mesh: FilamentLineBuilder) {
+        if (mesh.positionCount == 0 || mesh.indexCount == 0) {
+            destroy(engine, scene)
+            return
+        }
+        val nextVertexCount = mesh.positionCount / FloatComponentsPerPosition
+        val nextIndexCount = mesh.indexCount
+        if (buffers == null || vertexCount != nextVertexCount || indexCount != nextIndexCount) {
+            destroy(engine, scene)
+            val created = mesh.upload(engine)
+            buffers = created
+            vertexCount = nextVertexCount
+            indexCount = nextIndexCount
+            val createdEntity = engine.getEntityManager().create()
             RenderableManager.Builder(1)
-                .geometry(0, RenderableManager.PrimitiveType.LINES, buffers.vertexBuffer, buffers.indexBuffer)
+                .geometry(0, RenderableManager.PrimitiveType.LINES, created.vertexBuffer, created.indexBuffer)
                 .material(0, material)
                 .boundingBox(WireframeSpectrumBounds)
                 .culling(false)
                 .castShadows(false)
                 .receiveShadows(false)
                 .priority(0)
-                .build(engine, entity)
+                .build(engine, createdEntity)
+            scene.addEntity(createdEntity)
+            entity = createdEntity
+            return
         }
+        buffers?.vertexBuffer?.setBufferAt(engine, 0, mesh.positionsBytes())
     }
 
-    DisposableEffect(entity) {
-        scene.addEntity(entity)
-        onDispose {
-            scene.removeEntity(entity)
-            engine.getRenderableManager().destroy(entity)
-            engine.getEntityManager().destroy(entity)
+    fun destroy(engine: Engine, scene: io.github.erkko68.filament.Scene) {
+        entity?.let { id ->
+            scene.removeEntity(id)
+            engine.getRenderableManager().destroy(id)
+            engine.getEntityManager().destroy(id)
         }
+        entity = null
+        buffers?.let { created ->
+            engine.destroyVertexBuffer(created.vertexBuffer)
+            engine.destroyIndexBuffer(created.indexBuffer)
+        }
+        buffers = null
+        vertexCount = 0
+        indexCount = 0
     }
 }
 
-private fun FilamentLineMesh.upload(engine: Engine): FilamentLineBuffers {
+private fun FilamentLineBuilder.upload(engine: Engine): FilamentLineBuffers {
     val vertexBuffer = VertexBuffer.Builder()
-        .vertexCount(positions.size / FloatComponentsPerPosition)
+        .vertexCount(positionCount / FloatComponentsPerPosition)
         .bufferCount(1)
         .attribute(VertexBuffer.VertexAttribute.POSITION, 0, VertexBuffer.AttributeType.FLOAT3)
         .build(engine)
-    vertexBuffer.setBufferAt(engine, 0, positions.toBytes())
+    vertexBuffer.setBufferAt(engine, 0, positionsBytes())
 
     val indexBuffer = IndexBuffer.Builder()
-        .indexCount(indices.size)
+        .indexCount(indexCount)
         .bufferType(IndexBuffer.Builder.IndexType.UINT)
         .build(engine)
-    indexBuffer.setBuffer(engine, indices.toBytes())
+    indexBuffer.setBuffer(engine, indicesBytes())
 
     return FilamentLineBuffers(vertexBuffer, indexBuffer)
 }
 
-private fun WireframeSpectrumMesh.toFilamentWireframeGroups(style: WireframeVisualizerStyle): FilamentWireframeGroups {
+private class FilamentWireframeScratch {
     val center = FilamentLineBuilder()
     val greenPeaks = FilamentLineBuilder()
     val cyanUpper = FilamentLineBuilder()
     val blueTrace = FilamentLineBuilder()
     val roseLower = FilamentLineBuilder()
 
+    fun clear() {
+        center.clear()
+        greenPeaks.clear()
+        cyanUpper.clear()
+        blueTrace.clear()
+        roseLower.clear()
+    }
+}
+
+private fun WireframeSpectrumMesh.writeFilamentGroups(
+    style: WireframeVisualizerStyle,
+    scratch: FilamentWireframeScratch,
+) {
+    scratch.clear()
+
     centerSegments.forEachIndexed { index, segment ->
         if (index % style.centerStride == 0) {
-            center.addCenterSegment(this, segment, style)
+            scratch.center.addCenterSegment(this, segment, style)
         }
     }
 
@@ -321,10 +467,10 @@ private fun WireframeSpectrumMesh.toFilamentWireframeGroups(style: WireframeVisu
         val isUpper = from.y > 0f && to.y > 0f
         val isLower = from.y < 0f && to.y < 0f
         when {
-            isLower -> roseLower.addSegment(this, segment, style)
-            isUpper && averageX.isPeakLobeColumn(style) -> greenPeaks.addSegment(this, segment, style)
-            index % style.accentStride == 0 -> cyanUpper.addSegment(this, segment, style)
-            else -> blueTrace.addSegment(this, segment, style)
+            isLower -> scratch.roseLower.addSegment(this, segment, style)
+            isUpper && averageX.isPeakLobeColumn(style) -> scratch.greenPeaks.addSegment(this, segment, style)
+            index % style.accentStride == 0 -> scratch.cyanUpper.addSegment(this, segment, style)
+            else -> scratch.blueTrace.addSegment(this, segment, style)
         }
     }
     diagonalSegments.forEachIndexed { index, segment ->
@@ -335,25 +481,29 @@ private fun WireframeSpectrumMesh.toFilamentWireframeGroups(style: WireframeVisu
         val isUpper = from.y > 0f && to.y > 0f
         val isLower = from.y < 0f && to.y < 0f
         when {
-            isLower && index % 2 == 0 -> roseLower.addSegment(this, segment, style)
-            isUpper && averageX.isPeakLobeColumn(style) -> greenPeaks.addSegment(this, segment, style)
-            index % style.accentStride == 0 -> cyanUpper.addSegment(this, segment, style)
-            else -> blueTrace.addSegment(this, segment, style)
+            isLower && index % 2 == 0 -> scratch.roseLower.addSegment(this, segment, style)
+            isUpper && averageX.isPeakLobeColumn(style) -> scratch.greenPeaks.addSegment(this, segment, style)
+            index % style.accentStride == 0 -> scratch.cyanUpper.addSegment(this, segment, style)
+            else -> scratch.blueTrace.addSegment(this, segment, style)
         }
     }
-
-    return FilamentWireframeGroups(
-        center = center.build(),
-        greenPeaks = greenPeaks.build(),
-        cyanUpper = cyanUpper.build(),
-        blueTrace = blueTrace.build(),
-        roseLower = roseLower.build(),
-    )
 }
 
 private class FilamentLineBuilder {
     private val positions = FloatBuilder()
     private val indices = IntBuilder()
+
+    val positionCount: Int get() = positions.size
+    val indexCount: Int get() = indices.size
+
+    fun clear() {
+        positions.clear()
+        indices.clear()
+    }
+
+    fun positionsBytes() = positions.toFloatArray().toBytes()
+
+    fun indicesBytes() = indices.toIntArray().toBytes()
 
     fun addSegment(mesh: WireframeSpectrumMesh, segment: WireframeSegment, style: WireframeVisualizerStyle) {
         val startIndex = positions.size / FloatComponentsPerPosition
@@ -369,16 +519,6 @@ private class FilamentLineBuilder {
         addWorldVertex(mesh.vertices[segment.to].x.toCenterWorld(style))
         indices += startIndex
         indices += startIndex + 1
-    }
-
-    fun build(): FilamentLineMesh {
-        if (positions.isEmpty()) {
-            return FilamentLineMesh(FloatArray(0), IntArray(0))
-        }
-        return FilamentLineMesh(
-            positions = positions.toFloatArray(),
-            indices = indices.toIntArray(),
-        )
     }
 
     private fun addVertex(vertex: WireframeVertex, style: WireframeVisualizerStyle) {
@@ -401,6 +541,10 @@ private class FloatBuilder(initialCapacity: Int = 1024) {
 
     fun isEmpty(): Boolean = size == 0
 
+    fun clear() {
+        size = 0
+    }
+
     operator fun plusAssign(value: Float) {
         ensureCapacity(size + 1)
         data[size] = value
@@ -419,6 +563,10 @@ private class IntBuilder(initialCapacity: Int = 1024) {
     private var data = IntArray(initialCapacity)
     var size = 0
         private set
+
+    fun clear() {
+        size = 0
+    }
 
     operator fun plusAssign(value: Int) {
         ensureCapacity(size + 1)
@@ -441,26 +589,6 @@ private data class WireframeColor(
     val a: Float,
 )
 
-private data class FilamentWireframeGroups(
-    val center: FilamentLineMesh,
-    val greenPeaks: FilamentLineMesh,
-    val cyanUpper: FilamentLineMesh,
-    val blueTrace: FilamentLineMesh,
-    val roseLower: FilamentLineMesh,
-)
-
-private data class FilamentLineMesh(
-    val positions: FloatArray,
-    val indices: IntArray,
-) {
-    override fun equals(other: Any?): Boolean =
-        other is FilamentLineMesh &&
-            positions.contentEquals(other.positions) &&
-            indices.contentEquals(other.indices)
-
-    override fun hashCode(): Int = 31 * positions.contentHashCode() + indices.contentHashCode()
-}
-
 private data class FilamentLineBuffers(
     val vertexBuffer: VertexBuffer,
     val indexBuffer: IndexBuffer,
@@ -469,14 +597,16 @@ private data class FilamentLineBuffers(
 private const val FloatComponentsPerPosition = 3
 private const val FullTurnRadians = (PI * 2.0).toFloat()
 
-private val WireframeSpectrumBounds = FilamentBox(
-    0f,
-    0f,
-    0f,
-    5.2f,
-    4.0f,
-    5.2f,
-)
+private val WireframeSpectrumBounds by lazy {
+    FilamentBox(
+        0f,
+        0f,
+        0f,
+        5.2f,
+        4.0f,
+        5.2f,
+    )
+}
 
 private fun Float.isPeakLobeColumn(style: WireframeVisualizerStyle): Boolean {
     val distanceFromCenter = abs((this - 0.5f) * 2f)
@@ -778,6 +908,6 @@ private fun Float.sign(): Float = when {
     else -> 0f
 }
 
-private fun sinF(value: Float): Float = sin(value.toDouble()).toFloat()
+private fun sinF(value: Float): Float = sin(value)
 
-private fun cosF(value: Float): Float = cos(value.toDouble()).toFloat()
+private fun cosF(value: Float): Float = cos(value)

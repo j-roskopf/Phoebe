@@ -80,4 +80,49 @@ class AudioVisualizerRenderStateTest {
         assertTrue(rightLobe > rightEdge * 8f)
         assertTrue(abs(leftLobe - rightLobe) < 0.18f)
     }
+
+    @Test
+    fun meshKeepsTopologyWhenHeightsUpdate() {
+        val mesh = WireframeSpectrumMesh.create()
+        mesh.updateHeights(
+            bands = List(AudioVisualizerRenderState.BandCount) { 0.12f },
+            envelope = 0.2f,
+            phase = 0f,
+            isPlaying = true,
+        )
+        val xs = mesh.vertices.map { it.x }
+        val zs = mesh.vertices.map { it.z }
+        val signs = mesh.vertices.map { it.y > 0f }
+        val horizontal = mesh.horizontalSegments.toList()
+        val lobeIndex = (AudioVisualizerRenderState.BandCount / 4) * 2
+        val firstHeight = mesh.vertices[lobeIndex].y
+
+        mesh.updateHeights(
+            bands = List(AudioVisualizerRenderState.BandCount) { 0.95f },
+            envelope = 0.9f,
+            phase = 1.6f,
+            isPlaying = true,
+        )
+
+        assertEquals(xs, mesh.vertices.map { it.x })
+        assertEquals(zs, mesh.vertices.map { it.z })
+        assertEquals(signs, mesh.vertices.map { it.y > 0f })
+        assertEquals(horizontal, mesh.horizontalSegments)
+        assertTrue(mesh.vertices[lobeIndex].y > firstHeight)
+        assertTrue(mesh.vertices[lobeIndex].y > 0f)
+        assertTrue(mesh.vertices[lobeIndex + 1].y < 0f)
+    }
+
+    @Test
+    fun envelopeFollowsPeakBandNotAverage() {
+        val frame = AudioAnalysisFrame(
+            amplitude = 0.2f,
+            bands = List(64) { index -> if (index == 8) 1f else 0.05f },
+            timestampMs = 42L,
+            source = AudioAnalysisSource.Pcm,
+        )
+        val bands = AudioVisualizerRenderState.normalizedBands(frame)
+        val envelope = AudioVisualizerRenderState.envelopeFor(frame, bands)
+        assertTrue(envelope > 0.9f)
+    }
 }

@@ -55,7 +55,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phoebe.app.data.ListenBrainzFeedbackScore
 import com.phoebe.app.data.ListenBrainzFeedbackTarget
-import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.NowPlayingVisualizerPreset
 import com.phoebe.app.domain.RepeatMode
@@ -231,7 +230,6 @@ fun MobilePlayer(
     showUltimateGuitarButton: Boolean = true,
     blurredArtworkAppearance: Boolean = true,
     tintedBackgroundGradient: Boolean = false,
-    audioAnalysis: AudioAnalysisFrame = AudioAnalysisFrame.Empty,
     useFilamentVisualizers: Boolean = true,
     onToggle: () -> Unit,
     onPrevious: () -> Unit,
@@ -797,7 +795,6 @@ fun MobilePlayer(
                             NowPlayingVisualizerSurface(
                                 preset = visualizerPreset,
                                 track = t,
-                                audioAnalysis = audioAnalysis,
                                 isPlaying = isPlaying,
                                 positionMs = positionMs,
                                 modifier = Modifier.fillMaxSize(),

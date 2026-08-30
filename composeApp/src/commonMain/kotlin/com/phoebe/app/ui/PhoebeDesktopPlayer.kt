@@ -172,7 +172,6 @@ internal fun DesktopPlayer(
     val equalizerRemoteUnavailable = playbackState.equalizerRemoteUnavailable
     val visualizerPreset = playbackState.visualizerPreset
     val showVisualizerInTvFrame = playbackState.showVisualizerInTvFrame
-    val audioAnalysis = playbackState.audioAnalysis
     val homeUiState = browseState.homeUiState
     val playHistory = browseState.playHistory
     val searchQuery = browseState.searchQuery
@@ -794,7 +793,6 @@ internal fun DesktopPlayer(
                                             track = track,
                                             preset = visualizerPreset,
                                             showInTvFrame = showVisualizerInTvFrame,
-                                            audioAnalysis = audioAnalysis,
                                             isPlaying = isPlaying,
                                             positionMs = positionMs,
                                             useFilamentVisualizers = playbackState.useFilamentVisualizers,

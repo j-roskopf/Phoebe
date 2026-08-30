@@ -80,9 +80,14 @@ class RealAudioPlaybackDesktopTest {
 
             player.play(listOf(track), 0)
 
+            val expectedEngine = if (System.getProperty("os.name").orEmpty().lowercase().contains("linux")) {
+                PlaybackEnginePath.SampledStream
+            } else {
+                PlaybackEnginePath.JavaFxMediaPlayer
+            }
             assertTrue(
-                waitUntil { diagnostics.hasEngine(PlaybackEnginePath.JavaFxMediaPlayer) },
-                "Local MP3 should route to JavaFX, not Java Sound; engines=${diagnostics.engineEvents()} " +
+                waitUntil { diagnostics.hasEngine(expectedEngine) },
+                "Local MP3 should route to $expectedEngine, not Java Sound; engines=${diagnostics.engineEvents()} " +
                     "errors=${diagnostics.errorEvents()}",
             )
             assertFalse(
@@ -105,9 +110,14 @@ class RealAudioPlaybackDesktopTest {
 
             player.play(listOf(track), 0)
 
+            val expectedEngine = if (System.getProperty("os.name").orEmpty().lowercase().contains("linux")) {
+                PlaybackEnginePath.SampledStream
+            } else {
+                PlaybackEnginePath.JavaFxMediaPlayer
+            }
             assertTrue(
-                waitUntil { diagnostics.hasEngine(PlaybackEnginePath.JavaFxMediaPlayer) },
-                "Local short MP3 should route to JavaFX, not Java Sound; engines=${diagnostics.engineEvents()} " +
+                waitUntil { diagnostics.hasEngine(expectedEngine) },
+                "Local short MP3 should route to $expectedEngine, not Java Sound; engines=${diagnostics.engineEvents()} " +
                     "errors=${diagnostics.errorEvents()}",
             )
             assertFalse(
