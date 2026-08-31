@@ -17,11 +17,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -44,6 +46,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -154,6 +157,12 @@ private fun CoilArtworkImage(
     }
     var candidateIndex by remember(candidates) { mutableIntStateOf(0) }
     val candidate = candidates.getOrNull(candidateIndex)
+    var retainedPainter by remember(seed, thumbUrl, fallbackThumbUrl, maxDecodeDimension) {
+        mutableStateOf<Painter?>(null)
+    }
+    var retainFallbackWhileLoading by remember(seed, thumbUrl, fallbackThumbUrl, maxDecodeDimension) {
+        mutableStateOf(waitingForLiveOrigin)
+    }
     val platformContext = LocalPlatformContext.current
     val request = remember(platformContext, candidate) {
         candidate?.let {
@@ -164,53 +173,67 @@ private fun CoilArtworkImage(
         }
     }
     val imageLoader = rememberPhoebeArtworkImageLoader(platformContext)
-    key(candidate?.fetchUrl, candidateIndex, maxDecodeDimension, waitingForLiveOrigin) {
-        val painter = rememberAsyncImagePainter(model = request, imageLoader = imageLoader)
-        val painterState by painter.state.collectAsState()
+    val painter = key(candidate?.fetchUrl, candidateIndex, maxDecodeDimension, waitingForLiveOrigin) {
+        rememberAsyncImagePainter(model = request, imageLoader = imageLoader)
+    }
+    val painterState by painter.state.collectAsState()
 
-        LaunchedEffect(painterState) {
-            val state = painterState
-            if (
-                state is AsyncImagePainter.State.Error &&
-                state.result.throwable !is CancellationException &&
-                candidateIndex < candidates.lastIndex
-            ) {
-                candidateIndex += 1
-            }
+    LaunchedEffect(painterState) {
+        val state = painterState
+        if (
+            state is AsyncImagePainter.State.Error &&
+            state.result.throwable !is CancellationException &&
+            candidateIndex < candidates.lastIndex
+        ) {
+            candidateIndex += 1
         }
+    }
 
-        val visualState = when {
-            waitingForLiveOrigin -> RemoteArtworkVisualState.Missing
-            else -> resolveCoilArtworkVisualState(
-                painterState = painterState,
-                hasCandidate = candidate != null,
-                exhaustedCandidates = candidateIndex >= candidates.lastIndex,
+    SideEffect {
+        if (waitingForLiveOrigin) {
+            retainFallbackWhileLoading = true
+        }
+        painterState.painter?.let { drawablePainter ->
+            retainedPainter = drawablePainter
+            retainFallbackWhileLoading = false
+        }
+    }
+
+    val visualState = resolveCoilArtworkVisualState(
+        painterState = painterState,
+        hasCandidate = candidate != null,
+        exhaustedCandidates = candidateIndex >= candidates.lastIndex,
+        hasRetainedPainter = retainedPainter != null,
+        retainFallbackWhileLoading = retainFallbackWhileLoading,
+        waitingForLiveOrigin = waitingForLiveOrigin,
+    )
+    val displayPainter = when {
+        painterState.painter != null -> painter
+        else -> retainedPainter
+    }
+
+    Box(modifier) {
+        displayPainter?.let { visiblePainter ->
+            Image(
+                painter = visiblePainter,
+                contentDescription = null,
+                contentScale = contentScale,
+                alignment = alignment,
+                modifier = artworkSurfaceModifier(Modifier.matchParentSize(), shape, elevated),
             )
         }
-
-        Box(modifier) {
-            if (visualState != RemoteArtworkVisualState.Missing) {
-                Image(
-                    painter = painter,
-                    contentDescription = null,
-                    contentScale = contentScale,
-                    alignment = alignment,
-                    modifier = artworkSurfaceModifier(Modifier.matchParentSize(), shape, elevated),
-                )
-            }
-            Crossfade(
-                targetState = visualState,
-                modifier = Modifier.matchParentSize(),
-                label = "artwork-load-state",
-            ) { state ->
-                when (state) {
-                    RemoteArtworkVisualState.Image -> Unit
-                    RemoteArtworkVisualState.Loading -> {
-                        ArtworkLoadingSlot(Modifier.fillMaxSize(), radius, shape = shape, elevated = elevated)
-                    }
-                    RemoteArtworkVisualState.Missing -> {
-                        AlbumArtwork(seed, Modifier.fillMaxSize(), radius, shape = shape, elevated = elevated)
-                    }
+        Crossfade(
+            targetState = visualState,
+            modifier = Modifier.matchParentSize(),
+            label = "artwork-load-state",
+        ) { state ->
+            when (state) {
+                RemoteArtworkVisualState.Image -> Unit
+                RemoteArtworkVisualState.Loading -> {
+                    ArtworkLoadingSlot(Modifier.fillMaxSize(), radius, shape = shape, elevated = elevated)
+                }
+                RemoteArtworkVisualState.Missing -> {
+                    AlbumArtwork(seed, Modifier.fillMaxSize(), radius, shape = shape, elevated = elevated)
                 }
             }
         }
@@ -418,25 +441,28 @@ internal enum class RemoteArtworkVisualState {
 }
 
 /**
- * Coil's [rememberAsyncImagePainter] reports [AsyncImagePainter.State.Empty] (and often
- * [AsyncImagePainter.State.Loading] without a painter) on the first composition even when
- * the bytes are already in Coil's memory cache — but the painter still draws them on frame
- * one. Treat those states as "image" for overlay purposes so we don't flash the loading ring
- * over artwork that is already visible (e.g. when a swipe preview tile becomes current).
+ * A newly remembered Coil painter starts [AsyncImagePainter.State.Empty] with nothing to draw.
+ * Keep previously displayed content through request-key changes, but do not classify a fresh
+ * empty painter as an image or the placeholder disappears for a frame before loading begins.
  */
 internal fun resolveCoilArtworkVisualState(
     painterState: AsyncImagePainter.State,
     hasCandidate: Boolean,
     exhaustedCandidates: Boolean,
+    hasRetainedPainter: Boolean = false,
+    retainFallbackWhileLoading: Boolean = false,
+    waitingForLiveOrigin: Boolean = false,
 ): RemoteArtworkVisualState {
+    if (painterState.painter != null || hasRetainedPainter) return RemoteArtworkVisualState.Image
+    if (waitingForLiveOrigin || retainFallbackWhileLoading) return RemoteArtworkVisualState.Missing
     if (!hasCandidate) return RemoteArtworkVisualState.Missing
     return when (painterState) {
         is AsyncImagePainter.State.Success -> RemoteArtworkVisualState.Image
         is AsyncImagePainter.State.Error ->
             if (exhaustedCandidates) RemoteArtworkVisualState.Missing else RemoteArtworkVisualState.Loading
-        is AsyncImagePainter.State.Empty -> RemoteArtworkVisualState.Image
-        is AsyncImagePainter.State.Loading ->
-            if (painterState.painter != null) RemoteArtworkVisualState.Image else RemoteArtworkVisualState.Loading
+        is AsyncImagePainter.State.Empty,
+        is AsyncImagePainter.State.Loading,
+        -> RemoteArtworkVisualState.Loading
     }
 }
 
