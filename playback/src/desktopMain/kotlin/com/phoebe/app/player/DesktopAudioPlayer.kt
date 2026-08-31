@@ -2610,10 +2610,15 @@ class DesktopAudioPlayer(
     private fun sourceLineBufferSize(format: AudioFormat): Int {
         val frameSize = format.frameSize.takeIf { it > 0 } ?: return VisualizerStreamChunkBytes * 2
         val sampleRate = format.sampleRate.takeIf { it > 0f && !it.isNaN() } ?: return VisualizerStreamChunkBytes * 2
+        val lineSeconds = if (JavaFxVisualizerPcmTap.isLinuxOs()) {
+            LinuxStreamingLineBufferSeconds
+        } else {
+            StreamingLineBufferSeconds
+        }
         // Keep this near a visualizer frame. A 1.5s Java Sound buffer made Pulse
         // accept writes in huge periods, so analysis (which runs on the write loop)
         // dropped to a couple of Hertz — the same lag as JavaFX spectrum.
-        val frames = (sampleRate * StreamingLineBufferSeconds).toInt().coerceAtLeast(1)
+        val frames = (sampleRate * lineSeconds).toInt().coerceAtLeast(1)
         return (frames * frameSize)
             .coerceAtLeast(VisualizerStreamChunkBytes * 2)
             .coerceAtMost(MaxStreamingLineBufferBytes)
@@ -3654,6 +3659,7 @@ class DesktopAudioPlayer(
         const val StreamingPcmBufferBytes = 16 * 1024
         const val VisualizerStreamChunkBytes = 4 * 1024
         const val StreamingLineBufferSeconds = 0.06f
+        const val LinuxStreamingLineBufferSeconds = 0.35f
         const val MaxStreamingLineBufferBytes = 1024 * 1024
         const val FfmpegPcmSampleRateHz = 44_100
         const val FfmpegPcmChannels = 2
