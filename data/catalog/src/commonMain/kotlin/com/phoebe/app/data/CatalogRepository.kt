@@ -75,6 +75,7 @@ import com.phoebe.app.domain.supportsRemoteRatings
 import com.phoebe.app.platform.PlatformStorage
 import com.phoebe.app.data.splitCollectionTagLabels
 import com.phoebe.app.platform.PhoebeLog
+import com.phoebe.app.platform.withNetworkTimeoutOrNull
 import com.phoebe.app.platform.catalogTrackIndexParallelism
 import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.platform.downloadParallelism
@@ -439,6 +440,80 @@ class CatalogRepository(
     val catalog: StateFlow<CatalogSnapshot> = mutableCatalog
     val downloads: StateFlow<List<DownloadItem>> = mutableDownloads
     val downloadEvents: SharedFlow<DownloadStatusEvent> = mutableDownloadEvents.asSharedFlow()
+
+    /**
+     * Publish the single live Plex base for Coil bind-at-request. Paths stay relative
+     * in the catalog; only normalize legacy absolute hosts down to paths.
+     */
+    fun rebasePlexMediaOrigins(origin: String, fallbackOrigins: List<String> = emptyList()) {
+        val trimmed = origin.trimEnd('/').takeIf { it.isNotBlank() } ?: return
+        ArtworkOriginHolder.update(trimmed, fallbackOrigins)
+        val current = mutableCatalog.value
+        if (current.artists.isEmpty() &&
+            current.albums.isEmpty() &&
+            current.playlists.isEmpty() &&
+            current.tracksByParent.isEmpty()
+        ) {
+            return
+        }
+        fun toRelativeAsset(url: String?): String? {
+            if (url.isNullOrBlank()) return url
+            return plexAssetPath(url) ?: url
+        }
+        var changed = false
+        val artists = current.artists.map { artist ->
+            val next = toRelativeAsset(artist.thumbUrl)
+            if (next == artist.thumbUrl) artist else {
+                changed = true
+                artist.copy(thumbUrl = next)
+            }
+        }
+        val albums = current.albums.map { album ->
+            val next = toRelativeAsset(album.thumbUrl)
+            if (next == album.thumbUrl) album else {
+                changed = true
+                album.copy(thumbUrl = next)
+            }
+        }
+        val playlists = current.playlists.map { playlist ->
+            val next = toRelativeAsset(playlist.thumbUrl)
+            if (next == playlist.thumbUrl) playlist else {
+                changed = true
+                playlist.copy(thumbUrl = next)
+            }
+        }
+        val tracksByParent = current.tracksByParent.mapValues { (_, tracks) ->
+            tracks.map { track ->
+                val thumb = toRelativeAsset(track.thumbUrl)
+                val stream = toRelativeAsset(track.streamUrl) ?: track.streamUrl
+                val download = toRelativeAsset(track.downloadUrl) ?: track.downloadUrl
+                // Drop stamped absolute fallbacks; bind rebuilds from live base at play.
+                val fallbacks = emptyList<String>()
+                if (thumb == track.thumbUrl &&
+                    stream == track.streamUrl &&
+                    download == track.downloadUrl &&
+                    fallbacks == track.playbackFallbackUrls
+                ) {
+                    track
+                } else {
+                    changed = true
+                    track.copy(
+                        thumbUrl = thumb,
+                        streamUrl = stream,
+                        downloadUrl = download,
+                        playbackFallbackUrls = fallbacks,
+                    )
+                }
+            }
+        }
+        if (!changed) return
+        mutableCatalog.value = current.copy(
+            artists = artists,
+            albums = albums,
+            playlists = playlists,
+            tracksByParent = tracksByParent,
+        )
+    }
 
     private fun replaceDownloadSnapshot(
         items: List<DownloadItem>,
@@ -6595,7 +6670,9 @@ class CatalogRepository(
             .asSequence()
             .flatten()
             .distinctBy { it.id }
-            .filter { it.id in downloadedIds && it.thumbUrl?.isRemoteArtworkUrl() == true && it.localArtworkUri == null }
+            // `startsWith("http")` is not the test for "has downloadable artwork" any more:
+            // Plex thumbs are stored as relative paths and get an address at request time.
+            .filter { it.id in downloadedIds && it.thumbUrl?.isFetchableArtworkUrl() == true && it.localArtworkUri == null }
             .toList()
         var cached = 0
         tracks.forEach { track ->
@@ -6606,7 +6683,7 @@ class CatalogRepository(
         val trackIds = tracks.map { it.id }.toSet()
         val playlists = snapshot.playlists
             .filter { playlist ->
-                playlist.thumbUrl?.isRemoteArtworkUrl() == true &&
+                playlist.thumbUrl?.isFetchableArtworkUrl() == true &&
                     snapshot.tracksByParent[playlist.id].orEmpty().any { it.id in trackIds }
             }
         playlists.forEach { playlist ->
@@ -6949,8 +7026,14 @@ class CatalogRepository(
             }
         }
 
+        // The catalog stores a relative part key, so the address is resolved here rather than
+        // being baked in when the download was queued. A download queued on Wi-Fi and started
+        // on cellular has to use the origin that is live now.
+        val sourceUrl = boundMediaUrl(track.downloadUrl)
+            ?: error("No reachable address for this server yet.")
+
         platformStreamHttpDownloadToStorage(
-            url = track.downloadUrl,
+            url = sourceUrl,
             targetPath = downloadPathFor(track),
             storage = storage,
             bufferSize = DownloadChunkSize,
@@ -6960,7 +7043,7 @@ class CatalogRepository(
             return localUri
         }
 
-        val response = httpClient.get(track.downloadUrl)
+        val response = httpClient.get(sourceUrl)
         if (response.status.value !in 200..299) {
             error("Server returned HTTP ${response.status.value}")
         }
@@ -7216,9 +7299,12 @@ class CatalogRepository(
     }
 
     private suspend fun downloadArtworkForTrack(track: Track): String? {
-        val thumbUrl = track.thumbUrl?.takeIf { it.isNotBlank() && it.isRemoteArtworkUrl() } ?: return null
+        val rawThumb = track.thumbUrl?.takeIf { it.isNotBlank() } ?: return null
+        // Plex thumbs are stored relative, so `startsWith("http")` is no longer the test for
+        // "downloadable" — without binding first, offline artwork silently stops being saved.
+        val thumbUrl = boundMediaUrl(rawThumb)?.takeIf { it.isRemoteArtworkUrl() } ?: return null
         return runCatching {
-            withTimeoutOrNull(DownloadArtworkTimeoutMs) {
+            withNetworkTimeoutOrNull(DownloadArtworkTimeoutMs) {
                 val bytes = httpClient.get(thumbUrl) {
                     applyEmbyFamilyArtworkAuth(thumbUrl)
                 }.body<ByteArray>()
@@ -7263,7 +7349,11 @@ class CatalogRepository(
         title: String,
         thumbUrl: String?,
     ): String? {
-        val remoteThumbUrl = thumbUrl?.takeIf { it.isNotBlank() && it.isRemoteArtworkUrl() } ?: return null
+        val remoteThumbUrl = thumbUrl
+            ?.takeIf { it.isNotBlank() }
+            ?.let(::boundMediaUrl)
+            ?.takeIf { it.isRemoteArtworkUrl() }
+            ?: return null
         return runCatching {
             val bytes = httpClient.get(remoteThumbUrl) {
                 applyEmbyFamilyArtworkAuth(remoteThumbUrl)
@@ -7334,8 +7424,29 @@ class CatalogRepository(
         return "downloads/${track.id.safePathSegment()}.$extension"
     }
 
+    /**
+     * Absolute URL for a stored media path, using the origin that is live right now.
+     *
+     * Returns null when nothing has been `/identity`-confirmed yet: a relative path has no
+     * address to fall back to, and guessing one is how downloads used to be written against a
+     * host that never answered.
+     */
+    private fun boundMediaUrl(pathOrUrl: String): String? {
+        if (pathOrUrl.isBlank()) return null
+        if (!pathOrUrl.isPlexMediaPathOrUrl()) {
+            return pathOrUrl.takeIf { it.isRemoteArtworkUrl() || it.startsWith("http", ignoreCase = true) }
+        }
+        val origin = ArtworkOriginHolder.liveOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }
+            ?: return pathOrUrl.takeIf { it.isRemoteArtworkUrl() }
+        return bindPlexUrl(pathOrUrl, origin, ArtworkAuthHolder.plexToken.orEmpty())
+    }
+
     private fun String.isRemoteArtworkUrl(): Boolean =
         startsWith("http://") || startsWith("https://")
+
+    /** Artwork this app can fetch: an absolute URL, or a server path we can bind an origin onto. */
+    private fun String.isFetchableArtworkUrl(): Boolean =
+        isNotBlank() && (isRemoteArtworkUrl() || isPlexMediaPathOrUrl())
 
     private fun String.isLocalArtworkUrl(): Boolean =
         startsWith("file:") || startsWith("content:") || startsWith("web-storage://")
@@ -8554,7 +8665,13 @@ class CatalogRepository(
 
     private fun Track.shouldPreserveAcrossPlexRefresh(currentToken: String?): Boolean {
         if (isLocalMediaPlayback() || (isRemoteLibraryTrack() && !isPlexLibraryTrack()) || !isPlexLibraryTrack()) return true
-        return currentToken != null && streamUrl.plexTokenQueryValue() == currentToken
+        if (currentToken == null) return false
+        val stamped = streamUrl.plexTokenQueryValue()
+        if (stamped == null) {
+            // Relative part keys are bound at play time — no stamped token to go stale.
+            return streamUrl.isPlexMediaPathOrUrl()
+        }
+        return stamped == currentToken
     }
 
     private fun List<Track>.canUseCachedTracksForSession(session: PlexSession?): Boolean {

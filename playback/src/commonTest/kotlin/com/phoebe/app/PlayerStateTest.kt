@@ -1,5 +1,7 @@
 package com.phoebe.app
 
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
 import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.Track
@@ -10,6 +12,7 @@ import com.phoebe.app.player.PlaybackFailureClassifier
 import com.phoebe.app.player.PlaybackOriginResolver
 import com.phoebe.app.player.PlaybackOriginResolverHolder
 import com.phoebe.app.player.SimpleAudioPlayer
+import com.phoebe.app.player.StreamingPlaybackPolicyHolder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -122,7 +125,7 @@ class PlayerStateTest {
     }
 
     @Test
-    fun coldOriginResolverStartsImmediatelyWithoutWaitingForProbe() = runTest {
+    fun coldOriginResolverWaitsForProbeBeforePlatformLoad() = runTest {
         val warmOrigin = "https://resolved.example"
         PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
             override fun cachedOrigin(): String? = null
@@ -151,15 +154,13 @@ class PlayerStateTest {
                 ),
                 0,
             )
-            // Must not wait on the probe — platform load starts with the stamped queue immediately.
-            assertEquals(1, player.fullLoads)
-            assertEquals(cold, player.state.value.currentTrack?.streamUrl)
-            assertTrue(player.state.value.isBuffering)
+            // No warm cache — wait for the ranked race instead of opening a dead LAN host.
+            assertEquals(0, player.fullLoads)
             advanceTimeBy(25)
             runCurrent()
-            // Probe won a different origin while still buffering — switch now, don't wait for timeout.
             assertEquals(warm, player.state.value.currentTrack?.streamUrl)
-            assertEquals(2, player.fullLoads)
+            assertEquals(1, player.fullLoads)
+            assertTrue(player.state.value.isBuffering)
         } finally {
             PlaybackOriginResolverHolder.resolver = null
         }
@@ -194,10 +195,10 @@ class PlayerStateTest {
                 ),
                 0,
             )
-            assertEquals(1, player.fullLoads)
-            assertEquals(remote, player.state.value.currentTrack?.streamUrl)
+            assertEquals(0, player.fullLoads)
             advanceTimeBy(25)
             runCurrent()
+            // Probe returned demoted LAN — keep the remote stamped URL, don't restamp onto LAN.
             assertEquals(remote, player.state.value.currentTrack?.streamUrl)
             assertEquals(1, player.fullLoads)
         } finally {
@@ -1394,6 +1395,70 @@ class PlayerStateTest {
         assertFalse(player.state.value.isPlaying)
         assertTrue(player.stopCalls >= 1)
     }
+
+    @Test
+    fun originChangeMidPlaybackReopensTheCurrentTrackAtItsPosition() = runTest {
+        val wifi = "http://192.168.1.9:32400"
+        val cellular = "https://45-79-202-250.abc.plex.direct:8443"
+        ArtworkAuthHolder.update("token")
+        ArtworkOriginHolder.update(wifi)
+        val player = OpenedUriTestPlayer()
+        try {
+            // A Plex queue carries relative part keys, not addresses.
+            val tracks = listOf(
+                Track("t1", "One", "Artist", "Album", 60_000, "/library/parts/1/file.mp3", ""),
+            )
+            player.play(tracks, 0)
+            player.finishPendingLoad()
+            player.seekTo(30_000)
+            assertEquals(1, player.openedUris.size)
+            assertTrue(
+                player.openedUris.single().startsWith(wifi),
+                "expected the first open on the Wi-Fi origin, got ${player.openedUris}",
+            )
+
+            // Wi-Fi -> cellular: the resolver publishes a new base.
+            ArtworkOriginHolder.update(cellular)
+            player.rebasePlaybackOrigins(cellular)
+            runCurrent()
+
+            // Without this, the open socket sits on the dead LAN address until the platform
+            // player's own timeout expires — 20-30s of silence.
+            assertEquals(2, player.openedUris.size, "expected a re-open, got ${player.openedUris}")
+            assertTrue(
+                player.openedUris.last().startsWith(cellular),
+                "expected the re-open on the cellular origin, got ${player.openedUris}",
+            )
+            assertEquals(30_000, player.state.value.positionMs)
+        } finally {
+            player.close()
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
+    }
+
+    @Test
+    fun republishingTheSameOriginDoesNotReopenTheStream() = runTest {
+        val wifi = "http://192.168.1.9:32400"
+        ArtworkAuthHolder.update("token")
+        ArtworkOriginHolder.update(wifi)
+        val player = OpenedUriTestPlayer()
+        try {
+            player.play(
+                listOf(Track("t1", "One", "Artist", "Album", 60_000, "/library/parts/1/file.mp3", "")),
+                0,
+            )
+            player.finishPendingLoad()
+            player.rebasePlaybackOrigins(wifi)
+            runCurrent()
+
+            assertEquals(1, player.openedUris.size, "re-resolving to the same base must be a no-op")
+        } finally {
+            player.close()
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
+    }
 }
 
 /** Resolver whose only useful answer is the refetched connection list. */
@@ -1410,6 +1475,36 @@ private fun movedServerResolver(
     override suspend fun rediscoverOrigins(): List<String> {
         onRediscover()
         return origins.toList()
+    }
+}
+
+/** Records every URI the platform layer is asked to open. */
+private class OpenedUriTestPlayer(
+    scope: CoroutineScope = CoroutineScope(Dispatchers.Default),
+) : SimpleAudioPlayer(scope) {
+    val openedUris = mutableListOf<String>()
+
+    override fun playUri(uri: String) {
+        openedUris += uri
+    }
+
+    // Real players ask the policy holder for the URI, which is where the origin is bound.
+    override fun playQueueOnPlatform(
+        queue: List<Track>,
+        startIndex: Int,
+        track: Track,
+        generation: Int,
+        startPositionMs: Long,
+    ) {
+        openedUris += StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
+    }
+
+    override fun skipToInQueueOnPlatform(queue: List<Track>, startIndex: Int, track: Track, generation: Int) {
+        openedUris += StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
+    }
+
+    fun finishPendingLoad() {
+        markPlaybackReady(generation = activePlayGeneration)
     }
 }
 

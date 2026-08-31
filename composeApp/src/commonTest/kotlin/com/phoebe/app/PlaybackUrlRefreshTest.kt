@@ -1,16 +1,19 @@
 package com.phoebe.app
 
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
 import com.phoebe.app.domain.MediaProviderType
 import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.PlexSession
 import com.phoebe.app.domain.Track
+import com.phoebe.app.player.StreamingPlaybackPolicyHolder
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 class PlaybackUrlRefreshTest {
     @Test
-    fun plexPlaybackUrlsReplaceStaleTokenAndPreserveOtherQueryParameters() {
+    fun plexQueueEntriesKeepRelativePartKeysWithNoHostOrToken() {
         val track = playbackTrack(
             streamUrl = "https://plex.example/library/parts/1/file.mp3?X-Plex-Token=old&download=0",
             downloadUrl = "https://plex.example/library/parts/1/file.mp3?download=1&X-Plex-Token=old",
@@ -20,49 +23,80 @@ class PlaybackUrlRefreshTest {
             PlexSession(token = "fresh", providerType = MediaProviderType.Plex),
         ).single()
 
-        assertEquals(
-            "https://plex.example/library/parts/1/file.mp3?X-Plex-Token=fresh&download=0",
-            refreshed.streamUrl,
-        )
-        assertEquals(
-            "https://plex.example/library/parts/1/file.mp3?download=1&X-Plex-Token=fresh",
-            refreshed.downloadUrl,
-        )
+        // An address in the queue is an address that can go stale. Non-token query survives.
+        assertEquals("/library/parts/1/file.mp3?download=0", refreshed.streamUrl)
+        assertEquals("/library/parts/1/file.mp3?download=1", refreshed.downloadUrl)
+        assertEquals(emptyList(), refreshed.playbackFallbackUrls)
     }
 
     @Test
-    fun plexPlaybackUrlsRebaseStaleRelayHostsOntoTheLiveServerOrigin() {
-        val track = playbackTrack(
-            streamUrl = "https://23-239-17-63.abc.plex.direct:8443/library/parts/36576/file.mp3?X-Plex-Token=old",
-            downloadUrl = "https://23-239-17-63.abc.plex.direct:8443/library/parts/36576/file.mp3?download=1&X-Plex-Token=old",
-        )
+    fun plexPlaybackUriBindsRelativePartKeyOntoTheLiveOriginAtPlayTime() {
         val live = "https://45-79-210-225.abc.plex.direct:8443"
-        val session = PlexSession(
-            token = "fresh",
-            providerType = MediaProviderType.Plex,
-            selectedServer = PlexServer(
-                id = "plex",
-                name = "Plex",
-                uri = live,
-                owned = true,
-                connectionUris = listOf(live, "https://23-239-17-63.abc.plex.direct:8443"),
-                advertisedConnectionUris = listOf(live, "https://23-239-17-63.abc.plex.direct:8443"),
-            ),
-        )
+        ArtworkOriginHolder.update(live)
+        ArtworkAuthHolder.update("fresh")
+        try {
+            val track = playbackTrack(
+                streamUrl = "/library/parts/36576/file.mp3",
+                downloadUrl = "/library/parts/36576/file.mp3",
+            )
+            assertEquals(
+                "$live/library/parts/36576/file.mp3?X-Plex-Token=fresh",
+                StreamingPlaybackPolicyHolder.resolvePlaybackUri(track),
+            )
+        } finally {
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
+    }
 
-        val refreshed = listOf(track).withFreshPlaybackUrls(session, live).single()
+    @Test
+    fun plexPlaybackUriRehomesAStaleRelayHostOntoTheLiveOrigin() {
+        val live = "https://45-79-210-225.abc.plex.direct:8443"
+        ArtworkOriginHolder.update(live)
+        ArtworkAuthHolder.update("fresh")
+        try {
+            // A queue persisted before this change, or restored from an old session.
+            val track = playbackTrack(
+                streamUrl =
+                    "https://23-239-17-63.abc.plex.direct:8443/library/parts/36576/file.mp3?X-Plex-Token=old",
+                downloadUrl =
+                    "https://23-239-17-63.abc.plex.direct:8443/library/parts/36576/file.mp3?X-Plex-Token=old",
+            )
+            assertEquals(
+                "$live/library/parts/36576/file.mp3?X-Plex-Token=fresh",
+                StreamingPlaybackPolicyHolder.resolvePlaybackUri(track),
+            )
+        } finally {
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
+    }
 
-        assertEquals(
-            "$live/library/parts/36576/file.mp3?X-Plex-Token=fresh",
-            refreshed.streamUrl,
-        )
-        assertEquals(
-            "$live/library/parts/36576/file.mp3?download=1&X-Plex-Token=fresh",
-            refreshed.downloadUrl,
-        )
-        assertTrue(
-            refreshed.playbackFallbackUrls.any { it.contains("23-239-17-63") && it.contains("X-Plex-Token=fresh") },
-        )
+    @Test
+    fun plexPlaybackUriFollowsTheOriginAcrossANetworkChange() {
+        val wifi = "http://192.168.1.9:32400"
+        val cellular = "https://45-79-210-225.abc.plex.direct:8443"
+        ArtworkAuthHolder.update("fresh")
+        try {
+            val track = playbackTrack(
+                streamUrl = "/library/parts/36576/file.mp3",
+                downloadUrl = "/library/parts/36576/file.mp3",
+            )
+            ArtworkOriginHolder.update(wifi)
+            assertEquals(
+                "$wifi/library/parts/36576/file.mp3?X-Plex-Token=fresh",
+                StreamingPlaybackPolicyHolder.resolvePlaybackUri(track),
+            )
+            // Same unmodified Track: the handoff changes the origin, not the queue.
+            ArtworkOriginHolder.update(cellular)
+            assertEquals(
+                "$cellular/library/parts/36576/file.mp3?X-Plex-Token=fresh",
+                StreamingPlaybackPolicyHolder.resolvePlaybackUri(track),
+            )
+        } finally {
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
     }
 
     @Test

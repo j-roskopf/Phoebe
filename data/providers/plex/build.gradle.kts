@@ -7,6 +7,7 @@ kotlin {
         commonMain {
             dependencies {
                 implementation(project(":core:platform"))
+                implementation(project(":data:artwork"))
                 implementation(project(":data:database"))
                 implementation(project(":data:network"))
                 implementation(libs.ktor.client.core)
@@ -24,6 +25,12 @@ kotlin {
                 implementation(libs.ktor.client.content.negotiation)
                 implementation(libs.ktor.client.mock)
                 implementation(libs.ktor.serialization.json)
+            }
+        }
+        desktopTest {
+            kotlin.srcDir("$rootDir/test-support/database/desktop/kotlin")
+            dependencies {
+                implementation(libs.sqldelight.sqlite.driver)
             }
         }
     }

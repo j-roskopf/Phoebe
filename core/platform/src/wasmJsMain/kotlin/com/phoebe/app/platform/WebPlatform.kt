@@ -5,8 +5,11 @@ import androidx.compose.runtime.remember
 import com.phoebe.app.domain.PlexServer
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.js.Js
+import io.ktor.client.plugins.DefaultRequest
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlinx.browser.window
@@ -26,6 +29,17 @@ actual fun createPlatformHttpClient(): HttpClient = HttpClient(Js) {
     }
     install(ContentNegotiation) {
         json(platformNetworkJson)
+    }
+}
+
+actual fun createPlatformMediaHttpClient(): HttpClient = HttpClient(Js) {
+    install(HttpTimeout) {
+        requestTimeoutMillis = 8_000
+        connectTimeoutMillis = 5_000
+        socketTimeoutMillis = 8_000
+    }
+    install(DefaultRequest) {
+        header(HttpHeaders.Accept, "image/jpeg,image/png,image/webp,image/*,*/*")
     }
 }
 

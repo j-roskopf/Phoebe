@@ -37,7 +37,7 @@ interface PlaybackOriginResolver {
     fun forgetOrigin(origin: String) = Unit
 
     companion object {
-        const val DefaultPlayResolveDeadlineMs = 700L
+        const val DefaultPlayResolveDeadlineMs = 8_000L
     }
 }
 

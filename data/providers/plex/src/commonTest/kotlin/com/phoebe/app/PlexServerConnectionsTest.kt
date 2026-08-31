@@ -3,6 +3,7 @@ package com.phoebe.app
 import com.phoebe.app.data.decodedIpFromPlexDirect
 import com.phoebe.app.data.expandConnectionUris
 import com.phoebe.app.data.isLocalOnlyServerOrigin
+import com.phoebe.app.data.isPlexRelayOrigin
 import com.phoebe.app.data.isPublicSynthesizedPlexHttpOrigin
 import com.phoebe.app.data.reachableBaseUris
 import com.phoebe.app.data.shouldSkipAdvertisedLan
@@ -110,6 +111,47 @@ class PlexServerConnectionsTest {
     }
 
     @Test
+    fun reachableBaseUrisRanksLocalThenDirectRemoteThenRelay() {
+        val lan = "http://192.168.86.43:32400"
+        val directRemote = "https://72-58-82-53.abc.plex.direct:32400"
+        val relay = "https://45-79-202-250.abc.plex.direct:8443"
+        val server = PlexServer(
+            id = "s1",
+            name = "plex",
+            uri = lan,
+            owned = true,
+            connectionUris = expandConnectionUris(listOf(lan, directRemote, relay)),
+            advertisedConnectionUris = listOf(lan, directRemote, relay),
+            localConnectionUris = listOf(lan),
+            relayConnectionUris = listOf(relay),
+        )
+        val ordered = server.reachableBaseUris()
+        assertEquals(lan, ordered.first())
+        assertTrue(ordered.indexOf(directRemote) < ordered.indexOf(relay))
+    }
+
+    @Test
+    fun reachableBaseUrisKeepsRelaysLastEvenWhenLanDemoted() {
+        val lan = "http://192.168.86.43:32400"
+        val directRemote = "https://72-58-82-53.abc.plex.direct:32400"
+        val relay = "https://45-79-202-250.abc.plex.direct:8443"
+        val server = PlexServer(
+            id = "s1",
+            name = "plex",
+            uri = lan,
+            owned = true,
+            connectionUris = expandConnectionUris(listOf(lan, directRemote, relay)),
+            advertisedConnectionUris = listOf(lan, directRemote, relay),
+            localConnectionUris = listOf(lan),
+            relayConnectionUris = listOf(relay),
+        )
+        val ordered = server.reachableBaseUris(demoteLocalOrigins = true)
+        assertEquals(directRemote, ordered.first())
+        assertTrue(ordered.indexOf(directRemote) < ordered.indexOf(relay))
+        assertTrue(ordered.indexOf(relay) < ordered.indexOf(lan))
+    }
+
+    @Test
     fun reachableBaseUrisPrefersRemoteRelayOverPublicLanPort() {
         val lanDirect = "https://172-16-1-2.abc.plex.direct:32400"
         val remoteRelay = "https://45-79-202-250.abc.plex.direct:8443"
@@ -122,10 +164,12 @@ class PlexServerConnectionsTest {
             connectionUris = expandConnectionUris(listOf(lanDirect, remoteRelay, closedWan)),
             advertisedConnectionUris = listOf(lanDirect, remoteRelay, closedWan),
             localConnectionUris = listOf(lanDirect),
+            relayConnectionUris = listOf(remoteRelay),
             httpsRequired = true,
         )
         val ordered = server.reachableBaseUris()
-        assertTrue(ordered.indexOf(remoteRelay) < ordered.indexOf(closedWan))
+        // Direct remote (:32400 plex.direct) ranks ahead of relay (:8443).
+        assertTrue(ordered.indexOf(closedWan) < ordered.indexOf(remoteRelay))
         assertTrue(
             ordered.none { it.contains("72.58.82.53") || it.contains("45.79.202.250") },
             "an https-only server gets no bare-IP fallbacks to waste attempts on",
@@ -187,6 +231,7 @@ class PlexServerConnectionsTest {
             connectionUris = expandConnectionUris(listOf(lan, remoteRelay)),
             advertisedConnectionUris = listOf(lan, remoteRelay),
             localConnectionUris = listOf(lan),
+            relayConnectionUris = listOf(remoteRelay),
         )
         val ordered = server.reachableBaseUris(demoteLocalOrigins = true)
         assertEquals(remoteRelay, ordered.first())
@@ -268,5 +313,65 @@ class PlexServerConnectionsTest {
         assertFalse(onServerLan.shouldSkipAdvertisedLan(server))
         val unknown = NetworkIdentity(transport = NetworkTransport.Other, fingerprint = "other")
         assertFalse(unknown.shouldSkipAdvertisedLan(server))
+    }
+
+    @Test
+    fun isPlexRelayOriginTreatsRotated8443AsRelayEvenWhenListDiffers() {
+        val currentRelay = "https://45-79-202-250.abc.plex.direct:8443"
+        val staleRelay = "https://173-230-133-75.abc.plex.direct:8443"
+        val server = PlexServer(
+            id = "s1",
+            name = "plex",
+            uri = "https://172-16-1-2.abc.plex.direct:32400",
+            owned = true,
+            advertisedConnectionUris = listOf(currentRelay),
+            relayConnectionUris = listOf(currentRelay),
+        )
+        assertTrue(isPlexRelayOrigin(currentRelay, server))
+        assertTrue(isPlexRelayOrigin(staleRelay, server))
+        assertFalse(isPlexRelayOrigin("https://72-58-82-53.abc.plex.direct:32400", server))
+        assertFalse(isPlexRelayOrigin("https://172-16-1-2.abc.plex.direct:32400", server))
+    }
+
+    @Test
+    fun reachableBaseUrisUnionsRelayListWhenAdvertisedOmitsThem() {
+        val lan = "http://172.16.1.2:32400"
+        val wan = "https://72-58-82-53.abc.plex.direct:32400"
+        val relay = "https://45-79-202-250.abc.plex.direct:8443"
+        val server = PlexServer(
+            id = "s1",
+            name = "plex",
+            uri = lan,
+            owned = true,
+            connectionUris = expandConnectionUris(listOf(lan, wan)),
+            advertisedConnectionUris = listOf(lan, wan),
+            localConnectionUris = listOf(lan),
+            relayConnectionUris = listOf(relay),
+        )
+        val ordered = server.reachableBaseUris()
+        assertTrue(relay in ordered, "relay column must be raced even when advertised is LAN/WAN only")
+        assertTrue(ordered.indexOf(wan) < ordered.indexOf(relay))
+    }
+
+    @Test
+    fun reachableBaseUrisDoesNotPrependUnknownPreferredOrigin() {
+        val lan = "https://172-16-1-2.abc.plex.direct:32400"
+        val remote = "https://72-58-82-53.abc.plex.direct:32400"
+        val liveRelay = "https://23-92-30-53.abc.plex.direct:8443"
+        val staleRelay = "https://173-230-133-75.abc.plex.direct:8443"
+        val server = PlexServer(
+            id = "s1",
+            name = "plex",
+            uri = lan,
+            owned = true,
+            connectionUris = expandConnectionUris(listOf(lan, remote, liveRelay)),
+            advertisedConnectionUris = listOf(lan, remote, liveRelay),
+            localConnectionUris = listOf(lan),
+            relayConnectionUris = listOf(liveRelay),
+        )
+        val ordered = server.reachableBaseUris(preferredFirst = staleRelay)
+        assertFalse(ordered.any { it == staleRelay })
+        assertEquals(lan, ordered.first())
+        assertTrue(liveRelay in ordered)
     }
 }

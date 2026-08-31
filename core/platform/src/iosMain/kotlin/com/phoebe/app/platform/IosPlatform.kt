@@ -5,8 +5,11 @@ import androidx.compose.runtime.remember
 import com.phoebe.app.domain.PlexServer
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.darwin.Darwin
+import io.ktor.client.plugins.DefaultRequest
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlinx.cinterop.BetaInteropApi
@@ -92,6 +95,22 @@ actual fun createPlatformHttpClient(): HttpClient = HttpClient(Darwin) {
     }
 }
 
+actual fun createPlatformMediaHttpClient(): HttpClient = HttpClient(Darwin) {
+    engine {
+        configureRequest {
+            setAllowsCellularAccess(true)
+        }
+    }
+    install(HttpTimeout) {
+        requestTimeoutMillis = 8_000
+        connectTimeoutMillis = 5_000
+        socketTimeoutMillis = 8_000
+    }
+    install(DefaultRequest) {
+        header(HttpHeaders.Accept, "image/jpeg,image/png,image/webp,image/*,*/*")
+    }
+}
+
 actual suspend fun platformStreamHttpDownloadToStorage(
     url: String,
     targetPath: String,
@@ -109,38 +128,73 @@ actual fun supportsPredictiveBack(): Boolean = false
 actual fun currentNetworkMeteringStatus(): NetworkMeteringStatus =
     currentNetworkIdentity().metering
 
+/**
+ * Last identity reported by [SharedNetworkPathMonitor]. `nw_path` is the only source that can
+ * tell Wi-Fi from cellular; everything else is a guess.
+ */
 @OptIn(ExperimentalForeignApi::class)
-actual fun currentNetworkIdentity(): NetworkIdentity = iosNetworkIdentitySnapshot()
+actual fun currentNetworkIdentity(): NetworkIdentity {
+    SharedNetworkPathMonitor.start()
+    return SharedNetworkPathMonitor.latest ?: UnknownNetworkIdentity
+}
 
 @OptIn(ExperimentalForeignApi::class)
 actual fun observeNetworkIdentity(): Flow<NetworkIdentity> = callbackFlow {
+    SharedNetworkPathMonitor.start()
     val monitor = nw_path_monitor_create()
     nw_path_monitor_set_queue(monitor, dispatch_get_main_queue())
     nw_path_monitor_set_update_handler(monitor) { path ->
         trySend(iosNetworkIdentityFromPath(path))
     }
     nw_path_monitor_start(monitor)
-    trySend(iosNetworkIdentitySnapshot())
+    trySend(currentNetworkIdentity())
     awaitClose {
         nw_path_monitor_cancel(monitor)
     }
 }.distinctUntilChanged()
 
-actual fun defaultDownloadWifiOnly(): Boolean = false
+/**
+ * Honest "we do not know yet" identity.
+ *
+ * Deliberately carries no [NetworkIdentity.localIpv4Prefixes]. The obvious shortcut — read the
+ * device's own IPv4 address and assume Wi-Fi — is wrong on cellular, where the `pdp_ip0`
+ * interface holds a carrier-NAT `10.x.y.z` address. That guess reported cellular as Wi-Fi *and*
+ * offered a private /24 that could false-match the server's own LAN, so a cold start on cellular
+ * spent its whole probe budget on unreachable private addresses.
+ */
+private val UnknownNetworkIdentity = NetworkIdentity(
+    transport = NetworkTransport.Other,
+    fingerprint = networkFingerprint(NetworkTransport.Other, "unknown"),
+    metering = NetworkMeteringStatus(),
+    localIpv4Prefixes = emptyList(),
+)
 
+/**
+ * Process-wide `nw_path_monitor` so [currentNetworkIdentity] has a real answer without every
+ * caller having to collect a flow first.
+ */
 @OptIn(ExperimentalForeignApi::class)
-private fun iosNetworkIdentitySnapshot(): NetworkIdentity {
-    // Without a live path callback, infer from interface addresses + expensive defaults.
-    val material = iosIpv4SubnetMaterial()
-    val transport = if (material.isBlank()) NetworkTransport.Other else NetworkTransport.Wifi
-    val isCellular = false
-    return NetworkIdentity(
-        transport = transport,
-        fingerprint = networkFingerprint(transport, material.ifBlank { transport.name.lowercase() }),
-        metering = NetworkMeteringStatus(isMetered = isCellular, isCellular = isCellular),
-        localIpv4Prefixes = listOfNotNull(material.takeIf { it.contains(".0") }),
-    )
+private object SharedNetworkPathMonitor {
+    @kotlin.concurrent.Volatile
+    var latest: NetworkIdentity? = null
+        private set
+
+    @kotlin.concurrent.Volatile
+    private var started = false
+
+    fun start() {
+        if (started) return
+        started = true
+        val monitor = nw_path_monitor_create()
+        nw_path_monitor_set_queue(monitor, dispatch_get_main_queue())
+        nw_path_monitor_set_update_handler(monitor) { path ->
+            latest = iosNetworkIdentityFromPath(path)
+        }
+        nw_path_monitor_start(monitor)
+    }
 }
+
+actual fun defaultDownloadWifiOnly(): Boolean = false
 
 @OptIn(ExperimentalForeignApi::class)
 private fun iosNetworkIdentityFromPath(path: platform.Network.nw_path_t?): NetworkIdentity {

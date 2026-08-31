@@ -24,6 +24,8 @@ import com.phoebe.app.testing.testHttpClient
 import io.ktor.client.engine.mock.MockEngine
 import io.ktor.client.engine.mock.MockRequestHandleScope
 import io.ktor.client.engine.mock.respond
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
@@ -1267,8 +1269,98 @@ class CatalogRepositoryRefreshDesktopTest {
 
         assertEquals(1, childrenRequests)
         assertEquals(listOf("plex:t1"), tracks.map { it.id })
-        assertTrue(tracks.single().streamUrl.contains("X-Plex-Token=token"))
-        assertTrue(tracks.single().thumbUrl.orEmpty().contains("X-Plex-Token=token"))
+        // Catalog stores relative paths; token is bound at play/artwork request time.
+        assertEquals("/library/parts/t1/file.mp3", tracks.single().streamUrl)
+        assertEquals("/library/metadata/a1/thumb", tracks.single().thumbUrl)
+    }
+
+    @Test
+    fun offlineArtworkIsStillSavedForRelativePlexThumbs() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        db.transaction {
+            db.catalogQueries.upsertAlbum(
+                "plex:a1", "Album One", "Artist One", null, null, 0, null, null, null, null, null, 0,
+            )
+            db.catalogQueries.upsertTrack(
+                id = "plex:t1",
+                title = "Song One",
+                artist = "Artist One",
+                album = "Album One",
+                durationMs = 1_000,
+                streamUrl = "/library/parts/t1/file.mp3",
+                downloadUrl = "/library/parts/t1/file.mp3",
+                // Relative, exactly as PlexClient.toTrack writes it now.
+                thumbUrl = "/library/metadata/a1/thumb",
+                localArtworkUri = null,
+                localUri = null,
+                year = null,
+                genre = null,
+                mood = null,
+                style = null,
+                filepath = null,
+                audioCodec = null,
+                bitrateKbps = null,
+                dateAddedMs = null,
+                rating = null,
+                parentAlbumId = "a1",
+            )
+            db.catalogQueries.upsertTrackParent("plex:a1", "plex:t1", 0, null)
+            db.downloadsQueries.upsert(
+                trackId = "plex:t1",
+                title = "Song One",
+                artist = "Artist One",
+                dlState = "Complete",
+                progress = 1.0,
+                localUri = "file:///tmp/phoebe-test/song-one.mp3",
+                downloadUrl = "/library/parts/t1/file.mp3",
+                targetPath = "downloads/song-one.mp3",
+                downloadedBytes = 1,
+                totalBytes = 1,
+                updatedAtMs = 0,
+                batchId = null,
+                error = null,
+            )
+        }
+        val requestedUrls = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            requestedUrls += request.url.toString()
+            when (request.url.encodedPath) {
+                "/library/metadata/a1/thumb" -> respond(
+                    content = ByteArray(512) { 3 },
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "image/jpeg"),
+                )
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val http = testHttpClient(engine)
+        val repo = testCatalogRepository(
+            plexClient = PlexClient.withoutResolver(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = MediaSourcesRepository(db, PlatformStorage()),
+        )
+        repo.restoreCachedCatalog()
+
+        val live = "https://plex.example:32400"
+        ArtworkOriginHolder.update(live)
+        ArtworkAuthHolder.update("live-token")
+        try {
+            val cached = repo.cacheDownloadedArtwork()
+
+            // Selecting "artwork we can fetch" used to mean startsWith("http"), which silently
+            // excluded every relative Plex thumb and stopped saving covers for offline use.
+            assertEquals(1, cached)
+            assertTrue(
+                requestedUrls.any { it.startsWith("$live/library/metadata/a1/thumb") },
+                "expected the thumb to be bound onto the live origin, got $requestedUrls",
+            )
+        } finally {
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
     }
 
     @Test

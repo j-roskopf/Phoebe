@@ -1,7 +1,13 @@
 package com.phoebe.app.player
 
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
+import com.phoebe.app.data.bindPlexUrl
 import com.phoebe.app.data.isLocalOnlyServerOrigin
+import com.phoebe.app.data.isPlexMediaPathOrUrl
+import com.phoebe.app.data.isPlexRelayOrigin
 import com.phoebe.app.data.isPublicSynthesizedPlexHttpOrigin
+import com.phoebe.app.data.plexAssetPath
 import com.phoebe.app.data.reachableBaseUris
 import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.Track
@@ -14,6 +20,13 @@ internal const val MaxTriedPlaybackUris = 5
 
 internal fun isMusicServerStreamUrl(url: String): Boolean {
     if (url.isBlank()) return false
+    if (url.isPlexMediaPathOrUrl() && !url.startsWith("http://") && !url.startsWith("https://")) {
+        val path = url.substringBefore('?').lowercase()
+        return path.contains("/library/parts/") ||
+            path.contains("/library/metadata/") ||
+            path.contains("/music/:/transcode/") ||
+            path.startsWith("/:/")
+    }
     val parsed = runCatching { Url(url) }.getOrNull() ?: return false
     if (parsed.protocol.name != "http" && parsed.protocol.name != "https") return false
     if (parsed.host.endsWith(".plex.direct", ignoreCase = true)) return true
@@ -26,40 +39,9 @@ internal fun isMusicServerStreamUrl(url: String): Boolean {
         path.contains("/rest/download")
 }
 
-internal fun rebaseHttpUrlOrigin(url: String, origin: String): String? {
-    if (url.isBlank() || origin.isBlank()) return null
-    val parsed = runCatching { Url(url) }.getOrNull() ?: return null
-    if (parsed.protocol.name != "http" && parsed.protocol.name != "https") return null
-    val originTrimmed = origin.trimEnd('/')
-    val originParsed = runCatching { Url(originTrimmed) }.getOrNull() ?: return null
-    if (originParsed.host.isBlank()) return null
-    if (parsed.protocol.name == originParsed.protocol.name &&
-        parsed.host.equals(originParsed.host, ignoreCase = true) &&
-        parsed.port == originParsed.port
-    ) {
-        return url
-    }
-    val path = parsed.encodedPath.ifBlank { "/" }
-    val query = if ('?' in url) {
-        url.substringAfter('?').substringBefore('#')
-    } else {
-        ""
-    }
-    val fragment = if ('#' in url) url.substringAfter('#') else ""
-    return buildString {
-        append(originTrimmed)
-        if (!path.startsWith('/')) append('/')
-        append(path)
-        if (query.isNotEmpty()) {
-            append('?')
-            append(query)
-        }
-        if (fragment.isNotEmpty()) {
-            append('#')
-            append(fragment)
-        }
-    }
-}
+// Re-export shared rebase for playback tests / callers that imported the internal name.
+internal fun rebaseHttpUrlOrigin(url: String, origin: String): String? =
+    com.phoebe.app.data.rebaseHttpUrlOrigin(url, origin)
 
 fun playbackOriginCandidates(
     server: PlexServer?,
@@ -83,8 +65,60 @@ fun playbackOriginCandidates(
     return listOfNotNull(preferred).filter { it.isNotBlank() }
 }
 
-internal fun playbackUrlsForOrigins(url: String, origins: List<String>): List<String> {
-    if (url.isBlank() || !isMusicServerStreamUrl(url)) return listOf(url)
+/**
+ * Origins for bind-at-request artwork (Linthra: one session base + relative thumb).
+ *
+ * First paint must hit a host that works off-LAN. Unprobed remote `:32400`
+ * plex.direct (usually closed) and private LAN both time out; the current
+ * plex.tv relay (`:8443`) is the hop that actually serves thumbs. A probed
+ * origin still wins when it is in the current advertised set. Demoted LAN
+ * is omitted.
+ */
+fun rankedArtworkRequestOrigins(
+    server: PlexServer?,
+    probedOrigin: String? = null,
+    demoteLocalOrigins: Boolean = false,
+): List<String> {
+    val probed = probedOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        ?.takeUnless { isLocalOnlyServerOrigin(it) }
+    val all = playbackOriginCandidates(
+        server = server,
+        preferredOrigin = probed,
+        demoteLocalOrigins = demoteLocalOrigins,
+    )
+    val usable = if (demoteLocalOrigins) {
+        all.filterNot(::isLocalOnlyServerOrigin)
+    } else {
+        all
+    }
+    if (usable.isEmpty()) return all
+    if (probed != null && usable.any { it.equals(probed, ignoreCase = true) }) {
+        return listOf(probed) + usable.filter { !it.equals(probed, ignoreCase = true) }
+    }
+    val relays = usable.filter { isPlexRelayOrigin(it, server) }
+    val otherRemote = usable.filterNot { origin ->
+        isLocalOnlyServerOrigin(origin) || isPlexRelayOrigin(origin, server)
+    }
+    val lan = usable.filter(::isLocalOnlyServerOrigin)
+    return relays + otherRemote + lan
+}
+
+internal fun playbackUrlsForOrigins(
+    url: String,
+    origins: List<String>,
+    token: String = ArtworkAuthHolder.plexToken.orEmpty(),
+): List<String> {
+    if (url.isBlank()) return listOf(url)
+    if (url.isPlexMediaPathOrUrl()) {
+        val rebased = origins
+            .asSequence()
+            .map { origin -> bindPlexUrl(url, origin, token) }
+            .distinct()
+            .take(MaxPlaybackFallbackOrigins + 1)
+            .toList()
+        return rebased.ifEmpty { listOf(url) }
+    }
+    if (!isMusicServerStreamUrl(url)) return listOf(url)
     val rebased = origins
         .asSequence()
         .mapNotNull { origin -> rebaseHttpUrlOrigin(url, origin) }
@@ -93,6 +127,58 @@ internal fun playbackUrlsForOrigins(url: String, origins: List<String>): List<St
         .toList()
     return rebased.ifEmpty { listOf(url) }
 }
+
+/**
+ * Bind this track's relative Plex paths onto the origin that is live *right now*.
+ *
+ * The catalog stores `/library/parts/...` with no host and no token (shuttle2 keeps a relative
+ * `externalId` and builds the URL in `PlexMediaInfoProvider.getMediaInfo`). Binding here, at the
+ * moment the player asks for a URI, is what makes a Wi-Fi -> cellular handoff survivable: the
+ * queue holds no addresses to go stale, so the next read simply picks up the new base.
+ *
+ * A legacy absolute URL is re-homed onto [origin] as well, so an old queue recovers too.
+ */
+fun Track.boundToLivePlaybackOrigin(
+    origin: String? = ArtworkOriginHolder.liveOrigin,
+    token: String = ArtworkAuthHolder.plexToken.orEmpty(),
+): Track {
+    if (id.startsWith("radio:")) return this
+    if (!localUri.isNullOrBlank()) return this
+    val base = origin?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return this
+    val stream = if (streamUrl.isPlexMediaPathOrUrl()) bindPlexUrl(streamUrl, base, token) else streamUrl
+    val download = if (downloadUrl.isPlexMediaPathOrUrl()) {
+        bindPlexUrl(downloadUrl, base, token)
+    } else {
+        downloadUrl
+    }
+    if (stream == streamUrl && download == downloadUrl) return this
+    return copy(streamUrl = stream, downloadUrl = download)
+}
+
+/**
+ * Strip host and token back off, so a queue never carries an address that can go stale.
+ * The inverse of [boundToLivePlaybackOrigin].
+ */
+fun Track.withRelativePlexPlaybackPaths(): Track {
+    if (id.startsWith("radio:")) return this
+    if (!localUri.isNullOrBlank()) return this
+    val stream = plexAssetPath(streamUrl) ?: streamUrl
+    val download = plexAssetPath(downloadUrl) ?: downloadUrl
+    if (stream == streamUrl && download == downloadUrl && playbackFallbackUrls.isEmpty()) return this
+    return copy(
+        streamUrl = stream,
+        downloadUrl = download,
+        playbackFallbackUrls = emptyList(),
+    )
+}
+
+/** True when this track's stream URL is a host-less server path, i.e. bound at request time. */
+internal fun Track.holdsRelativePlexPath(): Boolean =
+    localUri.isNullOrBlank() &&
+        streamUrl.isNotBlank() &&
+        !streamUrl.startsWith("http://", ignoreCase = true) &&
+        !streamUrl.startsWith("https://", ignoreCase = true) &&
+        streamUrl.isPlexMediaPathOrUrl()
 
 internal fun Track.playbackUriCandidates(): List<String> {
     localUri?.takeIf { it.isNotBlank() }?.let { return listOf(it) }
@@ -190,6 +276,7 @@ internal fun shouldSkipAlternateEngineAfterPlayerTimeout(uri: String): Boolean {
 fun Track.withPlaybackOrigins(
     preferredOrigin: String?,
     fallbackOrigins: List<String> = emptyList(),
+    token: String = ArtworkAuthHolder.plexToken.orEmpty(),
 ): Track {
     if (id.startsWith("radio:")) return this
     if (!localUri.isNullOrBlank()) return this
@@ -198,14 +285,23 @@ fun Track.withPlaybackOrigins(
         .filter { it.isNotBlank() }
         .distinct()
     if (origins.isEmpty()) return this
-    val streamCandidates = playbackUrlsForOrigins(streamUrl, origins)
-    val downloadCandidates = if (downloadUrl.isNotBlank() && isMusicServerStreamUrl(downloadUrl)) {
-        playbackUrlsForOrigins(downloadUrl, origins)
+    val streamCandidates = playbackUrlsForOrigins(streamUrl, origins, token)
+    val downloadSource = when {
+        downloadUrl.isBlank() -> downloadUrl
+        downloadUrl.isPlexMediaPathOrUrl() -> ensurePlexDownloadQuery(downloadUrl)
+        isMusicServerStreamUrl(downloadUrl) -> downloadUrl
+        else -> downloadUrl
+    }
+    val downloadCandidates = if (downloadSource.isNotBlank() &&
+        (downloadSource.isPlexMediaPathOrUrl() || isMusicServerStreamUrl(downloadSource))
+    ) {
+        playbackUrlsForOrigins(downloadSource, origins, token)
     } else {
-        listOf(downloadUrl)
+        listOf(downloadSource)
     }
     val nextStream = streamCandidates.firstOrNull().orEmpty()
     val nextDownload = downloadCandidates.firstOrNull().orEmpty()
+    // Steady state: one live base. Keep a short emergency list if the live base dies mid-play.
     val nextFallbacks = streamCandidates.drop(1)
     if (nextStream == streamUrl && nextDownload == downloadUrl && nextFallbacks == playbackFallbackUrls) {
         return this
@@ -215,4 +311,10 @@ fun Track.withPlaybackOrigins(
         downloadUrl = nextDownload.ifBlank { downloadUrl },
         playbackFallbackUrls = nextFallbacks,
     )
+}
+
+private fun ensurePlexDownloadQuery(pathOrUrl: String): String {
+    val path = plexAssetPath(pathOrUrl) ?: return pathOrUrl
+    if (path.contains("download=", ignoreCase = true)) return path
+    return if ('?' in path) "$path&download=1" else "$path?download=1"
 }

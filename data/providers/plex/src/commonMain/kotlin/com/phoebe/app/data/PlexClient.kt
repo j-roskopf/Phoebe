@@ -11,6 +11,7 @@ import com.phoebe.app.domain.Playlist
 import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.TrackMetadataUpdate
 import com.phoebe.app.platform.PhoebeLog
+import com.phoebe.app.platform.withNetworkTimeoutOrNull
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
@@ -45,7 +46,6 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeoutOrNull
 
 @SingleIn(AppScope::class)
 class PlexClient private constructor(
@@ -81,18 +81,24 @@ class PlexClient private constructor(
         }
     }
 
+    private fun liveOrAdvertisedBases(
+        server: PlexServer,
+        advertised: List<String>,
+    ): List<String> {
+        val live = connectionResolver?.liveProbedOrigin(server)
+        if (live != null) return listOf(live)
+        return advertised
+    }
+
     private fun demoteLocalOrigins(): Boolean =
         connectionResolver?.demoteLocalOrigins() == true
 
     /** Probes server URLs and caches the fastest reachable base before catalog API calls. */
     suspend fun prepareForCatalogRequests(server: PlexServer, token: String, timeoutMs: Long = 5_000L) {
         connectionResolver?.hydrateFromDisk(server)
-        val candidates = server.reachableBaseUris(
-            preferredFirst = cachedApiBase(server.id),
-            demoteLocalOrigins = demoteLocalOrigins(),
-        )
-        if (candidates.size == 1 && candidates.single().trimEnd('/') == server.uri.trimEnd('/')) {
-            rememberApiBase(server.id, candidates.single())
+        val probed = connectionResolver?.resolveFresh(server, token, deadlineMs = timeoutMs)
+        if (probed != null) {
+            localApiBaseCache[server.id] = probed
             return
         }
         resolveFastestBase(server, token, timeoutMs)
@@ -137,10 +143,12 @@ class PlexClient private constructor(
                 if (connections.isEmpty()) return@mapNotNull null
                 val advertised = connections.map { it.uri.trimEnd('/') }.filter { it.isNotBlank() }.distinct()
                 val local = connections.filter { it.local }.map { it.uri.trimEnd('/') }.distinct()
+                val relays = connections.filter { it.relay }.map { it.uri.trimEnd('/') }.distinct()
                 val allUris = expandConnectionUris(advertised, httpsRequired = device.httpsRequired)
                 val bestUri = bestReachableBaseUri(
                     advertisedUris = advertised,
                     localUris = local,
+                    relayUris = relays,
                     httpsRequired = device.httpsRequired,
                 ) ?: return@mapNotNull null
                 PlexServer(
@@ -151,6 +159,7 @@ class PlexClient private constructor(
                     connectionUris = allUris,
                     advertisedConnectionUris = advertised,
                     localConnectionUris = local,
+                    relayConnectionUris = relays,
                     accessToken = device.accessToken?.takeIf { it.isNotBlank() },
                     httpsRequired = device.httpsRequired,
                 )
@@ -213,7 +222,7 @@ class PlexClient private constructor(
         val result = CompletableDeferred<String>()
         val jobs = candidates.map { base ->
             launch {
-                val ok = withTimeoutOrNull(plexBaseProbeTimeoutMs(base, timeoutMs)) {
+                val ok = withNetworkTimeoutOrNull(plexBaseProbeTimeoutMs(base, timeoutMs)) {
                     runCatching {
                         val response = httpClient.get("$base/identity") {
                             plexServerAuth(token)
@@ -230,7 +239,7 @@ class PlexClient private constructor(
         }
         val overall = candidates.maxOf { plexBaseProbeTimeoutMs(it, timeoutMs) } + 250L
         val winner = try {
-            withTimeoutOrNull(overall) { result.await() }
+            withNetworkTimeoutOrNull(overall) { result.await() }
         } finally {
             jobs.forEach { it.cancel() }
         }
@@ -244,7 +253,7 @@ class PlexClient private constructor(
             Artist(
                 id = it.ratingKey ?: it.key.ratingKeyFromMetadataPath() ?: it.key,
                 title = it.title,
-                thumbUrl = it.thumb?.let { thumb -> server.assetUrl(thumb, token) },
+                thumbUrl = it.thumb?.let { thumb -> storedPlexAsset(thumb) },
                 albumCount = it.leafCount ?: 0,
                 dateAddedMs = it.addedAt?.times(1000L),
                 genre = it.primaryGenreTag(),
@@ -264,7 +273,7 @@ class PlexClient private constructor(
             Artist(
                 id = item.ratingKey,
                 title = item.title,
-                thumbUrl = item.thumb?.let { thumb -> server.assetUrl(thumb, token) },
+                thumbUrl = item.thumb?.let { thumb -> storedPlexAsset(thumb) },
                 albumCount = item.leafCount ?: 0,
                 dateAddedMs = item.addedAt?.times(1000L),
                 genre = item.primaryGenreTag(),
@@ -288,7 +297,7 @@ class PlexClient private constructor(
                     title = it.title,
                     artist = it.parentTitle ?: "Unknown artist",
                     year = it.year,
-                    thumbUrl = it.thumb?.let { thumb -> server.assetUrl(thumb, token) },
+                    thumbUrl = it.thumb?.let { thumb -> storedPlexAsset(thumb) },
                     dateAddedMs = it.addedAt?.times(1000L),
                     genre = it.primaryGenreTag(),
                     mood = it.allMoodsJoined(),
@@ -307,7 +316,7 @@ class PlexClient private constructor(
                 title = it.title,
                 artist = it.parentTitle ?: "Unknown artist",
                 year = it.year,
-                thumbUrl = it.thumb?.let { thumb -> server.assetUrl(thumb, token) },
+                thumbUrl = it.thumb?.let { thumb -> storedPlexAsset(thumb) },
                 dateAddedMs = it.addedAt?.times(1000L),
                 genre = it.primaryGenreTag(),
                 mood = it.allMoodsJoined(),
@@ -332,7 +341,7 @@ class PlexClient private constructor(
                 title = it.title,
                 trackCount = it.leafCount ?: 0,
                 key = it.key,
-                thumbUrl = thumb?.let { t -> server.assetUrl(t, token) },
+                thumbUrl = thumb?.let { t -> storedPlexAsset(t) },
                 rating = it.userRating.toStarRating(),
             )
         }
@@ -357,7 +366,7 @@ class PlexClient private constructor(
         return Artist(
             id = item.ratingKey,
             title = item.title,
-            thumbUrl = item.thumb?.let { thumb -> server.assetUrl(thumb, token) },
+            thumbUrl = item.thumb?.let { thumb -> storedPlexAsset(thumb) },
             albumCount = item.leafCount ?: 0,
             dateAddedMs = item.addedAt?.times(1000L),
             genre = item.primaryGenreTag(),
@@ -375,7 +384,7 @@ class PlexClient private constructor(
             title = item.title,
             artist = item.parentTitle ?: "Unknown artist",
             year = item.year,
-            thumbUrl = item.thumb?.let { thumb -> server.assetUrl(thumb, token) },
+            thumbUrl = item.thumb?.let { thumb -> storedPlexAsset(thumb) },
             dateAddedMs = item.addedAt?.times(1000L),
             genre = item.primaryGenreTag(),
             mood = item.allMoodsJoined(),
@@ -399,7 +408,7 @@ class PlexClient private constructor(
         limit: Int = 12,
     ): List<Track> {
         if (ratingKey.isBlank() || limit <= 0) return emptyList()
-        val response: PlexMediaContainerResponse = withReachableBase(server) { base ->
+        val response: PlexMediaContainerResponse = withReachableBase(server, token) { base ->
             val response = httpClient.get("$base/library/sections/${library.key}/all") {
                 timeout { requestTimeoutMillis = PlexPopularTracksRequestTimeoutMs }
                 plexServerAuth(token)
@@ -432,7 +441,7 @@ class PlexClient private constructor(
         limit: Int = 50,
     ): List<Track> {
         if (limit <= 0) return emptyList()
-        val response: PlexMediaContainerResponse = withReachableBase(server) { base ->
+        val response: PlexMediaContainerResponse = withReachableBase(server, token) { base ->
             val response = httpClient.get("$base/library/sections/${library.key}/all") {
                 timeout { requestTimeoutMillis = PlexPopularTracksRequestTimeoutMs }
                 plexServerAuth(token)
@@ -473,7 +482,7 @@ class PlexClient private constructor(
         return root
             .similarArtistObjects()
             .mapNotNull { artistJson ->
-                artistJson.toRawArtist { thumb -> server.assetUrl(thumb, token) }
+                artistJson.toRawArtist { thumb -> plexAssetPath(thumb) ?: thumb }
             }
             .filter { artist -> artist.id != ratingKey }
             .distinctBy { artist -> artist.id.takeIf { it.isNotBlank() } ?: artist.title.normalizedArtistLookupKey() }
@@ -530,7 +539,7 @@ class PlexClient private constructor(
             }
             (stationHub?.metadata.orEmpty() + stationHub?.directories.orEmpty())
                 .mapNotNull { station ->
-                    station.toRadioStation(PlexRadioStationCategory.Library) { thumb -> server.assetUrl(thumb, token) }
+                    station.toRadioStation(PlexRadioStationCategory.Library) { thumb -> plexAssetPath(thumb) ?: thumb }
                 }
                 .filter { station -> station.key.isPlexLibrarySectionStationKey(library.key) }
         }.onFailure { error ->
@@ -543,7 +552,7 @@ class PlexClient private constructor(
                     stationJson.toRadioStation(
                         category = PlexRadioStationCategory.Library,
                         defaultTitle = "Plex Radio",
-                        assetUrl = { thumb -> server.assetUrl(thumb, token) },
+                        assetUrl = { thumb -> plexAssetPath(thumb) ?: thumb },
                     )
                 }
                 .toList()
@@ -573,7 +582,7 @@ class PlexClient private constructor(
                 stationJson.toRadioStation(
                     category = PlexRadioStationCategory.Artist,
                     defaultTitle = "Artist Radio",
-                    assetUrl = { thumb -> server.assetUrl(thumb, token) },
+                    assetUrl = { thumb -> plexAssetPath(thumb) ?: thumb },
                 )
             }
             .distinctBy { it.key }
@@ -615,9 +624,12 @@ class PlexClient private constructor(
     ): List<PlexMetadataDto> {
         val uri = "server://$machineIdentifier/$LibraryIdentifier${stationKey.normalizedStationKey()}"
         var lastError: Throwable? = null
-        for (base in server.reachableBaseUris(
-            preferredFirst = cachedApiBase(server.id),
-            demoteLocalOrigins = demoteLocalOrigins(),
+        for (base in liveOrAdvertisedBases(
+            server,
+            server.reachableBaseUris(
+                preferredFirst = cachedApiBase(server.id),
+                demoteLocalOrigins = demoteLocalOrigins(),
+            ),
         )) {
             val response = runCatching {
                 val httpResponse = httpClient.post("$base/playQueues") {
@@ -932,7 +944,7 @@ class PlexClient private constructor(
         start: Int,
         size: Int,
     ): PlexPlaybackHistoryPage {
-        val response: PlexMediaContainerResponse = withReachableBase(server) { base ->
+        val response: PlexMediaContainerResponse = withReachableBase(server, token) { base ->
             val response = httpClient.get("$base/status/sessions/history/all") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -980,7 +992,7 @@ class PlexClient private constructor(
         size: Int,
         timeoutMs: Long? = null,
     ): PlexTrackPage {
-        val response: PlexMediaContainerResponse = withReachableBase(server) { base ->
+        val response: PlexMediaContainerResponse = withReachableBase(server, token) { base ->
             val response = httpClient.get("$base/library/sections/${library.key}/all") {
                 timeoutMs?.let { timeout { requestTimeoutMillis = it } }
                 plexServerAuth(token)
@@ -1069,7 +1081,7 @@ class PlexClient private constructor(
         size: Int,
         query: TrackStatsQuery,
     ): List<PlexTrackPlaybackStat> {
-        val body = withReachableBase(server) { base ->
+        val body = withReachableBase(server, token) { base ->
             if (query.contentDirectoryId != null) {
                 PhoebeLog.d("PlexClient") {
                     "recent track playback stats request base=$base library=${library.key} start=$start size=$size"
@@ -1122,7 +1134,7 @@ class PlexClient private constructor(
         size: Int = 500,
         limit: Int? = null,
     ): List<Track> {
-        val response: PlexMediaContainerResponse = withReachableBase(server) { base ->
+        val response: PlexMediaContainerResponse = withReachableBase(server, token) { base ->
             val response = httpClient.get("$base/library/sections/${library.key}/all") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1154,7 +1166,7 @@ class PlexClient private constructor(
         size: Int,
         limit: Int? = null,
     ): PlexTrackPage {
-        val response: PlexMediaContainerResponse = withReachableBase(server) { base ->
+        val response: PlexMediaContainerResponse = withReachableBase(server, token) { base ->
             val response = httpClient.get("$base/library/sections/${library.key}/all") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1217,7 +1229,7 @@ class PlexClient private constructor(
         size: Int,
         limit: Int? = null,
     ): PlexTrackPage {
-        val response: PlexMediaContainerResponse = withReachableBase(server) { base ->
+        val response: PlexMediaContainerResponse = withReachableBase(server, token) { base ->
             val response = httpClient.get("$base$path") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1315,7 +1327,7 @@ class PlexClient private constructor(
         } else {
             "server://$machineIdentifier/com.plexapp.plugins.library/library/sections/${library.key}"
         }
-        val response = withReachableBase(server) { base ->
+        val response = withReachableBase(server, token) { base ->
             httpClient.post("$base/playlists") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1334,7 +1346,7 @@ class PlexClient private constructor(
             title = meta.title,
             trackCount = meta.leafCount ?: ratingKeys.size,
             key = meta.key,
-            thumbUrl = thumb?.let { server.assetUrl(it, token) },
+            thumbUrl = thumb?.let { storedPlexAsset(it) },
         )
     }
 
@@ -1354,7 +1366,7 @@ class PlexClient private constructor(
         ratingKeys: List<String>,
     ): Int? {
         if (ratingKeys.isEmpty()) return null
-        val response = withReachableBase(server) { base ->
+        val response = withReachableBase(server, token) { base ->
             httpClient.put("$base/playlists/$playlistRatingKey/items") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1374,7 +1386,7 @@ class PlexClient private constructor(
         playlistItemIds: List<Long>,
     ) {
         if (playlistItemIds.isEmpty()) return
-        withReachableBase(server) { base ->
+        withReachableBase(server, token) { base ->
             playlistItemIds.forEach { itemId ->
                 val response = httpClient.delete("$base/playlists/$playlistRatingKey/items/$itemId") {
                     plexServerAuth(token)
@@ -1389,7 +1401,7 @@ class PlexClient private constructor(
     }
 
     suspend fun deletePlaylist(server: PlexServer, token: String, playlistRatingKey: String) {
-        withReachableBase(server) { base ->
+        withReachableBase(server, token) { base ->
             val response = httpClient.delete("$base/playlists/$playlistRatingKey") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1423,7 +1435,7 @@ class PlexClient private constructor(
         playlistItemId: Long,
         afterPlaylistItemId: Long?,
     ) {
-        withReachableBase(server) { base ->
+        withReachableBase(server, token) { base ->
             val response = httpClient.put("$base/playlists/$playlistRatingKey/items/$playlistItemId/move") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1451,7 +1463,7 @@ class PlexClient private constructor(
         rating: Float?,
     ) {
         val plexRating = rating.toPlexRating()
-        val response = withReachableBase(server) { base ->
+        val response = withReachableBase(server, token) { base ->
             httpClient.put("$base/:/rate") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1489,9 +1501,12 @@ class PlexClient private constructor(
         continuing: Boolean? = null,
         playQueueItemId: Long? = null,
     ) {
-        val bases = server.timelineBaseUris(
-            preferredFirst = cachedApiBase(server.id),
-            demoteLocalOrigins = demoteLocalOrigins(),
+        val bases = liveOrAdvertisedBases(
+            server,
+            server.timelineBaseUris(
+                preferredFirst = cachedApiBase(server.id),
+                demoteLocalOrigins = demoteLocalOrigins(),
+            ),
         )
         var lastStatus = 0
         var lastBody = ""
@@ -1502,7 +1517,7 @@ class PlexClient private constructor(
             if (skipRemainingLocal && isLocalOnlyServerOrigin(base)) continue
             lastBase = base
             val probeTimeoutMs = plexTimelineProbeTimeoutMs(base)
-            val outcome = withTimeoutOrNull(probeTimeoutMs) {
+            val outcome = withNetworkTimeoutOrNull(probeTimeoutMs) {
                 runCatching {
                     timelineHttpRequest(base, token, sessionIdentifier, probeTimeoutMs) {
                         parameter("ratingKey", ratingKey)
@@ -1564,7 +1579,7 @@ class PlexClient private constructor(
         token: String,
         ratingKey: String,
     ) {
-        val response = withReachableBase(server) { base ->
+        val response = withReachableBase(server, token) { base ->
             httpClient.put("$base/:/scrobble") {
                 plexTimelineAuth(token)
                 parameter("identifier", LibraryIdentifier)
@@ -1594,16 +1609,19 @@ class PlexClient private constructor(
     ): PlexPlayQueue? {
         if (ratingKeys.isEmpty()) return null
         val uri = metadataUri(machineIdentifier, ratingKeys)
-        val bases = server.timelineBaseUris(
-            preferredFirst = cachedApiBase(server.id),
-            demoteLocalOrigins = demoteLocalOrigins(),
+        val bases = liveOrAdvertisedBases(
+            server,
+            server.timelineBaseUris(
+                preferredFirst = cachedApiBase(server.id),
+                demoteLocalOrigins = demoteLocalOrigins(),
+            ),
         )
         var lastError: Throwable? = null
         var skipRemainingLocal = false
         for (base in bases) {
             if (skipRemainingLocal && isLocalOnlyServerOrigin(base)) continue
             val probeTimeoutMs = plexBaseProbeTimeoutMs(base)
-            val outcome = withTimeoutOrNull(probeTimeoutMs) {
+            val outcome = withNetworkTimeoutOrNull(probeTimeoutMs) {
                 runCatching {
                     httpClient.post("$base/playQueues") {
                         timeout {
@@ -1694,7 +1712,7 @@ class PlexClient private constructor(
         original: Track,
         update: TrackMetadataUpdate,
     ) {
-        val response = withReachableBase(server) { base ->
+        val response = withReachableBase(server, token) { base ->
             httpClient.put("$base/library/sections/${library.key}/all") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1740,7 +1758,7 @@ class PlexClient private constructor(
         } else {
             emptyList()
         }
-        val response = withReachableBase(server) { base ->
+        val response = withReachableBase(server, token) { base ->
             httpClient.put("$base/library/sections/${library.key}/all") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1810,7 +1828,7 @@ class PlexClient private constructor(
             return
         }
         val machineIdentifier = machineIdentifier(server, token)
-        val response = withReachableBase(server) { base ->
+        val response = withReachableBase(server, token) { base ->
             httpClient.post("$base/library/collections") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -1928,7 +1946,7 @@ class PlexClient private constructor(
         var lastFailure: String? = null
         for (path in paths) {
             val result = runCatching {
-                withReachableBase(server) { base ->
+                withReachableBase(server, token) { base ->
                     httpClient.put("$base$path") {
                         plexServerAuth(token)
                         header(HttpHeaders.Accept, "application/json")
@@ -1982,42 +2000,120 @@ class PlexClient private constructor(
         return "server://$machineIdentifier/com.plexapp.plugins.library/library/metadata/$joined"
     }
 
+    /**
+     * Linthra / python-plexapi: one `/identity`-confirmed base per request.
+     * Tests constructed with [withoutResolver] still walk advertised URIs.
+     */
     private suspend fun <T> withReachableBase(
+        server: PlexServer,
+        token: String? = null,
+        block: suspend (base: String) -> T,
+    ): T {
+        val auth = token?.takeIf { it.isNotBlank() } ?: connectionResolver?.lastAuthToken()
+        val resolver = connectionResolver
+        if (resolver != null) {
+            var origin = resolver.liveProbedOrigin(server)
+            if (origin == null && !auth.isNullOrBlank()) {
+                origin = resolver.resolveFresh(server, auth)
+            }
+            if (origin != null) {
+                return invokeOnLiveOrigin(server, origin, auth, retryOnFailure = true, block)
+            }
+            // Identity already raced every advertised hop. Walking LAN next is how
+            // Home art stays empty: 800ms to 172.16.x then a timeout, never Coil.
+            error("Could not reach Plex server '${server.name}' (no probed origin)")
+        }
+        return walkReachableBases(server, block)
+    }
+
+    private suspend fun <T> invokeOnLiveOrigin(
+        server: PlexServer,
+        origin: String,
+        token: String?,
+        retryOnFailure: Boolean,
+        block: suspend (base: String) -> T,
+    ): T {
+        val timeoutMs = plexApiBaseTimeoutMs(origin, isCached = true)
+        val outcome = withNetworkTimeoutOrNull(timeoutMs) {
+            runCatching { block(origin) }
+        }
+        if (outcome == null) {
+            val timeout = IllegalStateException(
+                "Plex request timed out after ${timeoutMs}ms via $origin",
+            )
+            baseResolveMutex.withLock { forgetApiBase(server.id, origin) }
+            if (retryOnFailure && !token.isNullOrBlank()) {
+                val next = connectionResolver?.resolveFresh(server, token)
+                if (next != null && next != origin) {
+                    return invokeOnLiveOrigin(server, next, token, retryOnFailure = false, block)
+                }
+            }
+            throw timeout
+        }
+        if (outcome.isSuccess) {
+            val result = outcome.getOrThrow()
+            baseResolveMutex.withLock { rememberApiBase(server.id, origin) }
+            return result
+        }
+        val error = outcome.exceptionOrNull()
+        if (error is CancellationException) throw error
+        // HTTP 400 on history/etc is not a dead origin. Forgetting here cleared Coil
+        // and kicked off another identity race while playback waited on :32400.
+        if (isUnreachableOriginFailure(error)) {
+            baseResolveMutex.withLock { forgetApiBase(server.id, origin) }
+            if (retryOnFailure && !token.isNullOrBlank()) {
+                val next = connectionResolver?.resolveFresh(server, token)
+                if (next != null && next != origin) {
+                    return invokeOnLiveOrigin(server, next, token, retryOnFailure = false, block)
+                }
+            }
+        }
+        throw error ?: IllegalStateException("Could not reach Plex server '${server.name}'")
+    }
+
+    private suspend fun <T> walkReachableBases(
         server: PlexServer,
         block: suspend (base: String) -> T,
     ): T {
         val cached = baseResolveMutex.withLock { cachedApiBase(server.id) }
         var lastError: Throwable? = null
-        if (cached != null) {
-            try {
-                return block(cached)
-            } catch (error: Throwable) {
-                if (error is CancellationException) throw error
-                lastError = error
-                baseResolveMutex.withLock {
-                    forgetApiBase(server.id, cached)
-                }
-            }
-        }
-        for (base in server.reachableBaseUris(
+        val bases = server.reachableBaseUris(
             preferredFirst = cached,
             demoteLocalOrigins = demoteLocalOrigins(),
-        )) {
-            if (base == cached) continue
-            try {
-                val result = block(base)
-                baseResolveMutex.withLock { rememberApiBase(server.id, base) }
+        ).ifEmpty { listOfNotNull(cached) }
+        for (base in bases) {
+            val timeoutMs = plexApiBaseTimeoutMs(base, isCached = base == cached)
+            val outcome = withNetworkTimeoutOrNull(timeoutMs) {
+                runCatching { block(base) }
+            }
+            if (outcome == null) {
+                lastError = IllegalStateException(
+                    "Plex request timed out after ${timeoutMs}ms via $base",
+                )
+                if (base == cached) {
+                    baseResolveMutex.withLock { forgetApiBase(server.id, cached) }
+                }
+                continue
+            }
+            if (outcome.isSuccess) {
+                val result = outcome.getOrThrow()
+                if (base != cached) {
+                    baseResolveMutex.withLock { rememberApiBase(server.id, base) }
+                }
                 return result
-            } catch (error: Throwable) {
-                if (error is CancellationException) throw error
-                lastError = error
+            }
+            val error = outcome.exceptionOrNull()
+            if (error is CancellationException) throw error
+            lastError = error
+            if (base == cached) {
+                baseResolveMutex.withLock { forgetApiBase(server.id, cached) }
             }
         }
         throw lastError ?: IllegalStateException("Could not reach Plex server '${server.name}'")
     }
 
     private suspend inline fun <reified T> plexGet(server: PlexServer, token: String, path: String): T =
-        withReachableBase(server) { base ->
+        withReachableBase(server, token) { base ->
             val response = httpClient.get("$base$path") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -2035,6 +2131,19 @@ class PlexClient private constructor(
         path: String,
         baseTimeoutMs: Long,
     ): T {
+        if (connectionResolver != null) {
+            return withReachableBase(server, token) { base ->
+                val response = httpClient.get("$base$path") {
+                    plexServerAuth(token)
+                    header(HttpHeaders.Accept, "application/json")
+                }
+                if (!response.status.isSuccess()) {
+                    val body = response.bodyAsText()
+                    error("Plex GET $path failed (${response.status.value}) via $base: ${body.take(200)}")
+                }
+                response.body()
+            }
+        }
         var lastError: Throwable? = null
         val bases = server.reachableBaseUris(
             preferredFirst = cachedApiBase(server.id),
@@ -2042,7 +2151,7 @@ class PlexClient private constructor(
         )
         for (base in bases) {
             val probeTimeoutMs = minOf(baseTimeoutMs, plexBaseProbeTimeoutMs(base))
-            val outcome = withTimeoutOrNull(probeTimeoutMs) {
+            val outcome = withNetworkTimeoutOrNull(probeTimeoutMs) {
                 runCatching {
                     val response = httpClient.get("$base$path") {
                         plexServerAuth(token)
@@ -2076,6 +2185,11 @@ class PlexClient private constructor(
         throw lastError ?: IllegalStateException("Could not reach Plex server '${server.name}' for $path")
     }
 
+    private fun plexApiBaseTimeoutMs(base: String, isCached: Boolean): Long {
+        if (isCached) return PlexCachedApiRequestTimeoutMs
+        return plexBaseProbeTimeoutMs(base, remoteTimeoutMs = PlexUncachedRemoteRequestTimeoutMs)
+    }
+
     private fun plexBaseProbeTimeoutMs(
         base: String,
         remoteTimeoutMs: Long = PlexRemoteSetupRequestTimeoutMs,
@@ -2087,6 +2201,26 @@ class PlexClient private constructor(
 
     private fun plexTimelineProbeTimeoutMs(base: String): Long =
         plexBaseProbeTimeoutMs(base, PlexTimelineRemoteRequestTimeoutMs)
+
+    private fun isUnreachableOriginFailure(error: Throwable?): Boolean {
+        var current = error
+        while (current != null) {
+            val name = current::class.simpleName.orEmpty()
+            if (
+                "Timeout" in name ||
+                "Connect" in name ||
+                "Unresolved" in name ||
+                "UnknownHost" in name ||
+                name == "SocketException"
+            ) {
+                return true
+            }
+            val message = current.message.orEmpty()
+            if ("timed out" in message || "Failed to connect" in message) return true
+            current = current.cause
+        }
+        return false
+    }
 
     private suspend fun metadataDetails(server: PlexServer, ratingKey: String, token: String): List<PlexMetadataDto> {
         val response = plexGet<PlexMediaContainerResponse>(
@@ -2151,7 +2285,7 @@ class PlexClient private constructor(
     }
 
     private suspend fun plexGetRaw(server: PlexServer, token: String, path: String): String =
-        withReachableBase(server) { base ->
+        withReachableBase(server, token) { base ->
             val response = httpClient.get("$base$path") {
                 plexServerAuth(token)
                 header(HttpHeaders.Accept, "application/json")
@@ -2167,7 +2301,8 @@ class PlexClient private constructor(
         if (ratingKey.isBlank()) return null
         val mediaItem = media.firstOrNull() ?: return null
         val part = mediaItem.parts.firstOrNull() ?: return null
-        val streamUrl = server.assetUrl(part.key, token)
+        // Relative part key — bound to the live plex.tv-resolved base at play time.
+        val streamPath = plexAssetPath(part.key) ?: return null
         val genre = primaryGenreTag()
         val mood = primaryMoodTag()
         val style = primaryStyleTag()
@@ -2186,9 +2321,9 @@ class PlexClient private constructor(
             artist = resolvedTrackArtist(default = "Unknown artist"),
             album = parentTitle ?: "Unknown album",
             durationMs = duration ?: 0L,
-            streamUrl = streamUrl,
-            downloadUrl = "$streamUrl&download=1",
-            thumbUrl = (thumb ?: parentThumb ?: grandparentThumb)?.let { server.assetUrl(it, token) },
+            streamUrl = streamPath,
+            downloadUrl = streamPath,
+            thumbUrl = (thumb ?: parentThumb ?: grandparentThumb)?.let { plexAssetPath(it) },
             year = year ?: parentYear,
             genre = genre,
             mood = mood,
@@ -2265,12 +2400,14 @@ class PlexClient private constructor(
     }
 
     private fun PlexServer.assetUrl(path: String, token: String): String {
-        val base = cachedApiBase(id) ?: uri
-        val builder = URLBuilder(base)
-        builder.appendPathSegments(path.trimStart('/').split('/'))
-        builder.parameters.append("X-Plex-Token", token)
-        return builder.buildString()
+        // Prefer request-time bind; keep for call sites that still need an absolute URL
+        // against the current cached API base (timeline, one-shot fetches).
+        return bindPlexUrl(path, mediaBaseUrl(this), token)
     }
+
+    /** Relative path for catalog storage — no host, no token. */
+    private fun storedPlexAsset(path: String?): String? =
+        path?.let { plexAssetPath(it) }
 
     /** Base URL that succeeded for API calls, used for media/thumbnail URLs. */
     fun mediaBaseUrl(server: PlexServer): String =
@@ -2355,6 +2492,8 @@ class PlexClient private constructor(
         private const val PlexTrackType = 10
         private const val PlexLocalSetupRequestTimeoutMs = 800L
         private const val PlexRemoteSetupRequestTimeoutMs = 8_000L
+        private const val PlexUncachedRemoteRequestTimeoutMs = 2_500L
+        private const val PlexCachedApiRequestTimeoutMs = 15_000L
         private const val PlexTimelineRemoteRequestTimeoutMs = 3_000L
         private const val PlexPopularTracksRequestTimeoutMs = 15_000L
         private const val MusicStationsHubContext = "hub.music.stations"

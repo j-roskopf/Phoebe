@@ -17,6 +17,14 @@ class StreamingQualityTest {
     }
 
     @Test
+    fun preferLocalNetworkDefaultsToTrue() {
+        assertTrue(StreamingPolicySettings().preferLocalNetwork)
+        assertFalse(
+            StreamingPolicySettings().shouldDemoteLocalOrigins(networkDemotesLocalOrigins = false),
+        )
+    }
+
+    @Test
     fun preferLocalNetworkOffAlwaysDemotesLan() {
         val policy = StreamingPolicySettings(preferLocalNetwork = false)
         assertTrue(policy.shouldDemoteLocalOrigins(networkDemotesLocalOrigins = false))

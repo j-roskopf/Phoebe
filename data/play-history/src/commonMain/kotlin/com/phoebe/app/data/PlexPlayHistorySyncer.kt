@@ -258,12 +258,6 @@ class PlexPlayHistorySyncer(
             "startup most-played track stats fetch start size=$StartupMostPlayedStatsPageSize"
         }
         val stats = withTimeoutOrNull(RecentStatsTimeoutMs) {
-            val base = withTimeoutOrNull(RecentBaseResolveTimeoutMs) {
-                plexClient.resolveFastestBase(server, token, timeoutMs = RecentBaseResolveTimeoutMs)
-            }
-            PhoebeLog.d("PlexPlayHistorySyncer") {
-                "startup most-played track stats base ${base ?: "unresolved; using cached/default"}"
-            }
             plexClient.trackPlaybackStatsPage(
                 server = server,
                 library = library,
@@ -288,12 +282,6 @@ class PlexPlayHistorySyncer(
     ): StatsSyncResult {
         PhoebeLog.d("PlexPlayHistorySyncer") { "recent track playback stats fetch start size=$RecentStatsPageSize" }
         val stats = withTimeoutOrNull(RecentStatsTimeoutMs) {
-            val base = withTimeoutOrNull(RecentBaseResolveTimeoutMs) {
-                plexClient.resolveFastestBase(server, token, timeoutMs = RecentBaseResolveTimeoutMs)
-            }
-            PhoebeLog.d("PlexPlayHistorySyncer") {
-                "recent track playback stats base ${base ?: "unresolved; using cached/default"}"
-            }
             plexClient.recentTrackPlaybackStatsPage(
                 server = server,
                 library = library,
@@ -491,8 +479,7 @@ class PlexPlayHistorySyncer(
         const val RecentStatsPageSize = 50
         const val RecentStatsTimeoutMs = 10_000L
         const val RecentHistoryPageSize = 50
-        const val RecentHistoryTimeoutMs = 3_000L
-        const val RecentBaseResolveTimeoutMs = 1_500L
+        const val RecentHistoryTimeoutMs = 10_000L
         private const val PlexTrackTypeName = "track"
     }
 }

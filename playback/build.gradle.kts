@@ -30,6 +30,7 @@ kotlin {
             dependencies {
                 implementation(project(":core:platform"))
                 implementation(project(":data:database"))
+                implementation(project(":data:artwork"))
                 implementation(project(":data:catalog"))
                 implementation(project(":data:listenbrainz"))
                 implementation(project(":data:local-media"))

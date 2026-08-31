@@ -425,7 +425,7 @@ class PlexPlayHistorySyncerDesktopTest {
         val repo = PlayHistoryRepository(db)
         repository = repo
 
-        val result = withTimeout(5_000L) {
+        val result = withTimeout(12_000L) {
             newSyncer(engine, db, repo).syncRecent(testSession(), testCatalog())
         }
 

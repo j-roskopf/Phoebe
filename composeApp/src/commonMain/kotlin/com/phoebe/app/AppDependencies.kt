@@ -38,7 +38,12 @@ import com.phoebe.app.db.PhoebeDatabase
 import com.phoebe.app.di.AppGraph
 import com.phoebe.app.di.RouteViewModelFactory
 import com.phoebe.app.di.createPhoebeAppGraph
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
+import com.phoebe.app.platform.PhoebeAppDataRevision
+import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.PlatformStorage
+import com.phoebe.app.platform.appDataRevisionStorageKey
 import com.phoebe.app.platform.DownloadNotifier
 import com.phoebe.app.platform.SecureCredentialStore
 import com.phoebe.app.player.AudioPlayer
@@ -97,6 +102,25 @@ class AppDependencies(
     /** File-backed on desktop; NSUserDefaults keys on iOS; etc. Used for lightweight UI prefs. */
     val platformStorage: PlatformStorage,
 ) : PlaybackRuntimeDependencies {
+    /**
+     * Sign out and wipe once when the stored-data revision moves.
+     *
+     * Runs before [SessionRepository.restore] so the app comes up signed out rather than briefly
+     * showing a catalog it is about to delete.
+     */
+    suspend fun resetStoredDataIfRevisionChanged() {
+        runAppDataRevisionReset(
+            readStoredRevision = { runCatching { platformStorage.readText(appDataRevisionStorageKey()) }.getOrNull() },
+            writeStoredRevision = { value -> platformStorage.writeText(appDataRevisionStorageKey(), value) },
+            signOutAndWipe = {
+                sessionRepository.signOut()
+                deleteDatabaseDataForSignOut()
+                ArtworkOriginHolder.clear()
+                ArtworkAuthHolder.clear()
+            },
+        )
+    }
+
     suspend fun deleteDatabaseDataForSignOut() {
         catalogRepository.awaitDatabaseIdle()
         listenBrainzAccountRepository.disconnect()
@@ -139,12 +163,7 @@ class AppDependencies(
             val userArtifactsRepository = services.userArtifactsRepository
             val radioRepository = services.radioRepository
 
-            sessionRepository.restore(refreshConnections = false)
-            mediaSourcesRepository.restore()
-            searchHistoryRepository.restore()
-            userArtifactsRepository.restore()
-            radioRepository.restore()
-            return AppDependencies(
+            val dependencies = AppDependencies(
                 appGraph = appGraph,
                 database = services.database,
                 databaseWriteGate = services.databaseWriteGate,
@@ -190,6 +209,43 @@ class AppDependencies(
                 routeViewModelFactory = services.routeViewModelFactory,
                 platformStorage = services.platformStorage,
             )
+            dependencies.resetStoredDataIfRevisionChanged()
+            sessionRepository.restore(refreshConnections = false)
+            mediaSourcesRepository.restore()
+            searchHistoryRepository.restore()
+            userArtifactsRepository.restore()
+            radioRepository.restore()
+            return dependencies
         }
     }
+}
+
+/**
+ * One-time reset when the shape of stored data changes.
+ *
+ * Returns true when a reset was performed. Split out from [AppDependencies] so the ordering
+ * guarantees below can be tested without standing up the whole object graph.
+ */
+internal suspend fun runAppDataRevisionReset(
+    readStoredRevision: suspend () -> String?,
+    writeStoredRevision: suspend (String) -> Unit,
+    signOutAndWipe: suspend () -> Unit,
+    currentRevision: Int = PhoebeAppDataRevision,
+): Boolean {
+    val stored = readStoredRevision()?.trim()?.toIntOrNull()
+    if (stored == currentRevision) return false
+    if (stored != null && stored > currentRevision) {
+        // Downgrade. The newer data is not ours to interpret, but it is not ours to delete
+        // either — the user may simply be running an older build for a moment.
+        PhoebeLog.d("AppDependencies") { "stored data revision $stored is newer than $currentRevision" }
+        return false
+    }
+    PhoebeLog.d("AppDependencies") {
+        "stored data revision ${stored ?: "none"} -> $currentRevision; signing out and resyncing"
+    }
+    signOutAndWipe()
+    // Written only after the wipe succeeds. Marking the reset done first would strand a user
+    // whose wipe failed halfway on data the new build cannot read, with no second attempt.
+    writeStoredRevision(currentRevision.toString())
+    return true
 }

@@ -74,13 +74,42 @@ class SessionRepository(
         if (current.token.isBlank()) return
         if (!current.isPlex()) return
         PhoebeLog.v("SessionRepository") { "refreshSelectedServerConnections for '${selected.name}'" }
-        val fresh = runCatching { plexClient.servers(current.token) }.getOrNull()
+        val fresh = runCatching { plexClient.servers(current.token) }
+            .onFailure { error ->
+                PhoebeLog.d("SessionRepository") {
+                    "refreshSelectedServerConnections failed: ${error.message}"
+                }
+            }
+            .getOrNull()
             ?.find { it.id == selected.id }
-            ?: return
-        if (fresh != selected) {
-            PhoebeLog.d("SessionRepository") { "updated server connections for '${fresh.name}'" }
-            save(current.copy(selectedServer = fresh), expectedGeneration = generation)
+        if (fresh == null) {
+            PhoebeLog.d("SessionRepository") {
+                "refreshSelectedServerConnections: plex.tv did not return server ${selected.id}"
+            }
+            return
         }
+        // plex.tv resources are a connection *list*, not a live base. Linthra/python-plexapi
+        // only set baseUrl after /identity succeeds. Keep the probed uri; update advertised relays.
+        val merged = fresh.copy(
+            uri = selected.uri.trimEnd('/').ifBlank { fresh.uri },
+            accessToken = selected.accessToken ?: fresh.accessToken,
+        )
+        if (merged != selected) {
+            PhoebeLog.d("SessionRepository") { "updated server connections for '${merged.name}'" }
+            save(current.copy(selectedServer = merged), expectedGeneration = generation)
+        }
+    }
+
+    /** Persist the `/identity`-confirmed base (Linthra `PlexSession.baseUrl`). */
+    suspend fun adoptProbedServerOrigin(origin: String) {
+        val generation = sessionGeneration
+        val current = mutableSession.value ?: return
+        val server = current.selectedServer ?: return
+        if (!current.isPlex()) return
+        val trimmed = origin.trimEnd('/').takeIf { it.isNotBlank() } ?: return
+        if (server.uri.trimEnd('/') == trimmed) return
+        save(current.copy(selectedServer = server.copy(uri = trimmed)), expectedGeneration = generation)
+        PhoebeLog.d("SessionRepository") { "adopted probed Plex base $trimmed" }
     }
 
     /** Probes server connections and caches the fastest reachable base URL for subsequent API calls. */
@@ -295,6 +324,7 @@ class SessionRepository(
                 selectedServerConnectionUris = server?.connectionUris?.toDbList(),
                 selectedServerAdvertisedConnectionUris = server?.advertisedConnectionUris?.toDbList(),
                 selectedServerLocalConnectionUris = server?.localConnectionUris?.toDbList(),
+                selectedServerRelayConnectionUris = server?.relayConnectionUris?.toDbList(),
                 selectedServerAccessToken = server?.accessToken,
                 selectedServerHttpsRequired = server?.httpsRequired?.toDb(),
                 selectedLibraryKey = library?.key,
@@ -317,6 +347,7 @@ class SessionRepository(
                 connectionUris = selectedServerConnectionUris.fromDbList(),
                 advertisedConnectionUris = selectedServerAdvertisedConnectionUris.fromDbList(),
                 localConnectionUris = selectedServerLocalConnectionUris.fromDbList(),
+                relayConnectionUris = selectedServerRelayConnectionUris.fromDbList(),
                 accessToken = selectedServerAccessToken,
                 httpsRequired = (selectedServerHttpsRequired ?: 0L).toBool(),
             )

@@ -7,6 +7,8 @@ kotlin {
         commonMain {
             dependencies {
                 implementation(project(":data:network"))
+                implementation(libs.ktor.client.core)
+                implementation(libs.coroutines.core)
             }
         }
     }
