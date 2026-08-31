@@ -50,6 +50,23 @@ fi
 
 pactl set-default-sink phoebe_null
 
+# Null sinks stay idle until a stream plays; monitor capture and JavaSound output
+# then block or time out in visualizer regression tests. Keep a quiet feed running.
+if command -v ffmpeg >/dev/null 2>&1; then
+  ffmpeg -nostdin -hide_banner -loglevel error \
+    -f lavfi -i anullsrc=r=22050:cl=mono \
+    -f pulse phoebe_null &
+  feed_pid=$!
+  for _ in $(seq 1 30); do
+    if pactl list sink-inputs short 2>/dev/null | grep -q .; then
+      break
+    fi
+    sleep 0.1
+  done
+  echo "Started phoebe_null silence feed (pid=${feed_pid})"
+fi
+
 echo "PulseAudio default sink:"
 pactl info | sed -n '/Default Sink/p'
 pactl list short sinks
+pactl list short sink-inputs
