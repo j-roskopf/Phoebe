@@ -25,8 +25,10 @@ kotlin {
             }
         }
         desktopTest {
+            kotlin.srcDir("$rootDir/test-support/database/desktop/kotlin")
             dependencies {
                 implementation(libs.junit)
+                implementation(libs.sqldelight.sqlite.driver)
             }
         }
         wasmJsMain {

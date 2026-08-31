@@ -1,0 +1,1 @@
+ALTER TABLE SessionRow ADD COLUMN selectedServerRelayConnectionUris TEXT;

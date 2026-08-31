@@ -13,6 +13,7 @@ CREATE TABLE SessionRow (
     selectedServerConnectionUris TEXT,
     selectedServerAdvertisedConnectionUris TEXT,
     selectedServerLocalConnectionUris TEXT,
+    selectedServerRelayConnectionUris TEXT,
     selectedServerAccessToken TEXT,
     selectedServerHttpsRequired INTEGER,
     selectedLibraryKey TEXT,
@@ -28,9 +29,10 @@ INSERT OR REPLACE INTO SessionRow(
     id, providerType, token, userName, userId,
     selectedServerId, selectedServerName, selectedServerUri, selectedServerOwned,
     selectedServerConnectionUris, selectedServerAdvertisedConnectionUris,
-    selectedServerLocalConnectionUris, selectedServerAccessToken, selectedServerHttpsRequired,
+    selectedServerLocalConnectionUris, selectedServerRelayConnectionUris,
+    selectedServerAccessToken, selectedServerHttpsRequired,
     selectedLibraryKey, selectedLibraryTitle, jellyfinSyncMode
-) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 clear:
 DELETE FROM SessionRow;

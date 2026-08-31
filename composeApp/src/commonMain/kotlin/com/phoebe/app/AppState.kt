@@ -70,6 +70,10 @@ import com.phoebe.app.domain.providerLabel
 import com.phoebe.app.domain.providerTypeFromCatalogId
 import com.phoebe.app.domain.parseAdvancedSearchQuery
 import com.phoebe.app.data.DownloadServiceResult
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
+import com.phoebe.app.data.isLocalOnlyServerOrigin
+import com.phoebe.app.data.isPlexMediaPathOrUrl
 import com.phoebe.app.data.BackupRestoreMode
 import com.phoebe.app.data.JellyfinQuickConnectResult
 import com.phoebe.app.data.JellyfinPlayHistorySyncResult
@@ -89,6 +93,7 @@ import com.phoebe.app.player.asPlayerState
 import com.phoebe.app.player.isPlaybackActive
 import com.phoebe.app.player.playbackOriginCandidates
 import com.phoebe.app.player.withPlaybackOrigins
+import com.phoebe.app.player.withRelativePlexPlaybackPaths
 import com.phoebe.app.domain.RecentSearchItem
 import com.phoebe.app.platform.MemoryPressureLevel
 import com.phoebe.app.platform.PhoebeAppLifecycle
@@ -96,7 +101,6 @@ import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.shouldDeferCatalogMemoryUpdates
 import com.phoebe.app.platform.currentNetworkIdentity
 import com.phoebe.app.platform.currentNetworkMeteringStatus
-import com.phoebe.app.platform.observeNetworkIdentity
 import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.platform.defaultDownloadWifiOnly
 import com.phoebe.app.platform.isDesktopPlatform
@@ -118,7 +122,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -406,6 +412,7 @@ class AppState(
     private var artistDetailPreloadJob: Job? = null
     private val activeDownloadJobs = mutableSetOf<Job>()
     private var lastPlaybackHistoryRecord = PlaybackHistoryRecord()
+    private var lastRebasedPlaybackOrigin: String? = null
     private var pendingLastFmAuth: PendingLastFmAuth? = null
     private val artistEventJobs = mutableMapOf<String, Job>()
     private val albumMusicBrainzJobs = mutableMapOf<String, Job>()
@@ -523,6 +530,7 @@ class AppState(
             dependencies.audioPlayer.setAudioProcessing(appSettings.value.audioProcessing)
             dependencies.audioPlayer.setStreamingPolicy(appSettings.value.streamingPolicy)
             wirePlaybackOriginResolver()
+            observeProbedPlexOrigin()
             StreamingPlaybackPolicyHolder.networkIsConstrainedProvider = {
                 val identity = currentNetworkIdentity()
                 identity.metering.isMetered || identity.metering.isCellular ||
@@ -534,7 +542,9 @@ class AppState(
                     appSettings.value.streamingPolicy.preferLocalNetwork
                 }
             }
-            observeNetworkIdentityForPlayback()
+            // Linthra: placeholder until `/identity` confirms a base. Do not stamp unprobed LAN.
+            ArtworkAuthHolder.update(session.value?.serverAuthToken() ?: session.value?.token)
+            seedPlexArtworkOrigins()
             dependencies.playHistoryRepository.restore()
             mutableDownloadDirectory.value = dependencies.platformStorage.readDownloadDirectory()
             checkForUpdatesInBackground()
@@ -545,7 +555,54 @@ class AppState(
             if (session.value?.selectedServer != null && session.value?.selectedLibrary == null) {
                 ensureLibrariesLoaded()
             }
-            dependencies.catalogRepository.restoreCachedCatalog()
+            // Refresh plex.tv connections + ranked race in parallel with catalog restore so
+            // first paint does not stamp dead relay hosts into Coil thumbs.
+            if (session.value.isPlex() && session.value?.selectedServer != null) {
+                coroutineScope {
+                    val connectionsJob = async {
+                        runCatching {
+                            dependencies.sessionRepository.refreshSelectedServerConnections()
+                        }.onFailure { error ->
+                            PhoebeLog.d("AppState") {
+                                "refreshSelectedServerConnections failed: ${error.message}"
+                            }
+                        }
+                        seedPlexArtworkOrigins()
+                        val current = session.value
+                        val server = current?.selectedServer
+                        val token = current?.serverAuthToken() ?: current?.token
+                        val resolver = runCatching {
+                            dependencies.appGraph.plexConnectionResolver
+                        }.getOrNull()
+                        val live = runCatching {
+                            if (server != null && !token.isNullOrBlank() && resolver != null) {
+                                resolver.resolveFresh(server, token)
+                            } else {
+                                dependencies.sessionRepository.warmServerConnection()
+                                resolver?.probedOrigin?.value
+                            }
+                        }.onFailure { error ->
+                            if (error is CancellationException) throw error
+                            PhoebeLog.d("AppState") {
+                                "plex identity race failed: ${error.message}"
+                            }
+                        }.getOrNull()
+                        applyLivePlexOrigin(live ?: resolver?.probedOrigin?.value)
+                        if (ArtworkOriginHolder.liveOrigin == null) {
+                            PhoebeLog.d("AppState") {
+                                "plex live base unavailable after identity race; retrying"
+                            }
+                        }
+                    }
+                    val catalogJob = async {
+                        runCatching { dependencies.catalogRepository.restoreCachedCatalog() }
+                    }
+                    awaitAll(connectionsJob, catalogJob)
+                }
+                applyLivePlexOrigin()
+            } else {
+                dependencies.catalogRepository.restoreCachedCatalog()
+            }
             refreshInternetRadio()
             syncLightweightRemoteStateInBackground()
             var refreshedCatalogOnStartup = false
@@ -567,6 +624,7 @@ class AppState(
                 if (session.value.isPlex()) {
                     dependencies.sessionRepository.refreshSelectedServerConnections()
                     dependencies.sessionRepository.warmServerConnection()
+                    applyLivePlexOrigin()
                 }
                 refreshCatalogSuspended(catalogMessage = null, backgroundIfCached = true)
                 refreshedCatalogOnStartup = true
@@ -583,16 +641,6 @@ class AppState(
                 warmPlaylistTracksInBackground()
             }
             ensureLikedSongsPlaylistIfPossible()
-            if (session.value?.token?.isNotBlank() == true &&
-                session.value?.selectedServer != null &&
-                session.value.isPlex() &&
-                !appSettings.value.scanLibraryOnLaunch
-            ) {
-                launch {
-                    dependencies.sessionRepository.refreshSelectedServerConnections()
-                    dependencies.sessionRepository.warmServerConnection()
-                }
-            }
             PhoebeLog.d("AppState") {
                 "startup restore complete → destination=${defaultBrowseRequest(session.value)}, " +
                     "session=${session.value?.userName ?: "none"}, " +
@@ -2738,13 +2786,116 @@ class AppState(
             .takeIf { it.isNotBlank() }
     }
 
+    /**
+     * Linthra: artwork binds to the probed session base only.
+     * Unprobed ranked lists stamp dead LAN/WAN hosts into Coil.
+     */
+    private fun seedPlexArtworkOrigins() {
+        publishPlexArtworkOrigins(probedOrigin = null, logMiss = false)
+    }
+
+    /**
+     * Publish the single `/identity`-confirmed Plex base for bind-at-request.
+     */
+    private fun applyLivePlexOrigin(originOverride: String? = null) {
+        publishPlexArtworkOrigins(probedOrigin = originOverride, logMiss = true)
+        val origin = ArtworkOriginHolder.liveOrigin ?: return
+        if (origin == lastRebasedPlaybackOrigin) return
+        lastRebasedPlaybackOrigin = origin
+        dependencies.audioPlayer.rebasePlaybackOrigins(origin)
+        scope.launch {
+            runCatching { dependencies.sessionRepository.adoptProbedServerOrigin(origin) }
+        }
+    }
+
+    private fun publishPlexArtworkOrigins(probedOrigin: String?, logMiss: Boolean = true) {
+        if (!session.value.isPlex()) return
+        val current = session.value ?: return
+        ArtworkAuthHolder.update(current.serverAuthToken() ?: current.token)
+        val server = current.selectedServer ?: return
+        val resolver = runCatching { dependencies.appGraph.plexConnectionResolver }.getOrNull()
+        val candidate = probedOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }
+            ?: resolver?.liveProbedOrigin(server)
+            ?: resolver?.probedOrigin?.value
+            ?: ArtworkOriginHolder.liveOrigin
+        if (candidate.isNullOrBlank()) {
+            if (logMiss) {
+                PhoebeLog.d("AppState") { "plex live base skipped: no probed origin" }
+            }
+            return
+        }
+        if (resolver != null && !resolver.isProbed(server.id, candidate)) {
+            PhoebeLog.d("AppState") { "plex live base skipped: $candidate is not probed" }
+            return
+        }
+        if (resolver?.demoteLocalOrigins() == true && isLocalOnlyServerOrigin(candidate)) {
+            PhoebeLog.d("AppState") { "plex live base skipped: demoted LAN $candidate" }
+            return
+        }
+        if (ArtworkOriginHolder.liveOrigin != candidate) {
+            PhoebeLog.d("AppState") { "plex live base=$candidate" }
+        }
+        dependencies.catalogRepository.rebasePlexMediaOrigins(candidate, emptyList())
+    }
+
+    /**
+     * Publish the `/identity`-confirmed origin to Coil, and keep racing while there is none.
+     *
+     * `PlexConnectionResolver` owns network changes: its own watcher clears the probed origin
+     * and re-resolves on a handoff, which arrives here as a `probedOrigin` emission. AppState
+     * must not also watch the network — two resolvers racing the same server produced duplicate
+     * probes and duplicate queue rebases on every Wi-Fi/cellular transition.
+     */
+    private fun observeProbedPlexOrigin() {
+        val resolver = runCatching { dependencies.appGraph.plexConnectionResolver }.getOrNull()
+            ?: return
+        scope.launch {
+            resolver.probedOrigin.collect { origin ->
+                val trimmed = origin?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return@collect
+                applyLivePlexOrigin(trimmed)
+            }
+        }
+        // Retry only while there is nothing probed. `collectLatest` cancels the pending backoff
+        // the moment a race succeeds or the session changes, so a healthy app is not polling.
+        scope.launch {
+            combine(session, resolver.probedOrigin) { current, origin -> current to origin }
+                .collectLatest { (current, origin) ->
+                    if (origin != null) return@collectLatest
+                    val plex = current?.takeIf { it.isPlex() } ?: return@collectLatest
+                    val server = plex.selectedServer ?: return@collectLatest
+                    val token = plex.serverAuthToken() ?: plex.token
+                    if (token.isBlank()) return@collectLatest
+                    var backoffMs = 2_000L
+                    while (!disposed) {
+                        val resolved = runCatching {
+                            resolver.resolveFresh(server, token)
+                        }.onFailure { error ->
+                            if (error is CancellationException) throw error
+                            PhoebeLog.d("AppState") { "plex origin retry failed: ${error.message}" }
+                        }.getOrNull()
+                        if (resolved != null) {
+                            applyLivePlexOrigin(resolved)
+                            return@collectLatest
+                        }
+                        PhoebeLog.d("AppState") { "plex origin still missing; retry in ${backoffMs}ms" }
+                        delay(backoffMs)
+                        backoffMs = (backoffMs * 2).coerceAtMost(30_000L)
+                        // The server may have moved; a fresh connection list is the only way back.
+                        runCatching {
+                            dependencies.sessionRepository.refreshSelectedServerConnections()
+                        }.onFailure { error -> if (error is CancellationException) throw error }
+                    }
+                }
+        }
+    }
+
     private fun wirePlaybackOriginResolver() {
         val resolver = runCatching { dependencies.appGraph.plexConnectionResolver }.getOrNull()
             ?: return
         PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
             override fun cachedOrigin(): String? {
                 val server = session.value?.selectedServer ?: return null
-                return resolver.cached(server)
+                return resolver.liveProbedOrigin(server)
             }
 
             override suspend fun resolveOrigin(deadlineMs: Long): String? {
@@ -2753,7 +2904,7 @@ class AppState(
                 val token = current.serverAuthToken() ?: return null
                 return withContext(Dispatchers.Default) {
                     resolver.resolveFresh(server, token, deadlineMs = deadlineMs)
-                }
+                }?.also { applyLivePlexOrigin(it) }
             }
 
             override fun demoteLocalOrigins(): Boolean = resolver.demoteLocalOrigins()
@@ -2767,6 +2918,7 @@ class AppState(
                 if (after == before) return emptyList()
                 PhoebeLog.d("AppState") { "playback stalled → refreshed Plex connections" }
                 runCatching { dependencies.sessionRepository.warmServerConnection() }
+                applyLivePlexOrigin()
                 return playbackOriginCandidates(
                     server = after,
                     preferredOrigin = currentPlaybackOrigin(),
@@ -2783,35 +2935,7 @@ class AppState(
         if (server != null) {
             scope.launch {
                 runCatching { resolver.hydrateFromDisk(server) }
-            }
-        }
-    }
-
-    private fun observeNetworkIdentityForPlayback() {
-        scope.launch {
-            var lastFingerprint = currentNetworkIdentity().fingerprint
-            observeNetworkIdentity().collect { identity ->
-                if (identity.fingerprint == lastFingerprint) return@collect
-                lastFingerprint = identity.fingerprint
-                val current = session.value?.takeIf { it.isPlex() } ?: return@collect
-                val server = current.selectedServer ?: return@collect
-                val token = current.serverAuthToken() ?: return@collect
-                val resolver = runCatching { dependencies.appGraph.plexConnectionResolver }.getOrNull()
-                    ?: return@collect
-                // Prefer a warm cache hit so we never stall playback on a network flap.
-                val warm = resolver.cached(server)
-                if (warm != null) {
-                    dependencies.audioPlayer.rebasePlaybackOrigins(warm)
-                }
-                val origin = runCatching {
-                    resolver.resolve(server, token)
-                }.getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return@collect
-                if (origin != warm) {
-                    dependencies.audioPlayer.rebasePlaybackOrigins(origin)
-                }
-                PhoebeLog.d("AppState") {
-                    "playback queue rebased after network change fingerprint=${identity.fingerprint} origin=$origin"
-                }
+                seedPlexArtworkOrigins()
             }
         }
     }
@@ -4108,6 +4232,8 @@ class AppState(
                 mutableMessage.value = it.message ?: "Something went sideways."
             }.isSuccess
             if (signedOut) {
+                ArtworkOriginHolder.clear()
+                ArtworkAuthHolder.clear()
                 mutableMessage.value = "Signed out."
             }
         }
@@ -4211,11 +4337,21 @@ internal fun Track.withFreshPlaybackUrls(
     val demoteLocalOrigins = StreamingPlaybackPolicyHolder.settings.shouldDemoteLocalOrigins(
         identity.demotesLocalOrigins,
     ) || session.selectedServer?.let { identity.shouldSkipAdvertisedLan(it) } == true
+    val preferred = liveOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }
     val origins = playbackOriginCandidates(
         server = session.selectedServer,
-        preferredOrigin = liveOrigin,
+        preferredOrigin = preferred,
         demoteLocalOrigins = demoteLocalOrigins,
     )
+    if (session.providerType == MediaProviderType.Plex &&
+        (streamUrl.isPlexMediaPathOrUrl() || downloadUrl.isPlexMediaPathOrUrl())
+    ) {
+        // Plex queues carry relative part keys only. Stamping an absolute origin here is what
+        // made a queue go stale the instant the network changed: every entry pointed at the
+        // address that happened to be live when the queue was built. The origin is bound at
+        // open time instead, in StreamingPlaybackPolicyHolder.resolvePlaybackUri.
+        return withRelativePlexPlaybackPaths()
+    }
     val withOrigins = if (origins.isEmpty()) this else withPlaybackOrigins(origins.first(), origins.drop(1))
     val refreshedStreamUrl = withOrigins.streamUrl.withFreshPlaybackAuth(session)
     val refreshedDownloadUrl = withOrigins.downloadUrl.withFreshPlaybackAuth(session)

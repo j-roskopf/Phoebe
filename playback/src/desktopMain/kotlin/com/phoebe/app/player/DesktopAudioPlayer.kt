@@ -29,6 +29,7 @@ import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.sound.sampled.AudioFormat
@@ -165,8 +166,11 @@ class DesktopAudioPlayer(
         val closeLineOnStop: Boolean = true,
     ) {
         val stopped = AtomicBoolean(false)
+        val pendingWrites = LinkedBlockingQueue<ByteArray>()
         @Volatile
         var writtenPcmBytes: Long = stream.format.pcmBytesForDurationMs(startPositionMs)
+        @Volatile
+        var decodedPcmBytes: Long = writtenPcmBytes
         @Volatile
         var lastWriteAtNs: Long = System.nanoTime()
         @Volatile
@@ -183,6 +187,27 @@ class DesktopAudioPlayer(
         private var pausedDurationNs: Long = 0L
         @Volatile
         private var lineTransferred = false
+        private var writeWorker: Thread? = null
+
+        fun startWriteWorker() {
+            if (writeWorker != null) return
+            writeWorker = Thread(
+                {
+                    while (!stopped.get() || pendingWrites.isNotEmpty()) {
+                        val chunk = pendingWrites.poll(50L, TimeUnit.MILLISECONDS) ?: continue
+                        val written = runCatching { line.write(chunk, 0, chunk.size) }.getOrDefault(0)
+                        if (written > 0) {
+                            writtenPcmBytes += written.toLong()
+                            lastWriteAtNs = System.nanoTime()
+                        }
+                    }
+                },
+                "Phoebe-sampled-stream-write",
+            ).apply {
+                isDaemon = true
+                start()
+            }
+        }
 
         fun playbackPositionMs(nowNs: Long = System.nanoTime()): Long {
             val effectiveNowNs = pausedAtNs ?: nowNs
@@ -207,6 +232,9 @@ class DesktopAudioPlayer(
         fun stop() {
             stopped.set(true)
             paused = false
+            writeWorker?.join(2_000L)
+            writeWorker = null
+            pendingWrites.clear()
             if (closeLineOnStop && !lineTransferred) {
                 runCatching { line.stop() }
                 runCatching { line.flush() }
@@ -921,6 +949,7 @@ class DesktopAudioPlayer(
                 if (!incoming.line.isRunning) {
                     incoming.line.start()
                 }
+                incoming.startWriteWorker()
                 if (firstBuffer != null && firstBufferLength > 0) {
                     writeSampledStreamBuffer(incoming, firstBuffer, firstBufferLength, generation)
                 }
@@ -2263,6 +2292,7 @@ class DesktopAudioPlayer(
         diagnostics.engineSelected(PlaybackEnginePath.SampledStream)
         applyVolumeToLine(line, effectiveOutputVolume())
         line.start()
+        playback.startWriteWorker()
         if (firstRead > 0) {
             writeSampledStreamBuffer(
                 playback = playback,
@@ -2610,10 +2640,15 @@ class DesktopAudioPlayer(
     private fun sourceLineBufferSize(format: AudioFormat): Int {
         val frameSize = format.frameSize.takeIf { it > 0 } ?: return VisualizerStreamChunkBytes * 2
         val sampleRate = format.sampleRate.takeIf { it > 0f && !it.isNaN() } ?: return VisualizerStreamChunkBytes * 2
+        val lineSeconds = if (JavaFxVisualizerPcmTap.isLinuxOs()) {
+            LinuxStreamingLineBufferSeconds
+        } else {
+            StreamingLineBufferSeconds
+        }
         // Keep this near a visualizer frame. A 1.5s Java Sound buffer made Pulse
         // accept writes in huge periods, so analysis (which runs on the write loop)
         // dropped to a couple of Hertz — the same lag as JavaFX spectrum.
-        val frames = (sampleRate * StreamingLineBufferSeconds).toInt().coerceAtLeast(1)
+        val frames = (sampleRate * lineSeconds).toInt().coerceAtLeast(1)
         return (frames * frameSize)
             .coerceAtLeast(VisualizerStreamChunkBytes * 2)
             .coerceAtMost(MaxStreamingLineBufferBytes)
@@ -2688,11 +2723,18 @@ class DesktopAudioPlayer(
             processor = playback.equalizerProcessor,
         )
         pcmFloatSamples(buffer, length, playback.stream.format)?.let { samples ->
-            publishAudioAnalysisPcm(samples, playback.stream.format.sampleRate, AudioAnalysisSource.Pcm)
+            val timestampMs = playback.stream.format.durationMsForPcmBytes(
+                playback.decodedPcmBytes + length.coerceAtLeast(0),
+            )
+            publishAudioAnalysisPcm(
+                samples = samples,
+                sampleRateHz = playback.stream.format.sampleRate,
+                source = AudioAnalysisSource.Pcm,
+                timestampMs = timestampMs,
+            )
         }
-        val written = playback.line.write(buffer, 0, length).coerceAtLeast(0)
-        playback.lastWriteAtNs = System.nanoTime()
-        playback.writtenPcmBytes += written.toLong()
+        playback.decodedPcmBytes += length.coerceAtLeast(0)
+        playback.pendingWrites.offer(buffer.copyOf(length))
         if (!playback.reportedEnergy) {
             val rms = pcmRms(buffer.copyOf(length), playback.stream.format)
             if (rms > 0.0 && rms.isFinite()) {
@@ -3646,6 +3688,7 @@ class DesktopAudioPlayer(
         const val StreamingPcmBufferBytes = 16 * 1024
         const val VisualizerStreamChunkBytes = 4 * 1024
         const val StreamingLineBufferSeconds = 0.06f
+        const val LinuxStreamingLineBufferSeconds = 0.35f
         const val MaxStreamingLineBufferBytes = 1024 * 1024
         const val FfmpegPcmSampleRateHz = 44_100
         const val FfmpegPcmChannels = 2

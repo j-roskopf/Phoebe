@@ -14,7 +14,6 @@ import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
@@ -30,9 +29,12 @@ import androidx.work.WorkManager
 import com.phoebe.app.AndroidContextHolder
 import com.phoebe.app.domain.PlexServer
 import io.ktor.client.HttpClient
+import io.ktor.client.plugins.DefaultRequest
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.Dispatchers
@@ -43,27 +45,25 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.withContext
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.util.concurrent.TimeUnit
 import java.net.DatagramPacket
 import java.net.DatagramSocket
+import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.SocketTimeoutException
 
+private val Ipv4PreferredDns = Dns { hostname ->
+    val all = Dns.SYSTEM.lookup(hostname)
+    val ipv4 = all.filterIsInstance<Inet4Address>()
+    if (ipv4.isEmpty()) all else ipv4 + all.filter { it !is Inet4Address }
+}
+
 actual fun createPlatformHttpClient(): HttpClient = HttpClient(OkHttp) {
-    engine {
-        config {
-            connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
-            dispatcher(
-                Dispatcher().apply {
-                    maxRequests = 64
-                    maxRequestsPerHost = 16
-                },
-            )
-        }
-    }
+    engine { applyPhoebeOkHttpEngine() }
     install(HttpTimeout) {
         // Large Plex library metadata responses can exceed 30s on mobile networks.
         requestTimeoutMillis = 90_000
@@ -75,8 +75,35 @@ actual fun createPlatformHttpClient(): HttpClient = HttpClient(OkHttp) {
     }
 }
 
+actual fun createPlatformMediaHttpClient(): HttpClient = HttpClient(OkHttp) {
+    engine { applyPhoebeOkHttpEngine() }
+    install(HttpTimeout) {
+        requestTimeoutMillis = 8_000
+        connectTimeoutMillis = 5_000
+        socketTimeoutMillis = 8_000
+    }
+    install(DefaultRequest) {
+        header(HttpHeaders.Accept, "image/jpeg,image/png,image/webp,image/*,*/*")
+    }
+}
+
+private fun io.ktor.client.engine.okhttp.OkHttpConfig.applyPhoebeOkHttpEngine() {
+    config {
+        fastFallback(true)
+        dns(Ipv4PreferredDns)
+        connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+        dispatcher(
+            Dispatcher().apply {
+                maxRequests = 64
+                maxRequestsPerHost = 16
+            },
+        )
+    }
+}
+
 private val AndroidDownloadHttpClient: OkHttpClient by lazy {
     OkHttpClient.Builder()
+        .fastFallback(true)
         .connectionPool(ConnectionPool(4, 2, TimeUnit.MINUTES))
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -160,10 +187,12 @@ actual fun observeNetworkIdentity(): Flow<NetworkIdentity> = callbackFlow {
         override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) = emit()
         override fun onLinkPropertiesChanged(network: Network, linkProperties: LinkProperties) = emit()
     }
-    val request = NetworkRequest.Builder()
-        .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-        .build()
-    runCatching { connectivity.registerNetworkCallback(request, callback) }
+    // The default network is the one this app's sockets actually use. A plain
+    // registerNetworkCallback with an INTERNET request fires for *every* matching network —
+    // including the Wi-Fi that is on its way down during a handoff — while the handler reads
+    // `activeNetwork`, so the emitted identity could describe a different network than the
+    // callback was about.
+    runCatching { connectivity.registerDefaultNetworkCallback(callback) }
         .onFailure {
             trySend(androidNetworkIdentity(connectivity, connectivity.activeNetwork))
         }
@@ -186,31 +215,40 @@ private fun androidNetworkIdentity(
         )
     }
     val capabilities = connectivity.getNetworkCapabilities(network)
+    // A VPN hides the underlying transport, and its tunnel does not reach the server's LAN.
+    // Reported as `Other` it used to keep LAN-first ordering on a VPN over cellular.
+    val vpn = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
     val transport = when {
         capabilities == null -> NetworkTransport.Other
+        vpn -> NetworkTransport.Other
         capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkTransport.Wifi
         capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkTransport.Cellular
         capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> NetworkTransport.Ethernet
         else -> NetworkTransport.Other
     }
     val metering = NetworkMeteringStatus(
-        isMetered = connectivity.isActiveNetworkMetered,
+        isMetered = connectivity.isActiveNetworkMetered || vpn,
         isCellular = transport == NetworkTransport.Cellular,
     )
     val linkProperties = connectivity.getLinkProperties(network)
-    val prefixes = if (transport == NetworkTransport.Cellular || transport == NetworkTransport.None) {
+    val prefixes = if (transport == NetworkTransport.Cellular || transport == NetworkTransport.None || vpn) {
         emptyList()
     } else {
         androidLocalIpv4Prefixes(linkProperties)
     }
-    val material = when (transport) {
-        NetworkTransport.Cellular -> "cellular"
-        NetworkTransport.None -> ""
+    val material = when {
+        vpn -> "vpn"
+        transport == NetworkTransport.Cellular -> "cellular"
+        transport == NetworkTransport.None -> ""
         else -> androidNetworkMaterial(linkProperties)
     }
+    // A captive portal or a Wi-Fi that has not finished associating reports INTERNET without
+    // being usable. Fold that into the fingerprint so leaving it counts as a network change.
+    val validated = capabilities
+        ?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) != false
     return NetworkIdentity(
         transport = transport,
-        fingerprint = networkFingerprint(transport, material),
+        fingerprint = networkFingerprint(transport, if (validated) material else "$material/unvalidated"),
         metering = metering,
         localIpv4Prefixes = prefixes,
     )

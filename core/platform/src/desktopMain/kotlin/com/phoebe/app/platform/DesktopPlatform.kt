@@ -3,8 +3,11 @@ package com.phoebe.app.platform
 import androidx.compose.runtime.Composable
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.okhttp.OkHttp
+import io.ktor.client.plugins.DefaultRequest
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.header
+import io.ktor.http.HttpHeaders
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.serialization.json.Json
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +19,7 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import okhttp3.ConnectionPool
 import okhttp3.Dispatcher
+import okhttp3.Dns
 import java.awt.Desktop
 import java.awt.SystemTray
 import java.awt.TrayIcon
@@ -30,18 +34,14 @@ import java.net.SocketTimeoutException
 import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
 
+private val Ipv4PreferredDns = Dns { hostname ->
+    val all = Dns.SYSTEM.lookup(hostname)
+    val ipv4 = all.filterIsInstance<Inet4Address>()
+    if (ipv4.isEmpty()) all else ipv4 + all.filter { it !is Inet4Address }
+}
+
 actual fun createPlatformHttpClient(): HttpClient = HttpClient(OkHttp) {
-    engine {
-        config {
-            connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
-            dispatcher(
-                Dispatcher().apply {
-                    maxRequests = 64
-                    maxRequestsPerHost = 16
-                },
-            )
-        }
-    }
+    engine { applyPhoebeOkHttpEngine() }
     install(HttpTimeout) {
         requestTimeoutMillis = 90_000
         connectTimeoutMillis = 8_000
@@ -49,6 +49,32 @@ actual fun createPlatformHttpClient(): HttpClient = HttpClient(OkHttp) {
     }
     install(ContentNegotiation) {
         json(platformNetworkJson)
+    }
+}
+
+actual fun createPlatformMediaHttpClient(): HttpClient = HttpClient(OkHttp) {
+    engine { applyPhoebeOkHttpEngine() }
+    install(HttpTimeout) {
+        requestTimeoutMillis = 8_000
+        connectTimeoutMillis = 5_000
+        socketTimeoutMillis = 8_000
+    }
+    install(DefaultRequest) {
+        header(HttpHeaders.Accept, "image/jpeg,image/png,image/webp,image/*,*/*")
+    }
+}
+
+private fun io.ktor.client.engine.okhttp.OkHttpConfig.applyPhoebeOkHttpEngine() {
+    config {
+        fastFallback(true)
+        dns(Ipv4PreferredDns)
+        connectionPool(ConnectionPool(16, 5, TimeUnit.MINUTES))
+        dispatcher(
+            Dispatcher().apply {
+                maxRequests = 64
+                maxRequestsPerHost = 16
+            },
+        )
     }
 }
 

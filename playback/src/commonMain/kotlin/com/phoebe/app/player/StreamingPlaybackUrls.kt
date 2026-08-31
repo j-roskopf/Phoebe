@@ -41,11 +41,19 @@ object StreamingPlaybackPolicyHolder {
         directStreamTrackId = null
     }
 
+    /**
+     * The one place a playable URI is produced, for every platform player.
+     *
+     * The origin is bound *here* rather than stamped into the queue, so the address is always
+     * the one that is live at this instant. Quality/transcode rewriting then runs on the bound
+     * absolute URL exactly as before.
+     */
     fun resolvePlaybackUri(track: Track): String {
-        if (track.id == directStreamTrackId) {
-            return track.localUri?.takeIf { it.isNotBlank() } ?: track.streamUrl
+        val bound = track.boundToLivePlaybackOrigin()
+        if (bound.id == directStreamTrackId) {
+            return bound.localUri?.takeIf { it.isNotBlank() } ?: bound.streamUrl
         }
-        return track.resolvedPlaybackUri(effectiveQuality())
+        return bound.resolvedPlaybackUri(effectiveQuality())
     }
 }
 

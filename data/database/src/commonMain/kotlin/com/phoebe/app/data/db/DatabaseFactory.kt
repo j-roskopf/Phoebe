@@ -13,8 +13,11 @@ import com.phoebe.app.db.PhoebeDatabase
  */
 expect suspend fun createSqlDriver(schema: SqlSchema<QueryResult.AsyncValue<Unit>>): SqlDriver
 
-suspend fun createPhoebeDatabase(): PhoebeDatabase =
-    PhoebeDatabase(createSqlDriver(PhoebeDatabase.Schema))
+suspend fun createPhoebeDatabase(): PhoebeDatabase {
+    val driver = createSqlDriver(PhoebeDatabase.Schema)
+    repairPhoebeSchema(driver)
+    return PhoebeDatabase(driver)
+}
 
 /** PRAGMA statements may return a result row; native drivers reject them via [SqlDriver.execute]. */
 internal fun SqlDriver.execPragma(sql: String) {

@@ -1,11 +1,13 @@
 package com.phoebe.app.player
 
+import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.AudioAnalysisSource
 import com.phoebe.app.domain.Track
 import com.phoebe.app.testing.assumeLinux
 import java.io.File
 import java.nio.file.Files
 import java.util.Collections
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.math.PI
 import kotlin.math.sin
 import kotlin.test.assertTrue
@@ -27,6 +29,20 @@ class LinuxVisualizerLiveAnalysisDesktopTest {
         val playbackFile = encodeMp3OrWav(wav)
         val diagnostics = RecordingPlaybackDiagnostics()
         val player = DesktopAudioPlayer(diagnostics)
+        val frames = Collections.synchronizedList(ArrayList<AudioAnalysisFrame>(512))
+        val collecting = AtomicBoolean(true)
+        val collector = Thread(
+            {
+                while (collecting.get()) {
+                    frames += player.audioAnalysis.value
+                    Thread.sleep(1L)
+                }
+            },
+            "linux-visualizer-frame-collector",
+        ).apply {
+            isDaemon = true
+            start()
+        }
         try {
             player.setVolume(0.02f)
             player.play(listOf(playbackTrack(playbackFile)), 0)
@@ -39,13 +55,9 @@ class LinuxVisualizerLiveAnalysisDesktopTest {
                 diagnostics.engineEvents().contains(PlaybackEnginePath.SampledStream),
                 "Linux visualizer path must decode PCM, not JavaFX spectrum; engines=${diagnostics.engineEvents()}",
             )
-
-            val frames = ArrayList<com.phoebe.app.domain.AudioAnalysisFrame>(256)
-            val collectUntil = System.nanoTime() + CollectMs * 1_000_000L
-            while (System.nanoTime() < collectUntil) {
-                frames += player.audioAnalysis.value
-                Thread.sleep(1L)
-            }
+            Thread.sleep(CollectMs)
+            collecting.set(false)
+            collector.join(2_000L)
 
             val live = frames.filter { frame ->
                 frame.source != AudioAnalysisSource.None && frame.bands.isNotEmpty()
@@ -57,7 +69,7 @@ class LinuxVisualizerLiveAnalysisDesktopTest {
 
             assertTrue(
                 uniqueTimestamps.size >= MinDistinctFrames,
-                "visualizer analysis only updated ${uniqueTimestamps.size} times in ${CollectMs}ms " +
+                "visualizer analysis only updated ${uniqueTimestamps.size} times while playing " +
                     "(need >= $MinDistinctFrames). engines=${diagnostics.engineEvents()} " +
                     "sources=$sources errors=${diagnostics.errorEvents()} " +
                     "last=${player.audioAnalysis.value}",
@@ -71,6 +83,8 @@ class LinuxVisualizerLiveAnalysisDesktopTest {
                 "bands did not track the pulsing fixture (range=$peakRange); engines=${diagnostics.engineEvents()}",
             )
         } finally {
+            collecting.set(false)
+            collector.join(500L)
             player.releaseForTests()
             work.deleteRecursively()
         }

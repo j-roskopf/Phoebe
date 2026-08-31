@@ -7,6 +7,8 @@ import com.phoebe.app.data.CatalogRepository
 import com.phoebe.app.data.MediaSourcesRepository
 import com.phoebe.app.data.PlexClient
 import com.phoebe.app.domain.DownloadState
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PlatformStorage
 import com.phoebe.app.platform.downloadParallelism
@@ -479,6 +481,63 @@ class PlexPlaylistEndToEndDesktopTest {
         assertTrue(repo.catalog.value.downloads.isEmpty())
         val persisted = db.downloadsQueries.selectAll().awaitAsList()
         assertTrue(persisted.isEmpty())
+    }
+
+    @Test
+    fun downloadBindsRelativePlexPathsOntoTheLiveOrigin() = runTest {
+        val payload = ByteArray(64 * 1024) { index -> (index % 251).toByte() }
+        val requestedUrls = mutableListOf<String>()
+        val (db, sqlDriver) = newInMemoryPhoebeDatabase()
+        driver = sqlDriver
+        val engine = MockEngine { request ->
+            requestedUrls += request.url.toString()
+            when (request.url.encodedPath) {
+                "/library/parts/1/file.mp3" -> respond(
+                    content = payload,
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(
+                        HttpHeaders.ContentLength to listOf(payload.size.toString()),
+                        HttpHeaders.ContentType to listOf("audio/mpeg"),
+                    ),
+                )
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val repo = catalogRepository(db, testHttpClient(engine))
+        PlatformStorage().writeDownloadDirectory(temp.newFolder("downloads-relative").toURI().toString())
+        val live = "https://plex.example"
+        ArtworkOriginHolder.update(live)
+        ArtworkAuthHolder.update("live-token")
+        try {
+            // Exactly what PlexClient.toTrack now produces: no host, no token.
+            val track = Track(
+                id = "plex:t-relative",
+                title = "Relative Song",
+                artist = "Artist One",
+                album = "Album One",
+                durationMs = 1_000,
+                streamUrl = "/library/parts/1/file.mp3",
+                downloadUrl = "/library/parts/1/file.mp3",
+            )
+
+            val result = repo.downloadTracks(listOf(track))
+
+            assertEquals(1, result.total)
+            assertEquals(1, result.completed)
+            assertEquals(0, result.failed)
+            val downloaded = repo.catalog.value.downloads.single()
+            assertEquals(DownloadState.Complete, downloaded.state)
+            val stored = PlatformStorage().readUriBytes(requireNotNull(downloaded.localUri))
+            assertNotNull(stored)
+            assertTrue(payload.contentEquals(stored))
+            assertTrue(
+                requestedUrls.any { it.startsWith("$live/library/parts/1/file.mp3") },
+                "audio must be fetched from the live origin, got $requestedUrls",
+            )
+        } finally {
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
     }
 
     @Test

@@ -945,7 +945,7 @@ private fun AudioPlaybackSettingsCard(
         )
         SettingsSwitchRow(
             title = "Prefer home network",
-            subtitle = "Try your server's LAN address first on Wi‑Fi. Off by default — Phoebe uses remote plex.direct first so cellular and away-from-home playback start without probing dead local IPs.",
+            subtitle = "Try your server's LAN address first on Wi‑Fi (default). Turn off to always use remote plex.direct first — useful when home Wi‑Fi cannot reach PMS.",
             checked = streamingPolicy.preferLocalNetwork,
             onCheckedChange = { checked ->
                 onStreamingPolicySettings(streamingPolicy.copy(preferLocalNetwork = checked))

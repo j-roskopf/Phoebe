@@ -594,7 +594,7 @@ class PlexClientPlaylistEndToEndTest {
         assertEquals(1, artists.size)
         assertEquals("a2", artists.single().id)
         assertEquals("The Front Bottoms", artists.single().title)
-        assertTrue(artists.single().thumbUrl?.contains("X-Plex-Token=token") == true)
+        assertEquals("/library/metadata/a2/thumb/1", artists.single().thumbUrl)
     }
 
     @Test

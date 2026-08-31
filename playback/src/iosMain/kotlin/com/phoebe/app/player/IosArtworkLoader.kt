@@ -1,6 +1,6 @@
 package com.phoebe.app.player
 
-import com.phoebe.app.platform.createPlatformHttpClient
+import com.phoebe.app.platform.createPlatformMediaHttpClient
 import io.ktor.client.call.body
 import io.ktor.client.request.get
 import kotlinx.cinterop.BetaInteropApi
@@ -21,7 +21,7 @@ import platform.UIKit.UIGraphicsGetImageFromCurrentImageContext
 
 @OptIn(ExperimentalForeignApi::class)
 internal object IosArtworkLoader {
-    private val httpClient by lazy { createPlatformHttpClient() }
+    private val httpClient by lazy { createPlatformMediaHttpClient() }
     private val cache = LinkedHashMap<String, UIImage>()
 
     suspend fun load(url: String): UIImage? {

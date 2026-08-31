@@ -1,5 +1,6 @@
 package com.phoebe.app.player
 
+import com.phoebe.app.data.isLocalOnlyServerOrigin
 import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.Track
 import kotlin.test.Test
@@ -27,8 +28,26 @@ class PlaybackUrlOriginsTest {
                 "https://23-239-17-63.abc.plex.direct:8443/library/parts/36576/file.mp3?X-Plex-Token=old",
             ),
         )
+        assertTrue(isMusicServerStreamUrl("/library/parts/36576/file.mp3"))
         assertFalse(isMusicServerStreamUrl("https://kexp.streamguys1.com/kexp128.mp3"))
         assertFalse(isMusicServerStreamUrl("file:///music/song.mp3"))
+    }
+
+    @Test
+    fun playbackUrlsForOriginsBindRelativePartKeysOntoLiveBase() {
+        val urls = playbackUrlsForOrigins(
+            "/library/parts/1/file.mp3",
+            listOf(
+                "https://45-79-210-225.abc.plex.direct:8443",
+                "http://192.168.1.9:32400",
+            ),
+            token = "token",
+        )
+        assertEquals(
+            "https://45-79-210-225.abc.plex.direct:8443/library/parts/1/file.mp3?X-Plex-Token=token",
+            urls.first(),
+        )
+        assertTrue(urls.any { it.startsWith("http://192.168.1.9:32400/library/parts/1/file.mp3") })
     }
 
     @Test
@@ -323,5 +342,80 @@ class PlaybackUrlOriginsTest {
                 failedUri = transcode,
             ),
         )
+    }
+
+    @Test
+    fun playbackOriginOfExtractsSchemeHostPortForForgetMatching() {
+        assertEquals(
+            "https://173-230-133-167.abc.plex.direct:8443",
+            playbackOriginOf(
+                "https://173-230-133-167.abc.plex.direct:8443/library/parts/1/file.mp3?X-Plex-Token=t",
+            ),
+        )
+    }
+
+    @Test
+    fun rankedArtworkRequestOriginsPutsUnprobedLanLast() {
+        val lan = "https://172-16-1-2.abc.plex.direct:32400"
+        val remote = "https://72-58-82-53.abc.plex.direct:32400"
+        val relay = "https://45-79-210-225.abc.plex.direct:8443"
+        val server = PlexServer(
+            id = "plex",
+            name = "Plex",
+            uri = lan,
+            owned = true,
+            connectionUris = listOf(lan, remote, relay),
+            advertisedConnectionUris = listOf(lan, remote, relay),
+            localConnectionUris = listOf(lan),
+            relayConnectionUris = listOf(relay),
+        )
+        val ranked = rankedArtworkRequestOrigins(server, probedOrigin = null)
+        assertTrue(ranked.isNotEmpty())
+        assertTrue(isLocalOnlyServerOrigin(ranked.last()))
+        assertFalse(isLocalOnlyServerOrigin(ranked.first()))
+        assertEquals(relay, ranked.first())
+        assertTrue(ranked.indexOf(relay) < ranked.indexOf(remote))
+    }
+
+    @Test
+    fun rankedArtworkRequestOriginsOmitsDemotedLanAndKeepsProbedRelayFirst() {
+        val lan = "https://172-16-1-2.abc.plex.direct:32400"
+        val relay = "https://45-79-210-225.abc.plex.direct:8443"
+        val server = PlexServer(
+            id = "plex",
+            name = "Plex",
+            uri = lan,
+            owned = true,
+            connectionUris = listOf(lan, relay),
+            advertisedConnectionUris = listOf(lan, relay),
+            localConnectionUris = listOf(lan),
+            relayConnectionUris = listOf(relay),
+        )
+        val ranked = rankedArtworkRequestOrigins(
+            server = server,
+            probedOrigin = relay,
+            demoteLocalOrigins = true,
+        )
+        assertEquals(relay, ranked.first())
+        assertFalse(ranked.any { it == lan })
+    }
+
+    @Test
+    fun rankedArtworkRequestOriginsIgnoresLanProbedOrigin() {
+        val lan = "https://172-16-1-2.abc.plex.direct:32400"
+        val remote = "https://72-58-82-53.abc.plex.direct:32400"
+        val relay = "https://45-79-210-225.abc.plex.direct:8443"
+        val server = PlexServer(
+            id = "plex",
+            name = "Plex",
+            uri = lan,
+            owned = true,
+            connectionUris = listOf(lan, remote, relay),
+            advertisedConnectionUris = listOf(lan, remote, relay),
+            localConnectionUris = listOf(lan),
+            relayConnectionUris = listOf(relay),
+        )
+        val ranked = rankedArtworkRequestOrigins(server, probedOrigin = lan)
+        assertEquals(relay, ranked.first())
     }
 }

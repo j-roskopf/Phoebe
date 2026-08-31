@@ -46,6 +46,7 @@ import io.github.erkko68.filament.compose.scene.rememberSkyboxState
 import io.github.erkko68.filament.filamat.Filamat
 import io.github.erkko68.filament.filamat.MaterialBuilder
 import io.github.erkko68.filament.toBytes
+import kotlin.concurrent.Volatile
 import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.cos

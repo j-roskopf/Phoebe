@@ -41,6 +41,11 @@ data class PlexDeviceDto(
 data class PlexConnectionDto(
     val uri: String,
     val local: Boolean = false,
+    /** True when plex.tv marks this URI as Plex Relay (last-resort remote hop). */
+    val relay: Boolean = false,
+    val protocol: String? = null,
+    val address: String? = null,
+    val port: Int? = null,
 )
 
 @Serializable

@@ -168,6 +168,9 @@ async function waitForPhoebeCanvas(page) {
 
 async function seedLocalSource(page) {
   await page.addInitScript(() => {
+    // Match PhoebeAppDataRevision so startup does not wipe the seeded local folder.
+    localStorage.setItem('phoebe:phoebe.app_data_revision', '2');
+    localStorage.setItem('phoebe:phoebe-debug.app_data_revision', '2');
     localStorage.setItem(
       'phoebe:media_sources.json',
       JSON.stringify({

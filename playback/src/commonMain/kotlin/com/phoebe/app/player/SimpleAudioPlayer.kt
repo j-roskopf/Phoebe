@@ -49,6 +49,9 @@ abstract class SimpleAudioPlayer(
     private var playGeneration = 0
     private var failoverGeneration = -1
     private var originRediscoveryGeneration = -1
+    private var originRetryGeneration = -1
+    /** Origin the stream currently open on the platform player was built from. */
+    private var openPlaybackOrigin: String? = null
     private val triedPlaybackUris = linkedSetOf<String>()
     private var stickyPlaybackOrigin: String? = null
     private var crossfadeDurationMs = 0L
@@ -169,25 +172,48 @@ abstract class SimpleAudioPlayer(
             return
         }
         val resolver = PlaybackOriginResolverHolder.resolver
-        // Prefer a known-good origin and start immediately — never block first audio on a probe.
-        // Drop sticky/cached LAN when demotion is active so cellular/away starts stay remote-first.
+        // Prefer a probed/known-good origin and start immediately.
+        // With no warm origin, wait for the ranked race so we do not open a dead relay.
         clearStickyIfDemoted()
         val knownOrigin = acceptedPlaybackOrigin(resolver?.cachedOrigin())
             ?: acceptedPlaybackOrigin(stickyPlaybackOrigin)
-        launchPreparedPlayback(
-            queue = if (knownOrigin != null) queue.withResolvedOrigin(knownOrigin) else queue,
-            startIndex = startIndex,
-            generation = generation,
-            sameQueue = sameQueue,
-            origin = knownOrigin,
-        )
-        if (resolver == null) return
-        followOriginResolutionInBackground(generation, resolver)
+        if (knownOrigin != null || resolver == null) {
+            launchPreparedPlayback(
+                queue = if (knownOrigin != null) queue.withResolvedOrigin(knownOrigin) else queue,
+                startIndex = startIndex,
+                generation = generation,
+                sameQueue = sameQueue,
+                origin = knownOrigin,
+            )
+            if (resolver != null) followOriginResolutionInBackground(generation, resolver)
+            return
+        }
+        scope.launch {
+            val resolved = runCatching {
+                resolver.resolveOrigin(PlaybackOriginResolver.DefaultPlayResolveDeadlineMs)
+            }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+            if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
+            val accepted = acceptedPlaybackOrigin(resolved)
+            val playbackQueue = if (accepted != null) queue.withResolvedOrigin(accepted) else queue
+            launchPreparedPlayback(
+                queue = playbackQueue,
+                startIndex = startIndex,
+                generation = generation,
+                sameQueue = sameQueue,
+                origin = accepted,
+            )
+        }
     }
 
     /**
-     * Cache can be a dead relay from last launch. Probe in the background and switch the
-     * in-flight buffer if a different origin wins, instead of waiting out JavaFX's 10s hang.
+     * The warm origin can be a dead relay from the last launch, so confirm it in the background
+     * while audio is already starting.
+     *
+     * Resolving is all that happens here. When the race picks a different hop it publishes the
+     * new base, which arrives back through [rebasePlaybackOrigins] and re-opens the current
+     * stream — one mechanism for "the origin moved", shared with network handoffs.
      */
     private fun followOriginResolutionInBackground(
         generation: Int,
@@ -200,30 +226,7 @@ abstract class SimpleAudioPlayer(
                 .onFailure { if (it is CancellationException) throw it }
                 .getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return@launch
             if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
-            val accepted = acceptedPlaybackOrigin(resolved) ?: return@launch
-            rememberStickyPlaybackOrigin(accepted)
-            val current = mutableState.value
-            if (current.queue.isEmpty()) return@launch
-            val playing = current.currentTrack ?: return@launch
-            val currentUri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(playing)
-                .ifBlank { playing.streamUrl }
-            val rebased = current.queue.withResolvedOrigin(accepted)
-            if (rebased !== current.queue) {
-                mutableState.value = current.copy(queue = rebased)
-                onQueueEdited(rebased, current.currentIndex)
-            }
-            if (!mutableState.value.isBuffering) return@launch
-            val nextTrack = rebased.getOrNull(current.currentIndex) ?: playing
-            val nextUri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(nextTrack)
-                .ifBlank { nextTrack.streamUrl }
-            if (nextUri.isBlank()) return@launch
-            val currentOrigin = playbackOriginOf(currentUri)
-            val nextOrigin = playbackOriginOf(nextUri) ?: return@launch
-            if (currentOrigin != null && currentOrigin.equals(nextOrigin, ignoreCase = true)) return@launch
-            if (nextUri in triedPlaybackUris) return@launch
-            forgetFailedPlaybackOrigin(currentUri)
-            notePlaybackUri(currentUri, generation)
-            startFailoverAttempt(generation, nextUri)
+            acceptedPlaybackOrigin(resolved)?.let(::rememberStickyPlaybackOrigin)
         }
     }
 
@@ -253,6 +256,7 @@ abstract class SimpleAudioPlayer(
         val initialUri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
             .ifBlank { track.playbackUriCandidates().firstOrNull().orEmpty() }
         if (initialUri.isNotBlank()) notePlaybackUri(initialUri, generation)
+        openPlaybackOrigin = initialUri.takeIf { it.isNotBlank() }?.let(::playbackOriginOf)
         startPlaybackStartupWatchdog(generation)
         if (sameQueue) {
             skipToInQueueOnPlatform(queue, index, track, generation)
@@ -997,7 +1001,7 @@ abstract class SimpleAudioPlayer(
         if (!isPlayRequestCurrent(generation) || !playWhenReady) return false
         forgetFailedPlaybackOrigin(failedUri)
         val next = nextPlaybackFailoverUri(generation, failedUri)
-            ?: return rediscoverOriginsAndRetry(generation, failedUri)
+            ?: return resolveNewOriginAndRetry(generation, failedUri)
         val trackId = mutableState.value.currentTrack?.id
         if (!failedUri.isNullOrBlank() && failedUri.isPlexUniversalTranscodeUrl() && !trackId.isNullOrBlank()) {
             StreamingPlaybackPolicyHolder.preferDirectStreamFor(trackId)
@@ -1006,7 +1010,56 @@ abstract class SimpleAudioPlayer(
         return startFailoverAttempt(generation, next)
     }
 
+    /**
+     * Plex queues hold a relative part key, not a list of addresses, so there is no next URL to
+     * walk — there is a next *origin*. The dead one has just been forgotten, so re-running the
+     * ranked race picks a different hop, and re-reading the track's URI binds onto it.
+     *
+     * Returns true when a retry is in flight, so the caller defers surfacing an error.
+     */
+    private fun resolveNewOriginAndRetry(generation: Int, failedUri: String?): Boolean {
+        val resolver = PlaybackOriginResolverHolder.resolver ?: return false
+        val track = mutableState.value.currentTrack ?: return false
+        if (!track.localUri.isNullOrBlank()) return false
+        if (originRetryGeneration == generation) {
+            return rediscoverOriginsAndRetry(generation, failedUri)
+        }
+        originRetryGeneration = generation
+        scope.launch {
+            val origin = runCatching {
+                resolver.resolveOrigin(PlaybackOriginResolver.DefaultPlayResolveDeadlineMs)
+            }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()
+                ?.trimEnd('/')
+                ?.takeIf { it.isNotBlank() }
+            if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
+            val current = mutableState.value.currentTrack ?: return@launch
+            val next = origin
+                ?.let { StreamingPlaybackPolicyHolder.resolvePlaybackUri(current.boundToLivePlaybackOrigin(it)) }
+                ?.takeIf { it.isNotBlank() && it !in triedPlaybackUris }
+            if (next == null) {
+                if (!rediscoverOriginsAndRetry(generation, failedUri)) {
+                    publishPlaybackFailure(
+                        PlaybackFailure(
+                            kind = PlaybackFailureKind.Unreachable,
+                            message = "no reachable address for this server",
+                            streamUri = failedUri,
+                        ),
+                        generation,
+                    )
+                }
+                return@launch
+            }
+            PhoebeLog.d("AudioPlayer") { "playback retry on freshly resolved origin=$origin" }
+            notePlaybackUri(next, generation)
+            startFailoverAttempt(generation, next)
+        }
+        return true
+    }
+
     private fun startFailoverAttempt(generation: Int, uri: String): Boolean {
+        openPlaybackOrigin = playbackOriginOf(uri)
         adoptFailoverStreamUrl(uri)
         val current = mutableState.value
         val track = current.currentTrack ?: return false
@@ -1069,6 +1122,16 @@ abstract class SimpleAudioPlayer(
             // attempt budget may have cut the walk short while dead candidates remained.
             val target = if (origins.isEmpty()) {
                 null
+            } else if (track.holdsRelativePlexPath()) {
+                // Plex: the queue holds a relative part key and must keep holding one. Stamping
+                // the rediscovered addresses in would put the queue back to going stale on the
+                // next network change. Bind the best new origin for this one attempt instead.
+                origins.firstOrNull()
+                    ?.let { origin ->
+                        StreamingPlaybackPolicyHolder
+                            .resolvePlaybackUri(track.boundToLivePlaybackOrigin(origin))
+                    }
+                    ?.takeIf { it.isNotBlank() && it !in alreadyTried }
             } else {
                 restampQueueWithOrigins(origins)
                 nextPlaybackFailoverCandidate(
@@ -1162,18 +1225,55 @@ abstract class SimpleAudioPlayer(
         return if (changed) next else this
     }
 
+    /**
+     * The live server base changed — most often a Wi-Fi -> cellular handoff.
+     *
+     * Plex queue entries hold relative part keys, so nothing in the queue needs rewriting; the
+     * next read binds onto the new base by itself. What does need attention is the stream that
+     * is *already open*: its socket points at the old address and will sit there until the
+     * platform player's own timeout expires, which is 20-30s of silence. Re-prepare it at the
+     * current position instead.
+     */
     override fun rebasePlaybackOrigins(origin: String) {
         val trimmed = origin.trimEnd('/').takeIf { it.isNotBlank() } ?: return
         rememberStickyPlaybackOrigin(trimmed)
         val current = mutableState.value
         if (current.queue.isEmpty()) return
+        // Non-Plex providers still carry stamped absolute URLs; keep rewriting those.
         val playbackQueue = current.queue.preferStickyPlaybackOrigin()
-        if (playbackQueue === current.queue) return
-        PhoebeLog.d("AudioPlayer") {
-            "rebasePlaybackOrigins origin=$trimmed queue=${playbackQueue.size}"
+        if (playbackQueue !== current.queue) {
+            PhoebeLog.d("AudioPlayer") {
+                "rebasePlaybackOrigins origin=$trimmed queue=${playbackQueue.size}"
+            }
+            mutableState.value = current.copy(queue = playbackQueue)
+            onQueueEdited(playbackQueue, current.currentIndex)
         }
-        mutableState.value = current.copy(queue = playbackQueue)
-        onQueueEdited(playbackQueue, current.currentIndex)
+        reopenCurrentStreamOnNewOrigin(trimmed)
+    }
+
+    private fun reopenCurrentStreamOnNewOrigin(origin: String) {
+        if (!playWhenReady) return
+        val state = mutableState.value
+        if (!state.isPlaying && !state.isBuffering) return
+        val track = state.currentTrack ?: return
+        if (!track.localUri.isNullOrBlank()) return
+        val openedOn = openPlaybackOrigin ?: return
+        val nextOrigin = playbackOriginOf(origin) ?: origin
+        if (openedOn.equals(nextOrigin, ignoreCase = true)) return
+        val nextUri = StreamingPlaybackPolicyHolder
+            .resolvePlaybackUri(track.boundToLivePlaybackOrigin(origin))
+            .takeIf { it.isNotBlank() } ?: return
+        if (playbackOriginOf(nextUri)?.equals(openedOn, ignoreCase = true) == true) return
+        val generation = activePlayGeneration
+        PhoebeLog.d("AudioPlayer") {
+            "origin moved $openedOn -> $nextOrigin; re-opening current track at ${state.positionMs}ms"
+        }
+        // The old address is gone for this network, so drop it and start the attempt budget
+        // over — this is a new network, not another failure on the old one.
+        forgetFailedPlaybackOrigin(openedOn)
+        resetPlaybackUriFailover(generation)
+        notePlaybackUri(nextUri, generation)
+        startFailoverAttempt(generation, nextUri)
     }
 
     protected open val playbackStartupTimeoutMs: Long

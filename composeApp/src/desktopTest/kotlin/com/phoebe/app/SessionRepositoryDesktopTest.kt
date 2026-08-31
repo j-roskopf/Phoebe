@@ -135,6 +135,65 @@ class SessionRepositoryDesktopTest {
     }
 
     @Test
+    fun refreshSelectedServerConnectionsKeepsProbedUri() = runBlocking {
+        val (database, driver) = newInMemoryPhoebeDatabase()
+        val storage = PlatformStorage()
+        val probed = "https://45-79-210-225.abc.plex.direct:8443"
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/api/v2/pins/1" -> respondJson("""{"id":1,"code":"ABCD","authToken":"user-token"}""")
+                "/api/v2/user" -> respondJson("""{"username":"Plex listener"}""")
+                "/api/v2/resources" -> respondJson(
+                    """
+                    [
+                      {
+                        "name": "Studio Plex",
+                        "product": "Plex Media Server",
+                        "clientIdentifier": "server-id",
+                        "owned": true,
+                        "provides": "server",
+                        "accessToken": "server-token",
+                        "connections": [
+                          { "uri": "http://192.168.1.9:32400", "local": true, "relay": false },
+                          { "uri": "https://45-79-210-225.abc.plex.direct:8443", "local": false, "relay": true }
+                        ]
+                      }
+                    ]
+                    """.trimIndent(),
+                )
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val client = PlexClient.withoutResolver(testHttpClient(engine))
+        val repository = testSessionRepository(
+            plexClient = client,
+            database = database,
+            storage = storage,
+            httpClient = testHttpClient(engine),
+        )
+        try {
+            repository.completePin(PlexPin(id = 1, code = "ABCD", authUrl = "https://plex.example/auth"))
+            repository.selectServer(
+                PlexServer(
+                    id = "server-id",
+                    name = "Studio Plex",
+                    uri = probed,
+                    owned = true,
+                    accessToken = "server-token",
+                ),
+                refreshConnections = false,
+            )
+            repository.refreshSelectedServerConnections()
+            val server = repository.session.value?.selectedServer
+            assertEquals(probed, server?.uri)
+            assertEquals(listOf("https://45-79-210-225.abc.plex.direct:8443"), server?.relayConnectionUris)
+            assertEquals(listOf("http://192.168.1.9:32400"), server?.localConnectionUris)
+        } finally {
+            driver.close()
+        }
+    }
+
+    @Test
     fun selectServerPersistsResolvedPlexApiBase() = runBlocking {
         val (database, driver) = newInMemoryPhoebeDatabase()
         val engine = MockEngine { request ->

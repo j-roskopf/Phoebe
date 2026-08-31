@@ -59,12 +59,17 @@ import coil3.network.httpHeaders
 import coil3.network.ktor3.KtorNetworkFetcherFactory
 import coil3.request.ImageRequest
 import com.phoebe.app.data.applyEmbyFamilyArtworkAuth
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
+import com.phoebe.app.data.bindPlexCoverArt
 import com.phoebe.app.data.cachedArtworkPathForUrl
 import com.phoebe.app.data.embyFamilyArtworkAuthHeaders
 import com.phoebe.app.data.isEmbyFamilyArtworkUrl
+import com.phoebe.app.data.isPlexMediaPathOrUrl
+import com.phoebe.app.data.isRebaseableServerArtworkUrl
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PlatformStorage
-import com.phoebe.app.platform.createPlatformHttpClient
+import com.phoebe.app.platform.createPlatformMediaHttpClient
 import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.platform.prefersReducedArtworkEffects
 import com.phoebe.app.platform.remoteArtworkCacheMaxEstimatedBytes
@@ -132,8 +137,20 @@ private fun CoilArtworkImage(
     alignment: Alignment,
     contentScale: ContentScale,
 ) {
-    val candidates = remember(thumbUrl, fallbackThumbUrl, maxDecodeDimension) {
+    val artworkOrigins by ArtworkOriginHolder.snapshot.collectAsState()
+    val plexToken by ArtworkAuthHolder.tokenFlow.collectAsState()
+    val candidates = remember(thumbUrl, fallbackThumbUrl, maxDecodeDimension, artworkOrigins, plexToken) {
         artworkImageCandidates(thumbUrl, maxDecodeDimension, fallbackThumbUrl)
+    }
+    val waitingForLiveOrigin = remember(thumbUrl, fallbackThumbUrl, artworkOrigins, plexToken) {
+        listOfNotNull(thumbUrl, fallbackThumbUrl).any { url ->
+            url.isNotBlank() && url.isRebaseableServerArtworkUrl()
+        } && (artworkOrigins.candidateOrigins().isEmpty() || plexToken.isNullOrBlank())
+    }
+    // When the live Plex origin arrives after first paint, clear failure backoff and
+    // restart from the newly bound URL instead of staying on Missing.
+    LaunchedEffect(artworkOrigins.liveOrigin, plexToken) {
+        RemoteArtworkCache.retryFailedLoadsNow()
     }
     var candidateIndex by remember(candidates) { mutableIntStateOf(0) }
     val candidate = candidates.getOrNull(candidateIndex)
@@ -147,7 +164,7 @@ private fun CoilArtworkImage(
         }
     }
     val imageLoader = rememberPhoebeArtworkImageLoader(platformContext)
-    key(candidate?.fetchUrl, candidateIndex, maxDecodeDimension) {
+    key(candidate?.fetchUrl, candidateIndex, maxDecodeDimension, waitingForLiveOrigin) {
         val painter = rememberAsyncImagePainter(model = request, imageLoader = imageLoader)
         val painterState by painter.state.collectAsState()
 
@@ -162,11 +179,14 @@ private fun CoilArtworkImage(
             }
         }
 
-        val visualState = resolveCoilArtworkVisualState(
-            painterState = painterState,
-            hasCandidate = candidate != null,
-            exhaustedCandidates = candidateIndex >= candidates.lastIndex,
-        )
+        val visualState = when {
+            waitingForLiveOrigin -> RemoteArtworkVisualState.Missing
+            else -> resolveCoilArtworkVisualState(
+                painterState = painterState,
+                hasCandidate = candidate != null,
+                exhaustedCandidates = candidateIndex >= candidates.lastIndex,
+            )
+        }
 
         Box(modifier) {
             if (visualState != RemoteArtworkVisualState.Missing) {
@@ -240,7 +260,7 @@ private fun buildArtworkImageLoader(context: PlatformContext): ImageLoader =
         }
         .build()
 
-private data class ArtworkImageCandidate(
+internal data class ArtworkImageCandidate(
     val sourceUrl: String,
     val fetchUrl: String,
 )
@@ -252,25 +272,90 @@ private fun artworkImageCandidates(
 ): List<ArtworkImageCandidate> {
     val primary = url?.takeIf { it.isNotBlank() }
     val fallback = fallbackUrl?.takeIf { it.isNotBlank() && it != primary }
+    val origins = ArtworkOriginHolder.candidateOrigins()
+    val token = ArtworkAuthHolder.plexToken
     return listOfNotNull(primary, fallback)
         .flatMap { sourceUrl ->
-            val fetchUrls = if (sourceUrl.isRemoteArtworkUrl()) {
-                remoteArtworkRequestUrls(sourceUrl, maxDecodeDimension)
-            } else {
-                listOf(sourceUrl)
-            }
-            fetchUrls.map { fetchUrl -> ArtworkImageCandidate(sourceUrl, fetchUrl) }
+            artworkOriginFetchCandidates(
+                sourceUrl = sourceUrl,
+                maxDecodeDimension = maxDecodeDimension,
+                origins = origins,
+                plexToken = token,
+            )
         }
         .distinctBy { it.fetchUrl }
 }
 
+/**
+ * Bind Plex art onto ranked live bases. One URL per host — sized+unsized on a
+ * dead WAN `:32400` burned two connect timeouts before Coil ever reached the relay.
+ */
+internal fun artworkOriginFetchCandidates(
+    sourceUrl: String,
+    maxDecodeDimension: Int,
+    origins: List<String>,
+    plexToken: String? = ArtworkAuthHolder.plexToken,
+): List<ArtworkImageCandidate> {
+    if (sourceUrl.isPlexMediaPathOrUrl()) {
+        if (origins.isEmpty()) return emptyList()
+        val token = plexToken?.takeIf { it.isNotBlank() } ?: return emptyList()
+        return origins
+            .map { origin ->
+                ArtworkImageCandidate(
+                    sourceUrl,
+                    bindPlexCoverArt(sourceUrl, origin, token, maxDecodeDimension),
+                )
+            }
+            .distinctBy { it.fetchUrl }
+    }
+    if (!sourceUrl.isRemoteArtworkUrl()) {
+        return listOf(ArtworkImageCandidate(sourceUrl, sourceUrl))
+    }
+    val fetchUrls = remoteArtworkRequestUrls(sourceUrl, maxDecodeDimension)
+    return fetchUrls.map { ArtworkImageCandidate(sourceUrl, it) }
+}
+
+/** Test helper: single live base. */
+internal fun artworkOriginFetchCandidates(
+    sourceUrl: String,
+    maxDecodeDimension: Int,
+    liveOrigin: String?,
+    plexToken: String? = ArtworkAuthHolder.plexToken,
+): List<ArtworkImageCandidate> =
+    artworkOriginFetchCandidates(
+        sourceUrl = sourceUrl,
+        maxDecodeDimension = maxDecodeDimension,
+        origins = listOfNotNull(liveOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }),
+        plexToken = plexToken,
+    )
+
+private const val PlexArtworkClientIdentifier = "phoebe-compose-multiplatform"
+
 private fun ImageRequest.Builder.applyArtworkHeaders(fetchUrl: String): ImageRequest.Builder {
-    val headers = embyFamilyArtworkAuthHeaders(fetchUrl)
-    if (headers.isEmpty()) return this
     val networkHeaders = NetworkHeaders.Builder().apply {
-        headers.forEach { (name, value) -> set(name, value) }
+        set("Accept", "image/jpeg,image/png,image/webp,image/*,*/*")
+        embyFamilyArtworkAuthHeaders(fetchUrl).forEach { (name, value) -> set(name, value) }
+        plexArtworkAuthHeaders(fetchUrl).forEach { (name, value) -> set(name, value) }
     }.build()
     return httpHeaders(networkHeaders)
+}
+
+private fun plexArtworkAuthHeaders(fetchUrl: String): Map<String, String> {
+    if (!fetchUrl.isPlexMediaPathOrUrl() && !fetchUrl.hasQueryParameter("X-Plex-Token")) {
+        return emptyMap()
+    }
+    val token = fetchUrl.substringAfter('?', "").substringBefore('#')
+        .split('&')
+        .firstOrNull { it.substringBefore('=').equals("X-Plex-Token", ignoreCase = true) }
+        ?.substringAfter('=', missingDelimiterValue = "")
+        ?.takeIf { it.isNotBlank() }
+        ?: ArtworkAuthHolder.plexToken
+    if (token.isNullOrBlank()) return emptyMap()
+    return mapOf(
+        "X-Plex-Token" to token,
+        "X-Plex-Client-Identifier" to PlexArtworkClientIdentifier,
+        "X-Plex-Product" to "Phoebe",
+    )
 }
 
 private fun artworkSurfaceModifier(modifier: Modifier, shape: Shape, elevated: Boolean): Modifier =
@@ -479,7 +564,9 @@ object RemoteArtworkCache {
     private val images = mutableMapOf<CacheKey, ImageBitmap>()
     private val cacheLock = ArtworkCacheLock()
 
-    internal val httpClient: HttpClient by lazy { createPlatformHttpClient() }
+    internal val httpClient: HttpClient by lazy {
+        createPlatformMediaHttpClient()
+    }
     private val storage: PlatformStorage by lazy { PlatformStorage() }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val platformLoadPermits = remoteArtworkLoadParallelism().coerceIn(1, DefaultLoadPermits)

@@ -180,6 +180,11 @@ data class PlexServer(
     val advertisedConnectionUris: List<String> = emptyList(),
     /** Subset of [advertisedConnectionUris] Plex marked `local=true`. */
     val localConnectionUris: List<String> = emptyList(),
+    /**
+     * Subset of [advertisedConnectionUris] Plex marked `relay=true`.
+     * Official clients try these last (after LAN and direct remote).
+     */
+    val relayConnectionUris: List<String> = emptyList(),
     /** Per-server token from plex.tv `/resources`; required for many PMS API calls. */
     val accessToken: String? = null,
     val httpsRequired: Boolean = false,
@@ -1411,11 +1416,12 @@ data class StreamingPolicySettings(
     val quality: StreamingQuality = StreamingQuality.Original,
     val useDataSaverOnCellular: Boolean = true,
     /**
-     * When false (default), playback and API origin selection prefer public/remote Plex
-     * connections and only use LAN addresses as a fallback. When true, restore the
-     * home-LAN-first strategy on unmetered Wi‑Fi (still demote LAN on cellular).
+     * When true (default), match official Plex clients: try LAN first with a short probe,
+     * then direct remote, then relay. When false, always demote LAN (remote/relay first) —
+     * useful when the home LAN never reaches PMS.
+     * Cellular / constrained networks still demote LAN either way.
      */
-    val preferLocalNetwork: Boolean = false,
+    val preferLocalNetwork: Boolean = true,
 ) {
     fun normalized(): StreamingPolicySettings = copy(quality = quality)
 

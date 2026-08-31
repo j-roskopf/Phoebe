@@ -7,6 +7,9 @@ import kotlinx.serialization.json.Json
 
 expect fun createPlatformHttpClient(): io.ktor.client.HttpClient
 
+/** Binary/media fetches (artwork). No JSON ContentNegotiation, so image bodies are not parsed as API payloads. */
+expect fun createPlatformMediaHttpClient(): io.ktor.client.HttpClient
+
 expect fun isDesktopPlatform(): Boolean
 
 expect fun isIosPlatform(): Boolean

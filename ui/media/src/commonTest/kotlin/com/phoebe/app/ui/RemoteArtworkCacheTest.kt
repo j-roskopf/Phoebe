@@ -4,6 +4,8 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.ImageBitmapConfig
 import androidx.compose.ui.graphics.colorspace.ColorSpace
 import androidx.compose.ui.graphics.colorspace.ColorSpaces
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.awaitCancellation
@@ -28,6 +30,8 @@ class RemoteArtworkCacheTest {
     @AfterTest
     fun tearDown() {
         RemoteArtworkCache.clearForTest()
+        ArtworkAuthHolder.clear()
+        ArtworkOriginHolder.clear()
     }
 
     @Test
@@ -540,8 +544,80 @@ class RemoteArtworkCacheTest {
             ),
         )
     }
-}
 
+    @Test
+    fun artworkOriginFetchCandidatesBindsSingleLiveOriginNeverStampedHost() {
+        ArtworkAuthHolder.update("token")
+        val stale =
+            "https://23-239-17-63.abc.plex.direct:8443/library/metadata/1/thumb/2?X-Plex-Token=old"
+        val relative = "/library/metadata/1/thumb/2"
+        val lan = "http://192.168.1.9:32400"
+        val fromStale = artworkOriginFetchCandidates(
+            sourceUrl = stale,
+            maxDecodeDimension = 160,
+            liveOrigin = lan,
+            plexToken = "token",
+        ).map { it.fetchUrl }
+        val fromRelative = artworkOriginFetchCandidates(
+            sourceUrl = relative,
+            maxDecodeDimension = 160,
+            liveOrigin = lan,
+            plexToken = "token",
+        ).map { it.fetchUrl }
+
+        val transcodeLan =
+            "http://192.168.1.9:32400/photo/:/transcode?width=160&height=160&minSize=1&upscale=1&url=%2Flibrary%2Fmetadata%2F1%2Fthumb%2F2&X-Plex-Token=token"
+        assertEquals(listOf(transcodeLan), fromStale)
+        assertEquals(fromStale, fromRelative)
+        assertTrue(fromStale.none { it.contains("23-239-17-63") })
+        assertEquals(1, fromStale.map { it.substringBefore("/photo") }.distinct().size)
+    }
+
+    @Test
+    fun artworkOriginFetchCandidatesTriesEmergencyFallbackAfterLive() {
+        ArtworkAuthHolder.update("token")
+        val relative = "/library/metadata/1/thumb/2"
+        val lan = "http://192.168.1.9:32400"
+        val relay = "https://45-79-210-225.abc.plex.direct:8443"
+        val fetchUrls = artworkOriginFetchCandidates(
+            sourceUrl = relative,
+            maxDecodeDimension = 160,
+            origins = listOf(lan, relay),
+            plexToken = "token",
+        ).map { it.fetchUrl }
+
+        assertEquals(
+            listOf(
+                "http://192.168.1.9:32400/photo/:/transcode?width=160&height=160&minSize=1&upscale=1&url=%2Flibrary%2Fmetadata%2F1%2Fthumb%2F2&X-Plex-Token=token",
+                "https://45-79-210-225.abc.plex.direct:8443/photo/:/transcode?width=160&height=160&minSize=1&upscale=1&url=%2Flibrary%2Fmetadata%2F1%2Fthumb%2F2&X-Plex-Token=token",
+            ),
+            fetchUrls,
+        )
+    }
+
+    @Test
+    fun artworkOriginFetchCandidatesWaitWhenNoLiveOriginYet() {
+        ArtworkAuthHolder.update("token")
+        assertEquals(
+            emptyList(),
+            artworkOriginFetchCandidates(
+                sourceUrl = "/library/metadata/1/thumb/2",
+                maxDecodeDimension = 160,
+                liveOrigin = null,
+                plexToken = "token",
+            ),
+        )
+        assertEquals(
+            emptyList(),
+            artworkOriginFetchCandidates(
+                sourceUrl = "/library/metadata/1/thumb/2",
+                maxDecodeDimension = 160,
+                liveOrigin = "http://192.168.1.9:32400",
+                plexToken = null,
+            ),
+        )
+    }
+}
 private fun testImageBitmap(width: Int, height: Int): ImageBitmap = TestImageBitmap(width, height)
 
 private const val PlexArtworkUrl = "https://plex.example/library/metadata/1/thumb/2?X-Plex-Token=token"
