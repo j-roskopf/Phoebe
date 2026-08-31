@@ -2688,7 +2688,15 @@ class DesktopAudioPlayer(
             processor = playback.equalizerProcessor,
         )
         pcmFloatSamples(buffer, length, playback.stream.format)?.let { samples ->
-            publishAudioAnalysisPcm(samples, playback.stream.format.sampleRate, AudioAnalysisSource.Pcm)
+            val timestampMs = playback.stream.format.durationMsForPcmBytes(
+                playback.writtenPcmBytes + length.coerceAtLeast(0),
+            )
+            publishAudioAnalysisPcm(
+                samples = samples,
+                sampleRateHz = playback.stream.format.sampleRate,
+                source = AudioAnalysisSource.Pcm,
+                timestampMs = timestampMs,
+            )
         }
         val written = playback.line.write(buffer, 0, length).coerceAtLeast(0)
         playback.lastWriteAtNs = System.nanoTime()
