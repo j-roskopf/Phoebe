@@ -90,6 +90,17 @@ class PlexClient private constructor(
         return advertised
     }
 
+    /**
+     * Wall-clock probe budget in production. [withoutResolver] clients run [block] inline so
+     * `runTest` reporters are not stranded on [kotlinx.coroutines.Dispatchers.Default].
+     */
+    private suspend fun <T> withProbeBudget(timeoutMs: Long, block: suspend () -> T): T? =
+        if (connectionResolver == null) {
+            block()
+        } else {
+            withNetworkTimeoutOrNull(timeoutMs, block)
+        }
+
     private fun demoteLocalOrigins(): Boolean =
         connectionResolver?.demoteLocalOrigins() == true
 
@@ -222,7 +233,7 @@ class PlexClient private constructor(
         val result = CompletableDeferred<String>()
         val jobs = candidates.map { base ->
             launch {
-                val ok = withNetworkTimeoutOrNull(plexBaseProbeTimeoutMs(base, timeoutMs)) {
+                val ok = withProbeBudget(plexBaseProbeTimeoutMs(base, timeoutMs)) {
                     runCatching {
                         val response = httpClient.get("$base/identity") {
                             plexServerAuth(token)
@@ -239,7 +250,7 @@ class PlexClient private constructor(
         }
         val overall = candidates.maxOf { plexBaseProbeTimeoutMs(it, timeoutMs) } + 250L
         val winner = try {
-            withNetworkTimeoutOrNull(overall) { result.await() }
+            withProbeBudget(overall) { result.await() }
         } finally {
             jobs.forEach { it.cancel() }
         }
@@ -1517,7 +1528,7 @@ class PlexClient private constructor(
             if (skipRemainingLocal && isLocalOnlyServerOrigin(base)) continue
             lastBase = base
             val probeTimeoutMs = plexTimelineProbeTimeoutMs(base)
-            val outcome = withNetworkTimeoutOrNull(probeTimeoutMs) {
+            val outcome = withProbeBudget(probeTimeoutMs) {
                 runCatching {
                     timelineHttpRequest(base, token, sessionIdentifier, probeTimeoutMs) {
                         parameter("ratingKey", ratingKey)
@@ -1621,7 +1632,7 @@ class PlexClient private constructor(
         for (base in bases) {
             if (skipRemainingLocal && isLocalOnlyServerOrigin(base)) continue
             val probeTimeoutMs = plexBaseProbeTimeoutMs(base)
-            val outcome = withNetworkTimeoutOrNull(probeTimeoutMs) {
+            val outcome = withProbeBudget(probeTimeoutMs) {
                 runCatching {
                     httpClient.post("$base/playQueues") {
                         timeout {
@@ -2034,7 +2045,7 @@ class PlexClient private constructor(
         block: suspend (base: String) -> T,
     ): T {
         val timeoutMs = plexApiBaseTimeoutMs(origin, isCached = true)
-        val outcome = withNetworkTimeoutOrNull(timeoutMs) {
+        val outcome = withProbeBudget(timeoutMs) {
             runCatching { block(origin) }
         }
         if (outcome == null) {
@@ -2083,7 +2094,7 @@ class PlexClient private constructor(
         ).ifEmpty { listOfNotNull(cached) }
         for (base in bases) {
             val timeoutMs = plexApiBaseTimeoutMs(base, isCached = base == cached)
-            val outcome = withNetworkTimeoutOrNull(timeoutMs) {
+            val outcome = withProbeBudget(timeoutMs) {
                 runCatching { block(base) }
             }
             if (outcome == null) {
@@ -2151,7 +2162,7 @@ class PlexClient private constructor(
         )
         for (base in bases) {
             val probeTimeoutMs = minOf(baseTimeoutMs, plexBaseProbeTimeoutMs(base))
-            val outcome = withNetworkTimeoutOrNull(probeTimeoutMs) {
+            val outcome = withProbeBudget(probeTimeoutMs) {
                 runCatching {
                     val response = httpClient.get("$base$path") {
                         plexServerAuth(token)
