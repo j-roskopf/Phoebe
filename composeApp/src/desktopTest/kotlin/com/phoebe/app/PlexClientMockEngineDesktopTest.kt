@@ -132,8 +132,7 @@ class PlexClientMockEngineDesktopTest {
                 else -> respond("", HttpStatusCode.NotFound)
             }
         }
-        val client = PlexClient.withoutResolver(testHttpClient(engine))
-
+        val client = PlexClient.withoutResolver(testHttpClient(engine), wallClockProbeBudget = true)
         val libraries = client.musicLibraries(
             server = PlexServer(
                 id = "id",
@@ -203,7 +202,7 @@ class PlexClientMockEngineDesktopTest {
                 )
             }
         }
-        val client = PlexClient.withoutResolver(testHttpClient(engine))
+        val client = PlexClient.withoutResolver(testHttpClient(engine), wallClockProbeBudget = true)
         val lanA = "http://172.16.1.2:32400"
         val lanB = "http://192.168.1.9:32400"
         val remote = "https://45-33-97-28.abc.plex.direct:8443"

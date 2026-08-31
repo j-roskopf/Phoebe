@@ -51,6 +51,8 @@ import kotlinx.coroutines.sync.withLock
 class PlexClient private constructor(
     private val httpClient: HttpClient,
     private val connectionResolver: PlexConnectionResolver?,
+    /** When true, probe budgets run inline (runTest-friendly [withoutResolver] clients). */
+    private val inlineProbeBudget: Boolean,
     @Suppress("UNUSED_PARAMETER") discriminator: Unit,
 ) {
     private val baseResolveMutex = Mutex()
@@ -61,7 +63,7 @@ class PlexClient private constructor(
     constructor(
         httpClient: HttpClient,
         connectionResolver: PlexConnectionResolver,
-    ) : this(httpClient, connectionResolver, Unit)
+    ) : this(httpClient, connectionResolver, inlineProbeBudget = false, Unit)
 
     private fun cachedApiBase(serverId: String): String? =
         connectionResolver?.cachedOrNull(serverId) ?: localApiBaseCache[serverId]
@@ -91,11 +93,12 @@ class PlexClient private constructor(
     }
 
     /**
-     * Wall-clock probe budget in production. [withoutResolver] clients run [block] inline so
-     * `runTest` reporters are not stranded on [kotlinx.coroutines.Dispatchers.Default].
+     * Wall-clock probe budget in production. Inline [withoutResolver] clients run [block] on the
+     * caller dispatcher so `runTest` reporters are not stranded on [kotlinx.coroutines.Dispatchers.Default].
+     * Origin races always use a real timeout even for inline clients.
      */
     private suspend fun <T> withProbeBudget(timeoutMs: Long, block: suspend () -> T): T? =
-        if (connectionResolver == null) {
+        if (inlineProbeBudget) {
             block()
         } else {
             withNetworkTimeoutOrNull(timeoutMs, block)
@@ -233,7 +236,7 @@ class PlexClient private constructor(
         val result = CompletableDeferred<String>()
         val jobs = candidates.map { base ->
             launch {
-                val ok = withProbeBudget(plexBaseProbeTimeoutMs(base, timeoutMs)) {
+                val ok = withNetworkTimeoutOrNull(plexBaseProbeTimeoutMs(base, timeoutMs)) {
                     runCatching {
                         val response = httpClient.get("$base/identity") {
                             plexServerAuth(token)
@@ -250,7 +253,7 @@ class PlexClient private constructor(
         }
         val overall = candidates.maxOf { plexBaseProbeTimeoutMs(it, timeoutMs) } + 250L
         val winner = try {
-            withProbeBudget(overall) { result.await() }
+            withNetworkTimeoutOrNull(overall) { result.await() }
         } finally {
             jobs.forEach { it.cancel() }
         }
@@ -2486,8 +2489,11 @@ class PlexClient private constructor(
 
     companion object {
         /** Test / smoke-harness factory — keeps an in-memory origin cache only. */
-        fun withoutResolver(httpClient: HttpClient): PlexClient =
-            PlexClient(httpClient, null, Unit)
+        fun withoutResolver(
+            httpClient: HttpClient,
+            wallClockProbeBudget: Boolean = false,
+        ): PlexClient =
+            PlexClient(httpClient, null, inlineProbeBudget = !wallClockProbeBudget, Unit)
 
         const val LibraryIdentifier = "com.plexapp.plugins.library"
         const val PlayQueueMetadataBatchSize = 25
