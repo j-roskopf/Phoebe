@@ -29,6 +29,7 @@ import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import javax.sound.sampled.AudioFormat
@@ -165,8 +166,11 @@ class DesktopAudioPlayer(
         val closeLineOnStop: Boolean = true,
     ) {
         val stopped = AtomicBoolean(false)
+        val pendingWrites = LinkedBlockingQueue<ByteArray>()
         @Volatile
         var writtenPcmBytes: Long = stream.format.pcmBytesForDurationMs(startPositionMs)
+        @Volatile
+        var decodedPcmBytes: Long = writtenPcmBytes
         @Volatile
         var lastWriteAtNs: Long = System.nanoTime()
         @Volatile
@@ -183,6 +187,27 @@ class DesktopAudioPlayer(
         private var pausedDurationNs: Long = 0L
         @Volatile
         private var lineTransferred = false
+        private var writeWorker: Thread? = null
+
+        fun startWriteWorker() {
+            if (writeWorker != null) return
+            writeWorker = Thread(
+                {
+                    while (!stopped.get() || pendingWrites.isNotEmpty()) {
+                        val chunk = pendingWrites.poll(50L, TimeUnit.MILLISECONDS) ?: continue
+                        val written = runCatching { line.write(chunk, 0, chunk.size) }.getOrDefault(0)
+                        if (written > 0) {
+                            writtenPcmBytes += written.toLong()
+                            lastWriteAtNs = System.nanoTime()
+                        }
+                    }
+                },
+                "Phoebe-sampled-stream-write",
+            ).apply {
+                isDaemon = true
+                start()
+            }
+        }
 
         fun playbackPositionMs(nowNs: Long = System.nanoTime()): Long {
             val effectiveNowNs = pausedAtNs ?: nowNs
@@ -207,6 +232,9 @@ class DesktopAudioPlayer(
         fun stop() {
             stopped.set(true)
             paused = false
+            writeWorker?.join(2_000L)
+            writeWorker = null
+            pendingWrites.clear()
             if (closeLineOnStop && !lineTransferred) {
                 runCatching { line.stop() }
                 runCatching { line.flush() }
@@ -921,6 +949,7 @@ class DesktopAudioPlayer(
                 if (!incoming.line.isRunning) {
                     incoming.line.start()
                 }
+                incoming.startWriteWorker()
                 if (firstBuffer != null && firstBufferLength > 0) {
                     writeSampledStreamBuffer(incoming, firstBuffer, firstBufferLength, generation)
                 }
@@ -2263,6 +2292,7 @@ class DesktopAudioPlayer(
         diagnostics.engineSelected(PlaybackEnginePath.SampledStream)
         applyVolumeToLine(line, effectiveOutputVolume())
         line.start()
+        playback.startWriteWorker()
         if (firstRead > 0) {
             writeSampledStreamBuffer(
                 playback = playback,
@@ -2694,7 +2724,7 @@ class DesktopAudioPlayer(
         )
         pcmFloatSamples(buffer, length, playback.stream.format)?.let { samples ->
             val timestampMs = playback.stream.format.durationMsForPcmBytes(
-                playback.writtenPcmBytes + length.coerceAtLeast(0),
+                playback.decodedPcmBytes + length.coerceAtLeast(0),
             )
             publishAudioAnalysisPcm(
                 samples = samples,
@@ -2703,9 +2733,8 @@ class DesktopAudioPlayer(
                 timestampMs = timestampMs,
             )
         }
-        val written = playback.line.write(buffer, 0, length).coerceAtLeast(0)
-        playback.lastWriteAtNs = System.nanoTime()
-        playback.writtenPcmBytes += written.toLong()
+        playback.decodedPcmBytes += length.coerceAtLeast(0)
+        playback.pendingWrites.offer(buffer.copyOf(length))
         if (!playback.reportedEnergy) {
             val rms = pcmRms(buffer.copyOf(length), playback.stream.format)
             if (rms > 0.0 && rms.isFinite()) {
