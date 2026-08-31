@@ -50,23 +50,24 @@ fi
 
 pactl set-default-sink phoebe_null
 
-# Null sinks stay idle until a stream plays; monitor capture and JavaSound output
-# then block or time out in visualizer regression tests. Keep a quiet feed running.
-if command -v ffmpeg >/dev/null 2>&1; then
-  ffmpeg -nostdin -hide_banner -loglevel error \
-    -f lavfi -i anullsrc=r=22050:cl=mono \
-    -f pulse phoebe_null &
-  feed_pid=$!
-  for _ in $(seq 1 30); do
-    if pactl list sink-inputs short 2>/dev/null | grep -q .; then
-      break
-    fi
-    sleep 0.1
-  done
-  echo "Started phoebe_null silence feed (pid=${feed_pid})"
+# Null sinks stay idle until a stream plays; monitor capture then times out.
+# Loop a silent source into the sink so `.monitor` yields PCM without blocking
+# JavaSound playback on the same sink during sampled-stream tests.
+if ! pactl list short sources | awk '{print $2}' | grep -qx "phoebe_silent"; then
+  pactl load-module module-null-source \
+    source_name=phoebe_silent \
+    source_properties=device.description=PhoebeSilentSource >/dev/null
+fi
+if ! pactl list short modules | grep -q "source=phoebe_silent"; then
+  pactl load-module module-loopback \
+    source=phoebe_silent.monitor \
+    sink=phoebe_null \
+    latency_msec=50 \
+    adjust_time=1 >/dev/null
 fi
 
 echo "PulseAudio default sink:"
 pactl info | sed -n '/Default Sink/p'
 pactl list short sinks
-pactl list short sink-inputs
+pactl list short sources
+pactl list short modules | rg "null-sink|null-source|loopback" || true
