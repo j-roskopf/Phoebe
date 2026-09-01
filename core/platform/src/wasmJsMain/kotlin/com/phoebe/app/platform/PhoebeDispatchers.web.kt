@@ -8,4 +8,8 @@ actual object PhoebeDispatchers {
     actual val io: CoroutineDispatcher = Dispatchers.Default
 }
 
-actual fun secureRandomBytes(size: Int): ByteArray = ByteArray(size) { kotlin.js.Math.random().times(256).toInt().toByte() }
+@JsFun("(length) => Array.from(crypto.getRandomValues(new Uint8Array(length))).join(',')")
+private external fun secureRandomValuesJs(length: Int): String
+
+actual fun secureRandomBytes(size: Int): ByteArray =
+    secureRandomValuesJs(size).split(',').map { it.toInt().toByte() }.toByteArray()
