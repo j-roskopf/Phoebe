@@ -342,6 +342,7 @@ fun ProgressLine(
     maxBarSlots: Int = 140,
 ) {
     val safeDuration = max(durationMs, 1L)
+    val latestOnSeek = rememberUpdatedState(onSeek)
     var scrubPositionMs by remember { mutableStateOf<Long?>(null) }
     val isScrubbing = scrubPositionMs != null
     val displayPositionMs = scrubPositionMs ?: positionMs
@@ -353,7 +354,7 @@ fun ProgressLine(
     }
 
     val seekModifier = if (onSeek != null && durationMs > 0L) {
-        Modifier.pointerInput(durationMs, onSeek) {
+        Modifier.pointerInput(durationMs) {
             fun offsetToMs(x: Float): Long {
                 val frac = (x / size.width).coerceIn(0f, 1f)
                 return (durationMs * frac).toLong()
@@ -364,14 +365,14 @@ fun ProgressLine(
                 var scrubMs = offsetToMs(down.position.x)
                 val committedMs = scrubMs
                 scrubPositionMs = scrubMs
-                onSeek(scrubMs)
+                latestOnSeek.value?.invoke(scrubMs)
                 val pointerId = down.id
                 while (true) {
                     val event = awaitPointerEvent()
                     val change = event.changes.firstOrNull { it.id == pointerId } ?: break
                     if (!change.pressed) {
                         if (scrubMs != committedMs) {
-                            onSeek(scrubMs)
+                            latestOnSeek.value?.invoke(scrubMs)
                         }
                         scrubPositionMs = null
                         break

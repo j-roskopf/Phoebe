@@ -380,7 +380,6 @@ private class AndroidCastController : CastController {
         val client = session.remoteMediaClient
         client?.registerCallback(remoteMediaClientListener)
         client?.requestStatus()
-        suspendLocalPlayback()
         mutableState.update {
             it.copy(
                 isAvailable = true,
@@ -608,7 +607,10 @@ private class AndroidCastController : CastController {
             }
         }
         publishCastMediaSessionState()
-        if (previous.isConnected || mutableState.value.isConnected) {
+        val receiverHasMedia = client.mediaInfo != null || queueItems.isNotEmpty() || remoteTrack != null
+        if ((previous.isConnected || mutableState.value.isConnected) &&
+            (receiverHasMedia || isPlaying || isBuffering)
+        ) {
             suspendLocalPlayback()
         }
     }

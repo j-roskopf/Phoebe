@@ -47,6 +47,11 @@ internal fun shouldIgnoreAndroidServiceEndedCallback(
     hasCrossfadePlayer: Boolean,
 ): Boolean = crossfadeOwnedTrackId != null && hasCrossfadePlayer
 
+internal fun playbackRetryPositionMs(
+    platformPositionMs: Long,
+    pendingSeekPositionMs: Long?,
+): Long = (pendingSeekPositionMs ?: platformPositionMs).coerceAtLeast(0L)
+
 object AndroidAudioPlayerHolder {
     private val player: AndroidAudioPlayer by lazy { AndroidAudioPlayer() }
 
@@ -1533,9 +1538,13 @@ class AndroidAudioPlayer(
             delay(delayMs)
             if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
             val uri = currentStreamUri() ?: return@launch
-            val positionMs = controllerMutex.withLock {
+            val platformPositionMs = controllerMutex.withLock {
                 activeLocalPlayer()?.currentPosition?.coerceAtLeast(0L) ?: 0L
             }
+            val pendingSeekPositionMs = pendingPlatformSeek
+                ?.takeIf { it.matches(generation, state.value.currentTrack?.id) }
+                ?.positionMs
+            val positionMs = playbackRetryPositionMs(platformPositionMs, pendingSeekPositionMs)
             applyPlatformPlayback(
                 positionMs = positionMs,
                 durationMs = state.value.durationMs,
