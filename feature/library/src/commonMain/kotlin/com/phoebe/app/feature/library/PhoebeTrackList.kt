@@ -58,6 +58,7 @@ fun TrackList(
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
     libraryColumns: LibraryColumnVisibility = FullTrackMetadataColumns,
     showLoadingWhenEmpty: Boolean = true,
     onMoveTrack: ((Int, Int) -> Unit)? = null,
@@ -117,6 +118,7 @@ fun TrackList(
                         },
                         onPlay = { onPlayTracks(displayTracks, index) },
                         onAddToUpNext = { onAddToUpNext(track) },
+                        onAddToEndOfQueue = { onAddToEndOfQueue(track) },
                         onDownload = { onDownload(track) },
                         modifier = if (reorderEnabled) reorderState.itemModifier(track) else Modifier.animateItem(),
                         leadingHandle = if (reorderEnabled) {
@@ -141,6 +143,7 @@ fun TrackList(
                             }
                         },
                         onAddToUpNext = { onAddToUpNext(track) },
+                        onAddToEndOfQueue = { onAddToEndOfQueue(track) },
                         onDownload = { onDownload(track) },
                         modifier = if (reorderEnabled) reorderState.itemModifier(track) else Modifier.animateItem(),
                         leadingHandle = if (reorderEnabled) {
@@ -165,6 +168,7 @@ fun ContentTrackRow(
     onPlay: () -> Unit,
     onAddToUpNext: () -> Unit,
     onDownload: () -> Unit,
+    onAddToEndOfQueue: () -> Unit = {},
     modifier: Modifier = Modifier,
     compactLayout: Boolean = false,
     isNowPlaying: Boolean = false,
@@ -371,6 +375,7 @@ fun ContentTrackRow(
             onAddToUpNext = onAddToUpNext,
             onDownload = onDownload,
             track = track,
+            onAddToEndOfQueue = onAddToEndOfQueue,
         )
     }
 }

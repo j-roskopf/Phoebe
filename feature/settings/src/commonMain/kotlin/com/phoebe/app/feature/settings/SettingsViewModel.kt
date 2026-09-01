@@ -133,4 +133,18 @@ class SettingsViewModel : ViewModel() {
     fun onHomeScreenLayoutMode(mode: HomeScreenLayoutMode) {
         mutableState.update { it?.copy(homeScreenLayoutMode = mode) }
     }
+
+    fun onRemoteControlHostEnabled(enabled: Boolean) {
+        mutableState.update { it?.copy(appSettings = it.appSettings.copy(remoteControlHostEnabled = enabled)) }
+    }
+
+    fun onRemoteControlHostName(name: String) {
+        mutableState.update { it?.copy(appSettings = it.appSettings.copy(remoteControlHostName = name)) }
+    }
+
+    fun onRevokePairedDevice(deviceId: String) {
+        mutableState.update { state ->
+            if (state == null) null else state.copy(pairedDevices = state.pairedDevices.filterNot { it.deviceId == deviceId })
+        }
+    }
 }

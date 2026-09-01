@@ -36,6 +36,7 @@ enum class PhoebeIcon {
     Equalizer,
     Queue,
     Cast,
+    RemoteDevice,
     Download,
     Repeat,
     Drag,

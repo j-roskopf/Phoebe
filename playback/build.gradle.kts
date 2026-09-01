@@ -38,6 +38,7 @@ kotlin {
                 implementation(project(":data:providers:plex"))
                 implementation(project(":data:providers:jellyfin"))
                 implementation(project(":data:providers:subsonic"))
+                implementation(project(":data:remote-control"))
                 implementation(project(":data:session"))
                 implementation(project(":data:settings"))
                 implementation(project(":domain"))

@@ -112,6 +112,7 @@ enum class SettingsCategory(
     Account("Account", "Profile and plans", PhoebeIcon.Music),
     Personalization("Personalization", "Mixes and recommendations", PhoebeIcon.Person),
     AudioPlayback("Audio Playback", "Transitions and EQ", PhoebeIcon.Equalizer),
+    RemoteControl("Remote Control", "LAN host and devices", PhoebeIcon.RemoteDevice),
     Library("Library", "Organize your library", PhoebeIcon.Library),
     Downloads("Downloads", "Manage downloads", PhoebeIcon.Download),
     Appearance("Appearance", "Theme and visuals", PhoebeIcon.Grid),
@@ -189,6 +190,13 @@ fun SettingsDesktopView(
     appUpdateState: AppUpdateState = AppUpdateState.Idle,
     onCheckForUpdates: () -> Unit = {},
     onInstallUpdate: () -> Unit = {},
+    pairedDevices: List<com.phoebe.app.remote.PairedRemoteDevice> = emptyList(),
+    onRemoteControlHostEnabled: (Boolean) -> Unit = {},
+    onRemoteControlHostName: (String) -> Unit = {},
+    onRevokePairedDevice: (String) -> Unit = {},
+    remoteControlClientState: com.phoebe.app.remote.RemoteControlSessionState = com.phoebe.app.remote.RemoteControlSessionState(),
+    onConnectRemoteControl: () -> Unit = {},
+    onDisconnectRemoteControl: () -> Unit = {},
     modifier: Modifier = Modifier,
     initialCategory: SettingsCategory = SettingsCategory.AudioPlayback,
 ) {
@@ -316,6 +324,16 @@ fun SettingsDesktopView(
                         settings = appSettings,
                         onNotifyWhenDownloadFinishes = onNotifyWhenDownloadFinishes,
                     )
+                    SettingsCategory.RemoteControl -> RemoteControlSettingsCard(
+                        appSettings = appSettings,
+                        pairedDevices = pairedDevices,
+                        onRemoteControlHostEnabled = onRemoteControlHostEnabled,
+                        onRemoteControlHostName = onRemoteControlHostName,
+                        onRevokePairedDevice = onRevokePairedDevice,
+                        remoteControlClientState = remoteControlClientState,
+                        onConnectRemoteControl = onConnectRemoteControl,
+                        onDisconnectRemoteControl = onDisconnectRemoteControl,
+                    )
                     SettingsCategory.About -> AboutSettingsCard(
                         updateState = appUpdateState,
                         onCheckForUpdates = onCheckForUpdates,
@@ -396,6 +414,13 @@ fun SettingsMobileView(
     appUpdateState: AppUpdateState = AppUpdateState.Idle,
     onCheckForUpdates: () -> Unit = {},
     onInstallUpdate: () -> Unit = {},
+    pairedDevices: List<com.phoebe.app.remote.PairedRemoteDevice> = emptyList(),
+    onRemoteControlHostEnabled: (Boolean) -> Unit = {},
+    onRemoteControlHostName: (String) -> Unit = {},
+    onRevokePairedDevice: (String) -> Unit = {},
+    remoteControlClientState: com.phoebe.app.remote.RemoteControlSessionState = com.phoebe.app.remote.RemoteControlSessionState(),
+    onConnectRemoteControl: () -> Unit = {},
+    onDisconnectRemoteControl: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -472,6 +497,18 @@ fun SettingsMobileView(
             onAudioProcessingSettings = onAudioProcessingSettings,
             onStreamingPolicySettings = onStreamingPolicySettings,
             onShowUltimateGuitarButton = onShowUltimateGuitarButton,
+            compact = true,
+        )
+        SectionLabel("REMOTE CONTROL (LAN)", PhoebeUi.accentLight)
+        RemoteControlSettingsCard(
+            appSettings = appSettings,
+            pairedDevices = pairedDevices,
+            onRemoteControlHostEnabled = onRemoteControlHostEnabled,
+            onRemoteControlHostName = onRemoteControlHostName,
+            onRevokePairedDevice = onRevokePairedDevice,
+            remoteControlClientState = remoteControlClientState,
+            onConnectRemoteControl = onConnectRemoteControl,
+            onDisconnectRemoteControl = onDisconnectRemoteControl,
             compact = true,
         )
         SectionLabel("DOWNLOADS", PhoebeUi.accentLight)
@@ -2963,4 +3000,220 @@ private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {
             .padding(20.dp),
         content = content,
     )
+}
+
+@Composable
+private fun RemoteControlSettingsCard(
+    appSettings: AppSettings,
+    pairedDevices: List<com.phoebe.app.remote.PairedRemoteDevice>,
+    onRemoteControlHostEnabled: (Boolean) -> Unit,
+    onRemoteControlHostName: (String) -> Unit,
+    onRevokePairedDevice: (String) -> Unit,
+    remoteControlClientState: com.phoebe.app.remote.RemoteControlSessionState = com.phoebe.app.remote.RemoteControlSessionState(),
+    onConnectRemoteControl: () -> Unit = {},
+    onDisconnectRemoteControl: () -> Unit = {},
+    compact: Boolean = false,
+) {
+    var hostNameInput by remember(appSettings.remoteControlHostName) {
+        mutableStateOf(appSettings.remoteControlHostName)
+    }
+
+    SettingsCard {
+        Text("Control Another Device", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Discover and control playback on other Phoebe players on your local network.",
+            color = PhoebeUi.mutedText,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(bottom = 12.dp),
+        )
+
+        if (remoteControlClientState.isConnected) {
+            val connectedShape = RoundedCornerShape(10.dp)
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(connectedShape)
+                    .background(PhoebeUi.accent.copy(alpha = 0.12f))
+                    .border(BorderStroke(1.dp, PhoebeUi.accentLight.copy(alpha = 0.35f)), connectedShape)
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        "Currently controlling",
+                        color = PhoebeUi.secondaryText,
+                        fontSize = 11.sp,
+                    )
+                    Text(
+                        remoteControlClientState.hostName ?: "Remote Host",
+                        color = PhoebeUi.primaryText,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(onClick = onConnectRemoteControl) {
+                        Text("Switch", color = PhoebeUi.accentLight, fontSize = 12.sp)
+                    }
+                    TextButton(onClick = onDisconnectRemoteControl) {
+                        Text("Disconnect", color = Color(0xFFEF4444), fontSize = 12.sp)
+                    }
+                }
+            }
+        } else {
+            Row(
+                Modifier
+                    .clip(RoundedCornerShape(PhoebeUi.shapes.controlRadius))
+                    .background(PhoebeUi.accentLight)
+                    .clickable(onClick = onConnectRemoteControl)
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                PhoebeIconView(PhoebeIcon.RemoteDevice, tint = Color.White, modifier = Modifier.size(16.dp))
+                Text(
+                    "Connect to a Remote Device...",
+                    color = Color.White,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                )
+            }
+        }
+
+        Spacer(Modifier.height(24.dp))
+        Text("Remote Control Host", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "Allow this device to be controlled by other Phoebe instances on your local network.",
+            color = PhoebeUi.mutedText,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(bottom = 14.dp),
+        )
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text("Allow this device to be controlled", color = PhoebeUi.primaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                Text(
+                    "Enables the LAN remote server on this player",
+                    color = PhoebeUi.secondaryText,
+                    fontSize = 12.sp,
+                )
+            }
+            Switch(
+                checked = appSettings.remoteControlHostEnabled,
+                onCheckedChange = onRemoteControlHostEnabled,
+                colors = SwitchDefaults.colors(
+                    checkedThumbColor = Color.White,
+                    checkedTrackColor = PhoebeUi.accentLight,
+                    uncheckedThumbColor = Color.White,
+                    uncheckedTrackColor = PhoebeUi.progressTrack,
+                ),
+            )
+        }
+
+        if (appSettings.remoteControlHostEnabled) {
+            Spacer(Modifier.height(16.dp))
+            Text("Host Name", color = PhoebeUi.primaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(
+                "Name advertised to controller devices (defaults to device name)",
+                color = PhoebeUi.secondaryText,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(bottom = 8.dp),
+            )
+            val shape = RoundedCornerShape(PhoebeUi.shapes.controlRadius)
+            BasicTextField(
+                value = hostNameInput,
+                onValueChange = {
+                    hostNameInput = it
+                    onRemoteControlHostName(it)
+                },
+                textStyle = TextStyle(color = PhoebeUi.primaryText, fontSize = 13.sp),
+                cursorBrush = SolidColor(PhoebeUi.accentLight),
+                singleLine = true,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(shape)
+                    .background(PhoebeUi.modalField)
+                    .border(BorderStroke(1.dp, PhoebeUi.border), shape)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                decorationBox = { innerTextField ->
+                    if (hostNameInput.isBlank()) {
+                        Text(
+                            text = com.phoebe.app.platform.currentDeviceName(),
+                            color = PhoebeUi.mutedText,
+                            fontSize = 13.sp,
+                        )
+                    }
+                    innerTextField()
+                },
+            )
+
+            Spacer(Modifier.height(12.dp))
+            val localIps = remember { com.phoebe.app.platform.localHostIpAddresses() }
+            val ipText = if (localIps.isNotEmpty()) "IP: ${localIps.joinToString(", ")} • " else ""
+            Text(
+                "${ipText}TCP port 8765, discovery UDP port 8766",
+                color = PhoebeUi.mutedText,
+                fontSize = 11.sp,
+            )
+
+            Spacer(Modifier.height(20.dp))
+            Text("Paired Controller Devices", color = PhoebeUi.primaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(
+                "Devices that have been approved to control playback on this host",
+                color = PhoebeUi.secondaryText,
+                fontSize = 12.sp,
+                modifier = Modifier.padding(bottom = 10.dp),
+            )
+
+            if (pairedDevices.isEmpty()) {
+                Text(
+                    "No paired controller devices. When a new device connects, an approval prompt will appear.",
+                    color = PhoebeUi.mutedText,
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(vertical = 6.dp),
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    pairedDevices.forEach { device ->
+                        val deviceShape = RoundedCornerShape(8.dp)
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clip(deviceShape)
+                                .background(PhoebeUi.modalField)
+                                .border(BorderStroke(1.dp, PhoebeUi.border), deviceShape)
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    device.deviceName,
+                                    color = PhoebeUi.primaryText,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                )
+                                Text(
+                                    "ID: ${device.deviceId}",
+                                    color = PhoebeUi.mutedText,
+                                    fontSize = 11.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            TextButton(
+                                onClick = { onRevokePairedDevice(device.deviceId) },
+                            ) {
+                                Text("Revoke", color = PhoebeUi.accentLight, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

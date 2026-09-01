@@ -19,6 +19,7 @@ import io.ktor.client.engine.mock.respond
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.headersOf
+import java.io.IOException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
@@ -29,6 +30,9 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import kotlin.time.TimeSource
+
+/** Mirrors `javax.net.ssl.SSLHandshakeException` by name only — classification is name-based. */
+private class SSLHandshakeException(message: String) : IOException(message)
 
 class PlexConnectionResolverTest {
     private var driver: SqlDriver? = null
@@ -314,6 +318,52 @@ class PlexConnectionResolverTest {
             attemptedPaths.none { it.endsWith("/identity") },
             "HTTP 400 must not start another identity race, got $attemptedPaths",
         )
+    }
+
+    @Test
+    fun sslHandshakeFailureOnProbedRelayForgetsItAndFailsOverToLan() = runBlocking {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val lan = "http://192.168.1.9:32400"
+        val relay = "https://45-79-202-250.abc.plex.direct:8443"
+        val server = sampleServer(lan = lan, relayUris = listOf(relay))
+        val identityBody = """{"MediaContainer":{"machineIdentifier":"${server.id}"}}"""
+        var relayDataAttempts = 0
+        val engine = MockEngine { request ->
+            val isIdentity = request.url.encodedPath.endsWith("/identity")
+            when {
+                request.url.host.startsWith("45-79-202-250") && isIdentity ->
+                    respond("", HttpStatusCode.ServiceUnavailable)
+                request.url.host.startsWith("45-79-202-250") -> {
+                    relayDataAttempts++
+                    throw SSLHandshakeException("handshake failed")
+                }
+                isIdentity -> respond(
+                    content = identityBody,
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+                else -> respond(
+                    content = """{"MediaContainer":{"size":0,"Metadata":[]}}""",
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            }
+        }
+        val resolver = resolver(db, engine)
+        resolver.remember(server.id, relay)
+        val client = PlexClient(testHttpClient(engine), resolver)
+
+        client.recentTrackPlaybackStatsPage(
+            server = server,
+            library = com.phoebe.app.domain.MusicLibrary(key = "2", title = "Music"),
+            token = "token",
+            start = 0,
+            size = 50,
+        )
+
+        assertEquals(1, relayDataAttempts, "must not keep hammering the dead relay")
+        assertEquals(lan, resolver.liveProbedOrigin(server))
     }
 
     @Test

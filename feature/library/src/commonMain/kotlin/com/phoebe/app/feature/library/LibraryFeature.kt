@@ -41,6 +41,7 @@ class LibraryRouteActions(
     val onDownload: (Track) -> Unit,
     val onSearchQuery: (String) -> Unit = {},
     val onJellyfinPage: (JellyfinLibraryPageKind, Int) -> Unit = { _, _ -> },
+    val onAddToEndOfQueue: (Track) -> Unit = {},
 )
 
 @Immutable
@@ -73,6 +74,7 @@ class PlaylistDetailDesktopRouteActions(
     val onDownload: (Track) -> Unit,
     val onLibraryColumns: (LibraryColumnVisibility) -> Unit,
     val onDownloadPlaylist: (Playlist) -> Unit = {},
+    val onAddToEndOfQueue: (Track) -> Unit = {},
 )
 
 @Composable
@@ -99,6 +101,7 @@ fun LibraryDesktopRoute(
         onSearchQuery = actions.onSearchQuery,
         onAddToUpNext = actions.onAddToUpNext,
         onDownload = actions.onDownload,
+        onAddToEndOfQueue = actions.onAddToEndOfQueue,
         modifier = modifier,
     )
 }
@@ -130,6 +133,7 @@ fun LibraryMobileRoute(
         onPlayTracks = actions.onPlayTracks,
         onAddToUpNext = actions.onAddToUpNext,
         onDownload = actions.onDownload,
+        onAddToEndOfQueue = actions.onAddToEndOfQueue,
         modifier = modifier,
         topBar = topBar,
     )
@@ -156,6 +160,7 @@ fun PlaylistDetailDesktopRoute(
         onAddToUpNext = actions.onAddToUpNext,
         onDownload = actions.onDownload,
         onLibraryColumns = actions.onLibraryColumns,
+        onAddToEndOfQueue = actions.onAddToEndOfQueue,
         modifier = modifier,
         edgePadding = edgePadding,
         headlineFontSize = headlineFontSize,

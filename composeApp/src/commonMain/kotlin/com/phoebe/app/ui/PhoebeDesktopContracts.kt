@@ -204,6 +204,7 @@ internal data class BrowseActions(
     val onShuffleAllTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks.shuffled(), 0) },
     val onAddToUpNext: (Track) -> Unit,
     val onDownload: (Track) -> Unit,
+    val onAddToEndOfQueue: (Track) -> Unit = {},
     val onDownloadArtist: (Artist) -> Unit,
     val onProbeArtistRadio: (Artist) -> Unit = {},
     val onPlayArtistRadio: (Artist) -> Unit,
@@ -271,6 +272,8 @@ internal data class SettingsUiState(
     val settingsInitialCategory: SettingsCategory = SettingsCategory.AudioPlayback,
     val listenBrainzCredentialAvailability: SecureCredentialAvailability = SecureCredentialAvailability.Unavailable,
     val appUpdateState: AppUpdateState = AppUpdateState.Idle,
+    val pairedDevices: List<com.phoebe.app.remote.PairedRemoteDevice> = emptyList(),
+    val remoteControlClientState: com.phoebe.app.remote.RemoteControlSessionState = com.phoebe.app.remote.RemoteControlSessionState(),
 )
 
 internal data class SettingsActions(
@@ -327,4 +330,9 @@ internal data class SettingsActions(
     val onEventSettings: (com.phoebe.app.domain.EventSettings) -> Unit = {},
     val onCheckForUpdates: () -> Unit = {},
     val onInstallUpdate: () -> Unit = {},
+    val onRemoteControlHostEnabled: (Boolean) -> Unit = {},
+    val onRemoteControlHostName: (String) -> Unit = {},
+    val onRevokePairedDevice: (String) -> Unit = {},
+    val onConnectRemoteControl: () -> Unit = {},
+    val onDisconnectRemoteControl: () -> Unit = {},
 )

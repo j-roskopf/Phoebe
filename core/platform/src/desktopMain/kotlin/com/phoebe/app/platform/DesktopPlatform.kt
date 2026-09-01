@@ -402,6 +402,63 @@ actual fun schedulePlatformDownloadRunner() = Unit
 
 actual fun requestNotificationPermission() {}
 
+actual fun currentDeviceName(): String {
+    val hostname = runCatching { InetAddress.getLocalHost().hostName }.getOrNull()
+    return hostname?.substringBefore('.')?.takeIf { it.isNotBlank() }
+        ?: System.getenv("COMPUTERNAME")
+        ?: System.getenv("HOSTNAME")
+        ?: "Desktop"
+}
+
+actual fun currentDeviceId(): String {
+    val storageDir = desktopStorageRoot()
+    val idFile = java.io.File(storageDir, "phoebe-device-id.txt")
+    if (idFile.exists()) {
+        val id = idFile.readText().trim()
+        if (id.isNotBlank()) return id
+    }
+    val newId = "desktop-" + java.util.UUID.randomUUID().toString()
+    runCatching {
+        storageDir.mkdirs()
+        idFile.writeText(newId)
+    }
+    return newId
+}
+
+actual fun acquireMulticastLock(): AutoCloseable? = null
+
+actual fun getBroadcastAddresses(): List<String> = runCatching {
+    val broadcasts = mutableListOf<String>()
+    val interfaces = NetworkInterface.getNetworkInterfaces() ?: return broadcasts
+    for (iface in interfaces) {
+        if (!iface.isUp || iface.isLoopback || iface.isVirtual || iface.isPointToPoint) continue
+        for (addr in iface.interfaceAddresses) {
+            val bcast = addr.broadcast
+            if (bcast != null) {
+                val host = bcast.hostAddress
+                if (!host.isNullOrBlank() && !host.contains('%')) {
+                    broadcasts.add(host)
+                }
+            }
+        }
+    }
+    broadcasts.distinct()
+}.getOrDefault(emptyList())
+
+actual fun localHostIpAddresses(): List<String> = runCatching {
+    val addresses = mutableListOf<String>()
+    val interfaces = NetworkInterface.getNetworkInterfaces() ?: return addresses
+    for (iface in interfaces) {
+        if (!iface.isUp || iface.isLoopback || iface.isVirtual || iface.isPointToPoint) continue
+        for (addr in iface.inetAddresses) {
+            if (addr is Inet4Address && !addr.isLoopbackAddress && !addr.isLinkLocalAddress) {
+                addr.hostAddress?.takeIf { it.isNotBlank() }?.let { addresses.add(it) }
+            }
+        }
+    }
+    addresses.distinct()
+}.getOrDefault(emptyList())
+
 actual fun isDebugBuild(): Boolean =
     System.getProperty("phoebe.debug")?.toBooleanStrictOrNull() ?: false
 

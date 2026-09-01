@@ -2225,6 +2225,9 @@ class PlexClient private constructor(
                 "Connect" in name ||
                 "Unresolved" in name ||
                 "UnknownHost" in name ||
+                "SSL" in name ||
+                "Certificate" in name ||
+                "Handshake" in name ||
                 name == "SocketException"
             ) {
                 return true

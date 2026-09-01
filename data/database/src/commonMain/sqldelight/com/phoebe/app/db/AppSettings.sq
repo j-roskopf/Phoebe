@@ -21,7 +21,9 @@ CREATE TABLE AppSettingsRow (
     downloadPolicySettings TEXT NOT NULL DEFAULT '{"quality":"Original","maxConcurrentDownloads":3,"autoRetryFailedDownloads":true,"wifiOnly":false,"wifiOnlyConfigured":false,"notifyOnCompletion":true}',
     streamingPolicySettings TEXT NOT NULL DEFAULT '{"quality":"Original","useDataSaverOnCellular":true,"preferLocalNetwork":false}',
     audioProcessingSettings TEXT NOT NULL DEFAULT '{"gaplessEnabled":false,"crossfeedEnabled":false,"crossfeedAmount":0.35,"selectedOutputDeviceId":null,"exclusiveMode":false,"bitPerfectPreference":false}',
-    eventSettings TEXT NOT NULL DEFAULT '{"provider":"Ticketmaster","backendTarget":"Production","localBackendUrl":null}'
+    eventSettings TEXT NOT NULL DEFAULT '{"provider":"Ticketmaster","backendTarget":"Production","localBackendUrl":null}',
+    remoteControlHostEnabled INTEGER NOT NULL DEFAULT 0,
+    remoteControlHostName TEXT NOT NULL DEFAULT ''
 );
 
 selectCurrent:
@@ -49,8 +51,10 @@ INSERT OR REPLACE INTO AppSettingsRow(
     downloadPolicySettings,
     streamingPolicySettings,
     audioProcessingSettings,
-    eventSettings
-) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    eventSettings,
+    remoteControlHostEnabled,
+    remoteControlHostName
+) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 clear:
 DELETE FROM AppSettingsRow;

@@ -457,6 +457,7 @@ fun LibraryDesktopView(
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
     modifier: Modifier = Modifier,
     detailWidth: androidx.compose.ui.unit.Dp = 278.dp,
     searchQuery: String = "",
@@ -628,6 +629,7 @@ fun LibraryDesktopView(
                         },
                         onPlay = { index -> onPlayTracks(trackPage.items, index) },
                         onAddToUpNext = onAddToUpNext,
+                        onAddToEndOfQueue = onAddToEndOfQueue,
                         onDownload = onDownload,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                     )
@@ -2294,6 +2296,7 @@ private fun SongsTable(
     onPlay: (Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val indexEntries = remember(tracks, sortBy, ascending) {
@@ -2330,6 +2333,7 @@ private fun SongsTable(
                         val onSelectClick = remember(track, onSelect) { { onSelect(track) } }
                         val onPlayClick = remember(index, onPlay) { { onPlay(index) } }
                         val onAddClick = remember(track, onAddToUpNext) { { onAddToUpNext(track) } }
+                        val onAddToEndClick = remember(track, onAddToEndOfQueue) { { onAddToEndOfQueue(track) } }
                         val onDownloadClick = remember(track, onDownload) { { onDownload(track) } }
                         SongRow(
                             track = track,
@@ -2339,6 +2343,7 @@ private fun SongsTable(
                             onPlay = onPlayClick,
                             onAddToUpNext = onAddClick,
                             onDownload = onDownloadClick,
+                            onAddToEndOfQueue = onAddToEndClick,
                         )
                     }
                 }
@@ -2416,6 +2421,7 @@ fun SongRow(
     sharedKey: String? = "song:${track.id}",
     playCount: Long? = null,
     lastPlayedMs: Long? = null,
+    onAddToEndOfQueue: (() -> Unit)? = null,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
     val hasMenu = true
@@ -2586,6 +2592,7 @@ fun SongRow(
                 onAddToUpNext = onAddToUpNext,
                 onDownload = onDownload,
                 track = track,
+                onAddToEndOfQueue = onAddToEndOfQueue,
             )
         }
     }

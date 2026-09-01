@@ -113,7 +113,7 @@ fun DesktopTransport(
         !track.id.startsWith("radio:") &&
         listenBrainzFeedbackTarget.enabled &&
         listenBrainzFeedbackTarget.trackId == track.id
-    val showCastControls = !isDesktopPlatform() || castState.isAvailable || castState.isConnected
+    val showCastControls = true
     var equalizerOpen by remember { mutableStateOf(false) }
     var transportOptionsOpen by remember { mutableStateOf(false) }
     if (equalizerOpen) {
@@ -222,7 +222,15 @@ fun DesktopTransport(
                     track?.let { trackNavigationActions.onOpenAlbumForTrack(it) }
                 },
             )
-            if (!overflowSecondaryControls) {
+            if (remotePlaybackTarget != null) {
+                Text(
+                    text = if (remotePlaybackTarget.startsWith("Music Assistant:") || remotePlaybackTarget.startsWith("Controlling ")) remotePlaybackTarget else "Controlling $remotePlaybackTarget",
+                    color = PhoebeUi.accentLight,
+                    fontSize = 11.sp,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else if (!overflowSecondaryControls) {
                 AudioQualityText(
                     track = track,
                     compact = true,
@@ -356,9 +364,9 @@ fun DesktopTransport(
             } else {
                 if (showCastControls) {
                     CastIcon(
-                        active = castState.isConnected,
+                        active = castState.isConnected || remotePlaybackTarget != null,
                         loading = castState.isBuffering,
-                        enabled = castState.isAvailable || castState.isConnected,
+                        enabled = true,
                         onClick = onCast,
                     )
                 }

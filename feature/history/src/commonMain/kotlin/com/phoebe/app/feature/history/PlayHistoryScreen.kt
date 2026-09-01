@@ -79,6 +79,7 @@ fun PlayHistoryScreen(
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
 ) {
     var sortBy by remember(kind) { mutableStateOf(LibrarySortBy.PlaylistOrder) }
     var ascending by remember(kind) { mutableStateOf(false) }
@@ -186,6 +187,7 @@ fun PlayHistoryScreen(
                         onAddToUpNext = onAddToUpNext,
                         onDownload = onDownload,
                         modifier = Modifier.fillMaxSize(),
+                        onAddToEndOfQueue = onAddToEndOfQueue,
                     )
                 }
             }
@@ -265,6 +267,7 @@ private fun PlayHistoryTracks(
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     modifier: Modifier = Modifier,
+    onAddToEndOfQueue: (Track) -> Unit = {},
 ) {
     if (rows.isEmpty()) {
         if (pageHeader == null && sectionHeader == null) {
@@ -307,6 +310,7 @@ private fun PlayHistoryTracks(
                         onDownload = { onDownload(row.track) },
                         playCount = row.playCount.takeIf { showPlayCount },
                         lastPlayedMs = row.lastPlayedMs.takeIf { !showPlayCount },
+                        onAddToEndOfQueue = { onAddToEndOfQueue(row.track) },
                     )
                 }
             } else {
@@ -336,6 +340,7 @@ private fun PlayHistoryTracks(
                             onDownload = { onDownload(row.track) },
                             playCount = row.playCount.takeIf { showPlayCount },
                             lastPlayedMs = row.lastPlayedMs.takeIf { !showPlayCount },
+                            onAddToEndOfQueue = { onAddToEndOfQueue(row.track) },
                         )
                     }
                 }

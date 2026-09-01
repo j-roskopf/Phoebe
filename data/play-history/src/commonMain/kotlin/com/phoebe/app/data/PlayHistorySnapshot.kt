@@ -36,6 +36,12 @@ data class HomePlayedTrack(
     val track: Track,
     val lastPlayedMs: Long? = null,
     val playCount: Long = 0L,
+    /**
+     * True when [track] is a denormalized stand-in built from the play-history row itself
+     * (title/artist only, no artwork) because the catalog hasn't resolved this id yet. The
+     * real, catalog-backed track — including artwork — replaces it on the next recomposition.
+     */
+    val isPlaceholder: Boolean = false,
 )
 
 private data class MostPlayedScore(
@@ -159,11 +165,12 @@ private fun recentlyPlayedTracks(
         trackIndex = trackIndex,
         trackId = RecentlyPlayedEntry::trackId,
         dedupeByIdentity = true,
-    ) { entry, track ->
+    ) { entry, track, isPlaceholder ->
         HomePlayedTrack(
             track = track,
             lastPlayedMs = entry.lastPlayedMs,
             playCount = playHistory.playCountByTrack[entry.trackId] ?: 0L,
+            isPlaceholder = isPlaceholder,
         )
     }
 }
@@ -207,11 +214,12 @@ private fun mostPlayedTracks(
         trackIndex = trackIndex,
         trackId = MostPlayedEntry::trackId,
         dedupeByIdentity = true,
-    ) { entry, track ->
+    ) { entry, track, isPlaceholder ->
         HomePlayedTrack(
             track = track,
             lastPlayedMs = entry.lastPlayedMs.takeIf { it > 0L },
             playCount = entry.playCount,
+            isPlaceholder = isPlaceholder,
         )
     }
 }
@@ -224,7 +232,7 @@ private fun <T> collectResolvedPlayedRows(
     trackIndex: Map<String, Track>?,
     trackId: (T) -> String,
     dedupeByIdentity: Boolean = false,
-    buildRow: (T, Track) -> HomePlayedTrack,
+    buildRow: (T, Track, Boolean) -> HomePlayedTrack,
 ): List<HomePlayedTrack> {
     if (ranked.isEmpty() || limit <= 0) return emptyList()
     if (!dedupeByIdentity) {
@@ -232,8 +240,9 @@ private fun <T> collectResolvedPlayedRows(
         val resolved = lookupTracksByIds(catalog, candidates.map(trackId).toSet(), resolvedTracksById, trackIndex)
         return candidates.mapNotNull { entry ->
             val id = trackId(entry)
-            val track = resolved[id] ?: placeholderTrackForPlayHistoryEntry(entry, id) ?: return@mapNotNull null
-            buildRow(entry, track)
+            val resolvedTrack = resolved[id]
+            val track = resolvedTrack ?: placeholderTrackForPlayHistoryEntry(entry, id) ?: return@mapNotNull null
+            buildRow(entry, track, resolvedTrack == null)
         }
     }
     val seenIdentityKeys = LinkedHashSet<String>()
@@ -247,10 +256,11 @@ private fun <T> collectResolvedPlayedRows(
         for (entry in chunk) {
             if (rows.size >= limit) break
             val id = trackId(entry)
-            val track = resolved[id] ?: placeholderTrackForPlayHistoryEntry(entry, id) ?: continue
+            val resolvedTrack = resolved[id]
+            val track = resolvedTrack ?: placeholderTrackForPlayHistoryEntry(entry, id) ?: continue
             val identityKey = track.playHistoryIdentityKey()
             if (!seenIdentityKeys.add(identityKey)) continue
-            rows += buildRow(entry, track)
+            rows += buildRow(entry, track, resolvedTrack == null)
         }
     }
     return rows

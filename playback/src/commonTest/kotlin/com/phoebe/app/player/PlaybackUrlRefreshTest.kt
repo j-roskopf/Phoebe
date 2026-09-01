@@ -1,15 +1,12 @@
-package com.phoebe.app
+package com.phoebe.app.player
 
 import com.phoebe.app.data.ArtworkAuthHolder
 import com.phoebe.app.data.ArtworkOriginHolder
 import com.phoebe.app.domain.MediaProviderType
-import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.PlexSession
 import com.phoebe.app.domain.Track
-import com.phoebe.app.player.StreamingPlaybackPolicyHolder
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 class PlaybackUrlRefreshTest {
     @Test

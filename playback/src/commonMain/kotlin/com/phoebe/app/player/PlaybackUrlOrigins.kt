@@ -9,9 +9,14 @@ import com.phoebe.app.data.isPlexRelayOrigin
 import com.phoebe.app.data.isPublicSynthesizedPlexHttpOrigin
 import com.phoebe.app.data.plexAssetPath
 import com.phoebe.app.data.reachableBaseUris
+import com.phoebe.app.data.shouldSkipAdvertisedLan
+import com.phoebe.app.domain.MediaProviderType
 import com.phoebe.app.domain.PlexServer
+import com.phoebe.app.domain.PlexSession
 import com.phoebe.app.domain.Track
+import com.phoebe.app.platform.currentNetworkIdentity
 import io.ktor.http.Url
+import io.ktor.http.encodeURLParameter
 
 private const val MaxPlaybackFallbackOrigins = 8
 
@@ -311,6 +316,120 @@ fun Track.withPlaybackOrigins(
         downloadUrl = nextDownload.ifBlank { downloadUrl },
         playbackFallbackUrls = nextFallbacks,
     )
+}
+
+fun List<Track>.withFreshPlaybackUrls(
+    session: PlexSession?,
+    liveOrigin: String? = null,
+): List<Track> {
+    if (session == null || isEmpty()) return this
+    var changed = false
+    val refreshed = map { track ->
+        val next = track.withFreshPlaybackUrls(session, liveOrigin)
+        if (next !== track) changed = true
+        next
+    }
+    return if (changed) refreshed else this
+}
+
+fun Track.withFreshPlaybackUrls(
+    session: PlexSession,
+    liveOrigin: String? = null,
+): Track {
+    val identity = currentNetworkIdentity()
+    val demoteLocalOrigins = StreamingPlaybackPolicyHolder.settings.shouldDemoteLocalOrigins(
+        identity.demotesLocalOrigins,
+    ) || session.selectedServer?.let { identity.shouldSkipAdvertisedLan(it) } == true
+    val preferred = liveOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }
+    val origins = playbackOriginCandidates(
+        server = session.selectedServer,
+        preferredOrigin = preferred,
+        demoteLocalOrigins = demoteLocalOrigins,
+    )
+    if (session.providerType == MediaProviderType.Plex &&
+        (streamUrl.isPlexMediaPathOrUrl() || downloadUrl.isPlexMediaPathOrUrl())
+    ) {
+        // Plex queues carry relative part keys only. Stamping an absolute origin here is what
+        // made a queue go stale the instant the network changed: every entry pointed at the
+        // address that happened to be live when the queue was built. The origin is bound at
+        // open time instead, in StreamingPlaybackPolicyHolder.resolvePlaybackUri.
+        return withRelativePlexPlaybackPaths()
+    }
+    val withOrigins = if (origins.isEmpty()) this else withPlaybackOrigins(origins.first(), origins.drop(1))
+    val refreshedStreamUrl = withOrigins.streamUrl.withFreshPlaybackAuth(session)
+    val refreshedDownloadUrl = withOrigins.downloadUrl.withFreshPlaybackAuth(session)
+    val refreshedFallbacks = withOrigins.playbackFallbackUrls.map { url ->
+        url.withFreshPlaybackAuth(session)
+    }.filter { it.isNotBlank() && it != refreshedStreamUrl }.distinct()
+    if (refreshedStreamUrl == streamUrl &&
+        refreshedDownloadUrl == downloadUrl &&
+        refreshedFallbacks == playbackFallbackUrls
+    ) {
+        return this
+    }
+    return withOrigins.copy(
+        streamUrl = refreshedStreamUrl,
+        downloadUrl = refreshedDownloadUrl,
+        playbackFallbackUrls = refreshedFallbacks,
+    )
+}
+
+fun String.withFreshPlaybackAuth(session: PlexSession): String {
+    if (isBlank() || session.token.isBlank()) return this
+    val parsed = runCatching { Url(this) }.getOrNull() ?: return this
+    if (parsed.protocol.name != "http" && parsed.protocol.name != "https") return this
+    return when (session.providerType) {
+        MediaProviderType.Plex -> withQueryParameter(parsed, "X-Plex-Token", session.token)
+        MediaProviderType.Jellyfin,
+        MediaProviderType.Emby -> withQueryParameter(parsed, "api_key", session.token)
+        MediaProviderType.Navidrome -> withQueryParameters(
+            parsed,
+            "u" to session.userName,
+            "p" to session.token,
+        )
+        MediaProviderType.MusicAssistant -> this
+    }
+}
+
+private fun withQueryParameter(url: Url, name: String, value: String): String =
+    withQueryParameters(url, name to value)
+
+private fun withQueryParameters(url: Url, vararg replacements: Pair<String, String>): String {
+    val original = url.toString()
+    val fragment = original.substringAfter('#', missingDelimiterValue = "")
+    val withoutFragment = original.substringBefore('#')
+    val base = withoutFragment.substringBefore('?')
+    val query = withoutFragment.substringAfter('?', missingDelimiterValue = "")
+    val replacementMap = replacements
+        .filter { (_, value) -> value.isNotBlank() }
+        .associate { (name, value) -> name to value }
+    if (replacementMap.isEmpty()) return original
+    val seen = mutableSetOf<String>()
+    val pairs = query
+        .split('&')
+        .filter { it.isNotBlank() }
+        .mapNotNull { pair ->
+            val name = pair.substringBefore('=')
+            val replacement = replacementMap[name] ?: return@mapNotNull pair
+            seen += name
+            "$name=${replacement.encodeURLParameter()}"
+        }
+        .toMutableList()
+    replacementMap.forEach { (name, value) ->
+        if (name !in seen) pairs += "$name=${value.encodeURLParameter()}"
+    }
+    val rebuilt = buildString {
+        append(base)
+        if (pairs.isNotEmpty()) {
+            append('?')
+            append(pairs.joinToString("&"))
+        }
+        if (fragment.isNotBlank()) {
+            append('#')
+            append(fragment)
+        }
+    }
+    return rebuilt
 }
 
 private fun ensurePlexDownloadQuery(pathOrUrl: String): String {

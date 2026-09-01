@@ -98,6 +98,8 @@ private val SecureCredentialKey.account: String
         SecureCredentialKey.ListenBrainzUserToken -> "userToken"
         SecureCredentialKey.LastFmSharedSecret -> "lastFmSharedSecret"
         SecureCredentialKey.LastFmSessionKey -> "lastFmSessionKey"
+        SecureCredentialKey.RemoteControlPairedDevices -> "remoteControlPairedDevices"
+        SecureCredentialKey.RemoteControlClientSecrets -> "remoteControlClientSecrets"
     }
 
 @Suppress("UNCHECKED_CAST")

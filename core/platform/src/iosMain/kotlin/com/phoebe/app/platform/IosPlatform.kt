@@ -484,6 +484,25 @@ actual fun schedulePlatformDownloadRunner() = Unit
 
 actual fun requestNotificationPermission() {}
 
+actual fun currentDeviceName(): String =
+    platform.UIKit.UIDevice.currentDevice.name.ifBlank { "iPhone" }
+
+actual fun currentDeviceId(): String {
+    val defaults = NSUserDefaults.standardUserDefaults
+    val existing = defaults.stringForKey("phoebe_device_id")
+    if (!existing.isNullOrBlank()) return existing
+    val newId = platform.UIKit.UIDevice.currentDevice.identifierForVendor?.UUIDString
+        ?: ("ios-" + platform.Foundation.NSUUID().UUIDString)
+    defaults.setObject(newId, "phoebe_device_id")
+    return newId
+}
+
+actual fun acquireMulticastLock(): AutoCloseable? = null
+
+actual fun getBroadcastAddresses(): List<String> = emptyList()
+
+actual fun localHostIpAddresses(): List<String> = emptyList()
+
 internal actual fun platformLog(tag: String, message: String) {
     println("[$tag] $message")
 }

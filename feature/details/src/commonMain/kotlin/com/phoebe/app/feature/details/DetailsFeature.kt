@@ -47,6 +47,7 @@ class ArtistDetailRouteActions(
     val onLoadMusicBrainzArtwork: (Artist) -> Unit = {},
     val onCollectionItems: (CollectionEntry, String) -> Unit = { _, _ -> },
     val onSearchQuery: (String) -> Unit = {},
+    val onAddToEndOfQueue: (Track) -> Unit = {},
 )
 
 @Immutable
@@ -82,6 +83,7 @@ class AlbumDetailRouteActions(
     val onLibraryColumns: (LibraryColumnVisibility) -> Unit,
     val onCollectionItems: (CollectionEntry, String) -> Unit = { _, _ -> },
     val onSearchQuery: (String) -> Unit = {},
+    val onAddToEndOfQueue: (Track) -> Unit = {},
 )
 
 @Immutable
@@ -117,6 +119,7 @@ class PlaylistDetailRouteActions(
     val onCancelDownloadPlaylist: (Playlist) -> Unit = {},
     val onDeleteDownloadPlaylist: (Playlist) -> Unit = {},
     val onMovePlaylistTrack: (Playlist, Int, Int) -> Unit = { _, _, _ -> },
+    val onAddToEndOfQueue: (Track) -> Unit = {},
 )
 
 @Composable
@@ -153,6 +156,7 @@ fun ArtistDetailRoute(
         onLibraryColumns = actions.onLibraryColumns,
         onCollectionItems = actions.onCollectionItems,
         onSearchQuery = actions.onSearchQuery,
+        onAddToEndOfQueue = actions.onAddToEndOfQueue,
     )
 }
 
@@ -196,6 +200,7 @@ fun AlbumDetailRoute(
         onLibraryColumns = actions.onLibraryColumns,
         onCollectionItems = actions.onCollectionItems,
         onSearchQuery = actions.onSearchQuery,
+        onAddToEndOfQueue = actions.onAddToEndOfQueue,
     )
 }
 
@@ -239,5 +244,6 @@ fun PlaylistDetailRoute(
         onDeleteDownloadPlaylist = actions.onDeleteDownloadPlaylist,
         onMovePlaylistTrack = actions.onMovePlaylistTrack,
         onLibraryColumns = actions.onLibraryColumns,
+        onAddToEndOfQueue = actions.onAddToEndOfQueue,
     )
 }

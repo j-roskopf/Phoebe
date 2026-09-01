@@ -39,6 +39,8 @@ data class SettingsRouteState(
     val listenBrainzCredentialAvailability: SecureCredentialAvailability = SecureCredentialAvailability.Unavailable,
     val initialCategory: SettingsCategory = SettingsCategory.AudioPlayback,
     val appUpdateState: AppUpdateState = AppUpdateState.Idle,
+    val pairedDevices: List<com.phoebe.app.remote.PairedRemoteDevice> = emptyList(),
+    val remoteControlClientState: com.phoebe.app.remote.RemoteControlSessionState = com.phoebe.app.remote.RemoteControlSessionState(),
 )
 
 @Immutable
@@ -104,6 +106,11 @@ class SettingsRouteActions(
     val onEventSettings: (EventSettings) -> Unit = {},
     val onCheckForUpdates: () -> Unit = {},
     val onInstallUpdate: () -> Unit = {},
+    val onRemoteControlHostEnabled: (Boolean) -> Unit = {},
+    val onRemoteControlHostName: (String) -> Unit = {},
+    val onRevokePairedDevice: (String) -> Unit = {},
+    val onConnectRemoteControl: () -> Unit = {},
+    val onDisconnectRemoteControl: () -> Unit = {},
 )
 
 @Composable
@@ -180,6 +187,13 @@ fun SettingsDesktopRoute(
         appUpdateState = state.appUpdateState,
         onCheckForUpdates = actions.onCheckForUpdates,
         onInstallUpdate = actions.onInstallUpdate,
+        pairedDevices = state.pairedDevices,
+        onRemoteControlHostEnabled = actions.onRemoteControlHostEnabled,
+        onRemoteControlHostName = actions.onRemoteControlHostName,
+        onRevokePairedDevice = actions.onRevokePairedDevice,
+        remoteControlClientState = state.remoteControlClientState,
+        onConnectRemoteControl = actions.onConnectRemoteControl,
+        onDisconnectRemoteControl = actions.onDisconnectRemoteControl,
         modifier = modifier,
         initialCategory = state.initialCategory,
     )
@@ -258,6 +272,13 @@ fun SettingsMobileRoute(
         appUpdateState = state.appUpdateState,
         onCheckForUpdates = actions.onCheckForUpdates,
         onInstallUpdate = actions.onInstallUpdate,
+        pairedDevices = state.pairedDevices,
+        onRemoteControlHostEnabled = actions.onRemoteControlHostEnabled,
+        onRemoteControlHostName = actions.onRemoteControlHostName,
+        onRevokePairedDevice = actions.onRevokePairedDevice,
+        remoteControlClientState = state.remoteControlClientState,
+        onConnectRemoteControl = actions.onConnectRemoteControl,
+        onDisconnectRemoteControl = actions.onDisconnectRemoteControl,
         modifier = modifier,
     )
 }

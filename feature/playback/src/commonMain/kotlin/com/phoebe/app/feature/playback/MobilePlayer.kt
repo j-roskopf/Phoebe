@@ -893,8 +893,13 @@ fun MobilePlayer(
                         )
                     }
                     if (remotePlaybackTarget != null) {
+                        val label = if (remotePlaybackTarget.startsWith("Music Assistant:") || remotePlaybackTarget.startsWith("Controlling ")) {
+                            remotePlaybackTarget
+                        } else {
+                            "Controlling $remotePlaybackTarget"
+                        }
                         Text(
-                            text = "Music Assistant: $remotePlaybackTarget",
+                            text = label,
                             color = PhoebeUi.accentLight.copy(alpha = fadeAlpha * fullPlayerElementsAlpha),
                             fontSize = 11.sp,
                             maxLines = 1,

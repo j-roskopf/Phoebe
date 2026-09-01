@@ -44,19 +44,28 @@ import com.phoebe.app.data.SessionRepository
 import com.phoebe.app.data.SubsonicClient
 import com.phoebe.app.data.UserArtifactsRepository
 import com.phoebe.app.data.db.DatabaseWriteGate
+import com.phoebe.app.domain.remoteAccountIdentity
 import com.phoebe.app.db.PhoebeDatabase
 import com.phoebe.app.platform.DownloadNotifier
 import com.phoebe.app.platform.PlatformStorage
 import com.phoebe.app.platform.SecureCredentialStore
 import com.phoebe.app.platform.createPlatformHttpClient
 import com.phoebe.app.platform.createSecureCredentialStore
+import com.phoebe.app.platform.currentDeviceId
+import com.phoebe.app.platform.currentDeviceName
 import com.phoebe.app.player.AudioPlayer
 import com.phoebe.app.player.CastController
+import com.phoebe.app.player.PlaybackRemoteHostBridge
 import com.phoebe.app.player.PlaybackTransportService
 import com.phoebe.app.player.SystemVolumeController
 import com.phoebe.app.player.createAudioPlayer
 import com.phoebe.app.player.createCastController
 import com.phoebe.app.player.createSystemVolumeController
+import com.phoebe.app.remote.PairedDeviceStore
+import com.phoebe.app.remote.RemoteControlClient
+import com.phoebe.app.remote.RemoteDiscoveryClient
+import com.phoebe.app.remote.RemoteDiscoveryServer
+import com.phoebe.app.remote.RemoteHostServer
 import com.phoebe.app.ui.AppNavigationCoordinator
 import com.phoebe.app.ui.AppNavigationService
 import com.phoebe.app.updates.AppUpdateCoordinator
@@ -137,6 +146,12 @@ data class AppGraphServices(
     val appUpdateService: AppUpdateService,
     val routeViewModelFactory: RouteViewModelFactory,
     val platformStorage: PlatformStorage,
+    val pairedDeviceStore: PairedDeviceStore,
+    val playbackRemoteHostBridge: PlaybackRemoteHostBridge,
+    val remoteHostServer: RemoteHostServer,
+    val remoteDiscoveryServer: RemoteDiscoveryServer,
+    val remoteDiscoveryClient: RemoteDiscoveryClient,
+    val remoteControlClient: RemoteControlClient,
 )
 
 @ContributesTo(AppScope::class)
@@ -192,6 +207,12 @@ interface AppGraphContributions {
     val playbackTransportService: PlaybackTransportService
     val systemVolumeController: SystemVolumeController
     val downloadNotifier: DownloadNotifier
+    val pairedDeviceStore: PairedDeviceStore
+    val playbackRemoteHostBridge: PlaybackRemoteHostBridge
+    val remoteHostServer: RemoteHostServer
+    val remoteDiscoveryServer: RemoteDiscoveryServer
+    val remoteDiscoveryClient: RemoteDiscoveryClient
+    val remoteControlClient: RemoteControlClient
     val updateInstaller: PlatformUpdateInstaller
     val updateRepository: GitHubReleaseUpdateRepository
     val appUpdateCoordinator: AppUpdateCoordinator
@@ -257,6 +278,12 @@ interface AppGraphProviders {
         appUpdateService: AppUpdateService,
         routeViewModelFactory: RouteViewModelFactory,
         platformStorage: PlatformStorage,
+        pairedDeviceStore: PairedDeviceStore,
+        playbackRemoteHostBridge: PlaybackRemoteHostBridge,
+        remoteHostServer: RemoteHostServer,
+        remoteDiscoveryServer: RemoteDiscoveryServer,
+        remoteDiscoveryClient: RemoteDiscoveryClient,
+        remoteControlClient: RemoteControlClient,
     ): AppGraphServices =
         AppGraphServices(
             database = database,
@@ -302,6 +329,12 @@ interface AppGraphProviders {
             appUpdateService = appUpdateService,
             routeViewModelFactory = routeViewModelFactory,
             platformStorage = platformStorage,
+            pairedDeviceStore = pairedDeviceStore,
+            playbackRemoteHostBridge = playbackRemoteHostBridge,
+            remoteHostServer = remoteHostServer,
+            remoteDiscoveryServer = remoteDiscoveryServer,
+            remoteDiscoveryClient = remoteDiscoveryClient,
+            remoteControlClient = remoteControlClient,
         )
 
     @Provides
@@ -411,6 +444,77 @@ interface AppGraphProviders {
             accountRepository = accountRepository,
             audioPlayer = audioPlayer,
             appSettings = appSettingsRepository.settings,
+        )
+
+    @Provides
+    @SingleIn(AppScope::class)
+    fun providePairedDeviceStore(secureCredentialStore: SecureCredentialStore): PairedDeviceStore =
+        PairedDeviceStore(secureCredentialStore)
+
+    @Provides
+    @SingleIn(AppScope::class)
+    fun providePlaybackRemoteHostBridge(
+        audioPlayer: AudioPlayer,
+        appSettingsRepository: AppSettingsRepository,
+        sessionRepository: SessionRepository,
+    ): PlaybackRemoteHostBridge =
+        PlaybackRemoteHostBridge(
+            audioPlayer = audioPlayer,
+            sessionRepository = sessionRepository,
+            hostNameProvider = {
+                appSettingsRepository.settings.value.remoteControlHostName
+                    .ifBlank { currentDeviceName() }
+            },
+        )
+
+    @Provides
+    @SingleIn(AppScope::class)
+    fun provideRemoteDiscoveryServer(
+        appSettingsRepository: AppSettingsRepository,
+    ): RemoteDiscoveryServer =
+        RemoteDiscoveryServer(
+            hostNameProvider = {
+                appSettingsRepository.settings.value.remoteControlHostName
+                    .ifBlank { currentDeviceName() }
+            },
+            hostDeviceIdProvider = { currentDeviceId() },
+        )
+
+    @Provides
+    @SingleIn(AppScope::class)
+    fun provideRemoteDiscoveryClient(): RemoteDiscoveryClient =
+        RemoteDiscoveryClient(ignoreDeviceId = currentDeviceId())
+
+    @Provides
+    @SingleIn(AppScope::class)
+    fun provideRemoteHostServer(
+        appSettingsRepository: AppSettingsRepository,
+        pairedDeviceStore: PairedDeviceStore,
+        bridge: PlaybackRemoteHostBridge,
+        sessionRepository: SessionRepository,
+    ): RemoteHostServer =
+        RemoteHostServer(
+            hostNameProvider = {
+                appSettingsRepository.settings.value.remoteControlHostName
+                    .ifBlank { currentDeviceName() }
+            },
+            hostDeviceIdProvider = { currentDeviceId() },
+            pairedDeviceStore = pairedDeviceStore,
+            bridge = bridge,
+            hostAccountIdProvider = { sessionRepository.session.value.remoteAccountIdentity() },
+        )
+
+    @Provides
+    @SingleIn(AppScope::class)
+    fun provideRemoteControlClient(
+        pairedDeviceStore: PairedDeviceStore,
+        sessionRepository: SessionRepository,
+    ): RemoteControlClient =
+        RemoteControlClient(
+            clientDeviceIdProvider = { currentDeviceId() },
+            clientDeviceNameProvider = { currentDeviceName() },
+            pairedDeviceStore = pairedDeviceStore,
+            clientAccountIdProvider = { sessionRepository.session.value.remoteAccountIdentity() },
         )
 
 }

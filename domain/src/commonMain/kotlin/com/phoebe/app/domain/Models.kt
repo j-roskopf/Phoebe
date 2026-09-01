@@ -200,6 +200,19 @@ fun PlexSession?.serverAuthToken(): String? {
     return s.selectedServer?.authToken(user) ?: user
 }
 
+/**
+ * Stable identity for comparing whether two signed-in devices share the same account,
+ * used to gate remote-control queue-replacement commands. Includes the server id so the
+ * same username on two different self-hosted servers isn't treated as the same account.
+ */
+fun PlexSession?.remoteAccountIdentity(): String? {
+    val s = this ?: return null
+    if (s.token.isBlank()) return null
+    val principal = s.userId?.takeIf { it.isNotBlank() } ?: s.userName.takeIf { it.isNotBlank() } ?: return null
+    val serverId = s.selectedServer?.id.orEmpty()
+    return "${s.providerType.name}:$principal:$serverId"
+}
+
 @Serializable
 data class MusicLibrary(
     val key: String,
@@ -1103,6 +1116,8 @@ data class AppSettings(
     val streamingPolicy: StreamingPolicySettings = StreamingPolicySettings(),
     val audioProcessing: AudioProcessingSettings = AudioProcessingSettings(),
     val events: EventSettings = EventSettings(),
+    val remoteControlHostEnabled: Boolean = false,
+    val remoteControlHostName: String = "",
 ) {
     fun normalized(): AppSettings {
         val normalizedCrossfadeSeconds = crossfadeSeconds.coerceIn(MinCrossfadeSeconds, MaxCrossfadeSeconds)
@@ -1119,6 +1134,7 @@ data class AppSettings(
             streamingPolicy = streamingPolicy.normalized(),
             audioProcessing = normalizedAudioProcessing,
             events = events.normalized(),
+            remoteControlHostName = remoteControlHostName.trim(),
         )
     }
 
