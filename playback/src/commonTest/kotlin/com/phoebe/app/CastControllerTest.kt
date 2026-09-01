@@ -14,6 +14,7 @@ import com.phoebe.app.player.castTrackFromMediaFields
 import com.phoebe.app.player.isCastReceiverLoadableUrl
 import com.phoebe.app.player.isRemoteChromecastPlayable
 import com.phoebe.app.player.remoteChromecastQueueSupport
+import com.phoebe.app.player.shouldClearEmptyCastState
 import com.phoebe.app.player.toCastMediaDescriptor
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -233,6 +234,38 @@ class CastControllerTest {
         assertTrue(playerState.isPlaying)
         assertEquals(12_000, playerState.positionMs)
         assertEquals(0.42f, playerState.volume)
+    }
+
+    @Test
+    fun emptyConfirmedReceiverClearsStaleCastState() {
+        assertTrue(
+            shouldClearEmptyCastState(
+                hasRemoteStatus = true,
+                hasRemoteMedia = false,
+                isCastConnected = true,
+                hasPendingHandoff = false,
+            ),
+        )
+    }
+
+    @Test
+    fun emptyReceiverDoesNotClearBeforeStatusOrDuringHandoff() {
+        assertFalse(
+            shouldClearEmptyCastState(
+                hasRemoteStatus = false,
+                hasRemoteMedia = false,
+                isCastConnected = true,
+                hasPendingHandoff = false,
+            ),
+        )
+        assertFalse(
+            shouldClearEmptyCastState(
+                hasRemoteStatus = true,
+                hasRemoteMedia = false,
+                isCastConnected = true,
+                hasPendingHandoff = true,
+            ),
+        )
     }
 
     @Test

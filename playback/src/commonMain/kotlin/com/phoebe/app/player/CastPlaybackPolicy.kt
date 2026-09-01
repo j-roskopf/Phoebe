@@ -45,6 +45,13 @@ fun castSessionDisconnectReason(
 fun shouldRestoreLocalAfterCastSessionEnd(reason: CastSessionDisconnectReason): Boolean =
     reason == CastSessionDisconnectReason.UserRequested
 
+fun shouldClearEmptyCastState(
+    hasRemoteStatus: Boolean,
+    hasRemoteMedia: Boolean,
+    isCastConnected: Boolean,
+    hasPendingHandoff: Boolean,
+): Boolean = hasRemoteStatus && !hasRemoteMedia && isCastConnected && !hasPendingHandoff
+
 enum class CastLoadFailureAction {
     RetrySmallerQueue,
     HoldOnReceiver,

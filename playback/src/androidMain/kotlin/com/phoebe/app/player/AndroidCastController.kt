@@ -461,6 +461,7 @@ private class AndroidCastController : CastController {
         val queueItems = status?.queueItems.orEmpty()
         val remoteTrack = client.currentItem?.media?.toTrack() ?: client.mediaInfo?.toTrack()
         val remoteCastUrl = client.currentItem?.media?.contentId ?: client.mediaInfo?.contentId
+        val receiverHasMedia = client.mediaInfo != null || queueItems.isNotEmpty() || remoteTrack != null
         val knownQueue = appQueueSnapshot?.queue?.takeIf { it.isNotEmpty() }
             ?: pendingHandoff?.queue?.takeIf { it.isNotEmpty() }
             ?: previous.queue
@@ -483,6 +484,16 @@ private class AndroidCastController : CastController {
             if (expectedRemoteHandoff?.requestId == expectedHandoff.requestId) {
                 expectedRemoteHandoff = null
             }
+        }
+        if (shouldClearEmptyCastState(
+                hasRemoteStatus = status != null,
+                hasRemoteMedia = receiverHasMedia,
+                isCastConnected = previous.isConnected,
+                hasPendingHandoff = pendingHandoff != null || expectedRemoteHandoff != null,
+            )
+        ) {
+            deactivateEmptyReceiver()
+            return
         }
         val currentQueueItemKnownIndex = currentQueueItem?.media?.let { media ->
             val track = media.toTrack()
@@ -607,12 +618,33 @@ private class AndroidCastController : CastController {
             }
         }
         publishCastMediaSessionState()
-        val receiverHasMedia = client.mediaInfo != null || queueItems.isNotEmpty() || remoteTrack != null
         if ((previous.isConnected || mutableState.value.isConnected) &&
             (receiverHasMedia || isPlaying || isBuffering)
         ) {
             suspendLocalPlayback()
         }
+    }
+
+    private fun deactivateEmptyReceiver() {
+        positionJob?.cancel()
+        positionJob = null
+        appQueueSnapshot = null
+        mediaErrorRetryCount = 0
+        mediaErrorTrackId = null
+        mutableState.update {
+            it.copy(
+                isConnected = false,
+                deviceName = null,
+                queue = emptyList(),
+                currentIndex = -1,
+                isPlaying = false,
+                isBuffering = false,
+                positionMs = 0L,
+                durationMs = 0L,
+                message = null,
+            )
+        }
+        AndroidPlaybackBridge.onCastMediaSessionState?.invoke(null)
     }
 
     private fun publishCastMediaSessionState() {
