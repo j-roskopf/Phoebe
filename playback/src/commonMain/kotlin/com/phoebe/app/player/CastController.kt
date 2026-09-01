@@ -76,7 +76,7 @@ open class UnavailableCastController(
 }
 
 fun Track.isChromecastPlayable(): Boolean =
-    isPlexLibraryTrack() && streamUrl.isCastReceiverLoadableUrl()
+    isPlexLibraryTrack() && toCastMediaDescriptor().castUrl.isCastReceiverLoadableUrl()
 
 fun List<Track>.isChromecastPlayableQueue(): Boolean = isNotEmpty() && all { it.isChromecastPlayable() }
 
@@ -88,7 +88,7 @@ fun List<Track>.plexChromecastQueueSupport(): CastQueueSupport =
     }
 
 fun Track.isRemoteChromecastPlayable(): Boolean =
-    isRemoteLibraryTrack() && streamUrl.isCastReceiverLoadableUrl()
+    isRemoteLibraryTrack() && toCastMediaDescriptor().castUrl.isCastReceiverLoadableUrl()
 
 fun List<Track>.remoteChromecastQueueSupport(): CastQueueSupport {
     if (isEmpty()) {

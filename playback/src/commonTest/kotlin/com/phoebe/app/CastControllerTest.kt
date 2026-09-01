@@ -1,5 +1,7 @@
 package com.phoebe.app
 
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
 import com.phoebe.app.domain.PlayerState
 import com.phoebe.app.domain.Track
 import com.phoebe.app.player.CastState
@@ -12,6 +14,7 @@ import com.phoebe.app.player.castTrackFromMediaFields
 import com.phoebe.app.player.isCastReceiverLoadableUrl
 import com.phoebe.app.player.isRemoteChromecastPlayable
 import com.phoebe.app.player.remoteChromecastQueueSupport
+import com.phoebe.app.player.shouldClearEmptyCastState
 import com.phoebe.app.player.toCastMediaDescriptor
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -33,6 +36,33 @@ class CastControllerTest {
 
         assertTrue(track.isChromecastPlayable())
         assertTrue(listOf(track).isChromecastPlayableQueue())
+    }
+
+    @Test
+    fun relativePlexStreamIsBoundBeforeCastValidationAndLoad() {
+        val liveOrigin = "https://plex.example:32400"
+        ArtworkOriginHolder.update(liveOrigin)
+        ArtworkAuthHolder.update("token")
+        try {
+            val track = Track(
+                id = "plex:track:1",
+                title = "One",
+                artist = "Artist",
+                album = "Album",
+                durationMs = 60_000,
+                streamUrl = "/library/parts/1/file.mp3",
+                downloadUrl = "/library/parts/1/file.mp3",
+            )
+
+            assertTrue(track.isChromecastPlayable())
+            assertEquals(
+                "$liveOrigin/library/parts/1/file.mp3?X-Plex-Token=token",
+                track.toCastMediaDescriptor().castUrl,
+            )
+        } finally {
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
     }
 
     @Test
@@ -204,6 +234,38 @@ class CastControllerTest {
         assertTrue(playerState.isPlaying)
         assertEquals(12_000, playerState.positionMs)
         assertEquals(0.42f, playerState.volume)
+    }
+
+    @Test
+    fun emptyConfirmedReceiverClearsStaleCastState() {
+        assertTrue(
+            shouldClearEmptyCastState(
+                hasRemoteStatus = true,
+                hasRemoteMedia = false,
+                isCastConnected = true,
+                hasPendingHandoff = false,
+            ),
+        )
+    }
+
+    @Test
+    fun emptyReceiverDoesNotClearBeforeStatusOrDuringHandoff() {
+        assertFalse(
+            shouldClearEmptyCastState(
+                hasRemoteStatus = false,
+                hasRemoteMedia = false,
+                isCastConnected = true,
+                hasPendingHandoff = false,
+            ),
+        )
+        assertFalse(
+            shouldClearEmptyCastState(
+                hasRemoteStatus = true,
+                hasRemoteMedia = false,
+                isCastConnected = true,
+                hasPendingHandoff = true,
+            ),
+        )
     }
 
     @Test

@@ -23,28 +23,37 @@ import phoebe.ui.core.generated.resources.phoebe_icon_back
 import phoebe.ui.core.generated.resources.phoebe_icon_bell
 import phoebe.ui.core.generated.resources.phoebe_icon_book
 import phoebe.ui.core.generated.resources.phoebe_icon_calendar
+import phoebe.ui.core.generated.resources.phoebe_icon_cast
 import phoebe.ui.core.generated.resources.phoebe_icon_chevron_down
 import phoebe.ui.core.generated.resources.phoebe_icon_chevron_right
 import phoebe.ui.core.generated.resources.phoebe_icon_chevron_up
 import phoebe.ui.core.generated.resources.phoebe_icon_download
 import phoebe.ui.core.generated.resources.phoebe_icon_drag
+import phoebe.ui.core.generated.resources.phoebe_icon_equalizer
 import phoebe.ui.core.generated.resources.phoebe_icon_forward
 import phoebe.ui.core.generated.resources.phoebe_icon_guitar
 import phoebe.ui.core.generated.resources.phoebe_icon_heart_filled
 import phoebe.ui.core.generated.resources.phoebe_icon_heart_outline
 import phoebe.ui.core.generated.resources.phoebe_icon_home
+import phoebe.ui.core.generated.resources.phoebe_icon_interwoven_arrows
 import phoebe.ui.core.generated.resources.phoebe_icon_knife
 import phoebe.ui.core.generated.resources.phoebe_icon_library
+import phoebe.ui.core.generated.resources.phoebe_icon_lyrics
 import phoebe.ui.core.generated.resources.phoebe_icon_music
+import phoebe.ui.core.generated.resources.phoebe_icon_next
 import phoebe.ui.core.generated.resources.phoebe_icon_person
 import phoebe.ui.core.generated.resources.phoebe_icon_plus
+import phoebe.ui.core.generated.resources.phoebe_icon_previous
+import phoebe.ui.core.generated.resources.phoebe_icon_queue
 import phoebe.ui.core.generated.resources.phoebe_icon_radio
 import phoebe.ui.core.generated.resources.phoebe_icon_remote_device
+import phoebe.ui.core.generated.resources.phoebe_icon_repeat
 import phoebe.ui.core.generated.resources.phoebe_icon_search
 import phoebe.ui.core.generated.resources.phoebe_icon_settings
 import phoebe.ui.core.generated.resources.phoebe_icon_sunglasses_face
 import phoebe.ui.core.generated.resources.phoebe_icon_thumbs_down
 import phoebe.ui.core.generated.resources.phoebe_icon_thumbs_up
+import phoebe.ui.core.generated.resources.phoebe_icon_volume
 
 @Composable
 fun PhoebeIconView(
@@ -73,129 +82,6 @@ fun PhoebeIconView(
             drawLine(tint, p(x1, y1), p(x2, y2), strokeWidth = strokeWidth, cap = StrokeCap.Round)
 
         when (icon) {
-            PhoebeIcon.InterwovenArrows -> {
-                val first = Path().apply {
-                    moveTo(s * 0.18f, s * 0.30f)
-                    lineTo(s * 0.34f, s * 0.30f)
-                    lineTo(s * 0.66f, s * 0.70f)
-                    lineTo(s * 0.82f, s * 0.70f)
-                }
-                drawPath(first, tint, style = stroke)
-                line(0.66f, 0.57f, 0.82f, 0.70f)
-                line(0.66f, 0.83f, 0.82f, 0.70f)
-
-                val second = Path().apply {
-                    moveTo(s * 0.18f, s * 0.70f)
-                    lineTo(s * 0.34f, s * 0.70f)
-                    lineTo(s * 0.47f, s * 0.54f)
-                    lineTo(s * 0.66f, s * 0.30f)
-                    lineTo(s * 0.82f, s * 0.30f)
-                }
-                drawPath(second, tint, style = stroke)
-                line(0.66f, 0.17f, 0.82f, 0.30f)
-                line(0.66f, 0.43f, 0.82f, 0.30f)
-            }
-            PhoebeIcon.Lyrics -> {
-                drawRoundRect(
-                    color = tint,
-                    topLeft = Offset(s * 0.22f, s * 0.18f),
-                    size = Size(s * 0.56f, s * 0.64f),
-                    cornerRadius = CornerRadius(s * 0.05f, s * 0.05f),
-                    style = stroke,
-                )
-                line(0.34f, 0.38f, 0.66f, 0.38f)
-                line(0.34f, 0.52f, 0.66f, 0.52f)
-                line(0.34f, 0.66f, 0.56f, 0.66f)
-            }
-            PhoebeIcon.Previous -> {
-                drawRect(tint, topLeft = Offset(s * 0.22f, s * 0.24f), size = Size(s * 0.10f, s * 0.52f))
-                val path = Path().apply {
-                    moveTo(s * 0.76f, s * 0.24f)
-                    lineTo(s * 0.40f, s * 0.50f)
-                    lineTo(s * 0.76f, s * 0.76f)
-                    close()
-                }
-                drawPath(path, tint)
-            }
-            PhoebeIcon.Next -> {
-                val path = Path().apply {
-                    moveTo(s * 0.24f, s * 0.24f)
-                    lineTo(s * 0.60f, s * 0.50f)
-                    lineTo(s * 0.24f, s * 0.76f)
-                    close()
-                }
-                drawPath(path, tint)
-                drawRect(tint, topLeft = Offset(s * 0.68f, s * 0.24f), size = Size(s * 0.10f, s * 0.52f))
-            }
-            PhoebeIcon.Volume -> {
-                val speaker = Path().apply {
-                    moveTo(s * 0.16f, s * 0.42f)
-                    lineTo(s * 0.34f, s * 0.42f)
-                    lineTo(s * 0.56f, s * 0.25f)
-                    lineTo(s * 0.56f, s * 0.75f)
-                    lineTo(s * 0.34f, s * 0.58f)
-                    lineTo(s * 0.16f, s * 0.58f)
-                    close()
-                }
-                drawPath(speaker, tint)
-                val wave = Path().apply {
-                    moveTo(s * 0.67f, s * 0.36f)
-                    quadraticTo(s * 0.82f, s * 0.50f, s * 0.67f, s * 0.64f)
-                }
-                drawPath(wave, tint, style = stroke)
-                val outerWave = Path().apply {
-                    moveTo(s * 0.76f, s * 0.26f)
-                    quadraticTo(s * 0.98f, s * 0.50f, s * 0.76f, s * 0.74f)
-                }
-                drawPath(outerWave, tint, style = stroke)
-            }
-            PhoebeIcon.Equalizer -> {
-                line(0.27f, 0.72f, 0.27f, 0.36f)
-                line(0.50f, 0.72f, 0.50f, 0.22f)
-                line(0.73f, 0.72f, 0.73f, 0.48f)
-            }
-            PhoebeIcon.Queue -> {
-                line(0.22f, 0.28f, 0.78f, 0.28f)
-                line(0.22f, 0.50f, 0.78f, 0.50f)
-                line(0.22f, 0.72f, 0.56f, 0.72f)
-                line(0.67f, 0.64f, 0.67f, 0.80f)
-                line(0.59f, 0.72f, 0.75f, 0.72f)
-            }
-            PhoebeIcon.Cast -> {
-                drawRoundRect(
-                    color = tint,
-                    topLeft = Offset(s * 0.24f, s * 0.20f),
-                    size = Size(s * 0.56f, s * 0.42f),
-                    cornerRadius = CornerRadius(s * 0.04f, s * 0.04f),
-                    style = stroke,
-                )
-                drawCircle(tint, radius = s * 0.055f, center = p(0.25f, 0.76f))
-                val innerArc = Path().apply {
-                    moveTo(s * 0.25f, s * 0.62f)
-                    quadraticTo(s * 0.39f, s * 0.62f, s * 0.39f, s * 0.76f)
-                }
-                drawPath(innerArc, tint, style = stroke)
-                val outerArc = Path().apply {
-                    moveTo(s * 0.25f, s * 0.50f)
-                    quadraticTo(s * 0.51f, s * 0.50f, s * 0.51f, s * 0.76f)
-                }
-                drawPath(outerArc, tint, style = stroke)
-            }
-            PhoebeIcon.Repeat -> {
-                drawArc(
-                    color = tint,
-                    startAngle = 200f,
-                    sweepAngle = 205f,
-                    useCenter = false,
-                    topLeft = Offset(s * 0.22f, s * 0.22f),
-                    size = Size(s * 0.56f, s * 0.56f),
-                    style = stroke,
-                )
-                line(0.22f, 0.39f, 0.22f, 0.22f)
-                line(0.22f, 0.22f, 0.39f, 0.22f)
-                line(0.78f, 0.61f, 0.78f, 0.78f)
-                line(0.78f, 0.78f, 0.61f, 0.78f)
-            }
             PhoebeIcon.PlaylistPlay -> {
                 line(0.18f, 0.26f, 0.82f, 0.26f)
                 line(0.18f, 0.44f, 0.48f, 0.44f)
@@ -315,6 +201,7 @@ private fun PhoebeIcon.drawableResource(filled: Boolean): DrawableResource? =
         PhoebeIcon.Book -> Res.drawable.phoebe_icon_book
         PhoebeIcon.Guitar -> Res.drawable.phoebe_icon_guitar
         PhoebeIcon.Knife -> Res.drawable.phoebe_icon_knife
+        PhoebeIcon.InterwovenArrows -> Res.drawable.phoebe_icon_interwoven_arrows
         PhoebeIcon.MoodFace -> Res.drawable.mood_very_good
         PhoebeIcon.SunglassesFace -> Res.drawable.phoebe_icon_sunglasses_face
         PhoebeIcon.GenreMasks -> Res.drawable.drama_masks
@@ -330,8 +217,16 @@ private fun PhoebeIcon.drawableResource(filled: Boolean): DrawableResource? =
         PhoebeIcon.Back -> Res.drawable.phoebe_icon_back
         PhoebeIcon.Forward -> Res.drawable.phoebe_icon_forward
         PhoebeIcon.Music -> Res.drawable.phoebe_icon_music
+        PhoebeIcon.Lyrics -> Res.drawable.phoebe_icon_lyrics
+        PhoebeIcon.Previous -> Res.drawable.phoebe_icon_previous
+        PhoebeIcon.Next -> Res.drawable.phoebe_icon_next
+        PhoebeIcon.Volume -> Res.drawable.phoebe_icon_volume
+        PhoebeIcon.Equalizer -> Res.drawable.phoebe_icon_equalizer
+        PhoebeIcon.Queue -> Res.drawable.phoebe_icon_queue
+        PhoebeIcon.Cast -> Res.drawable.phoebe_icon_cast
         PhoebeIcon.RemoteDevice -> Res.drawable.phoebe_icon_remote_device
         PhoebeIcon.Download -> Res.drawable.phoebe_icon_download
+        PhoebeIcon.Repeat -> Res.drawable.phoebe_icon_repeat
         PhoebeIcon.Drag -> Res.drawable.phoebe_icon_drag
         PhoebeIcon.Radio -> Res.drawable.phoebe_icon_radio
         PhoebeIcon.PlaylistPlay,
@@ -346,15 +241,6 @@ private fun PhoebeIcon.drawableResource(filled: Boolean): DrawableResource? =
         PhoebeIcon.Visualizer,
         PhoebeIcon.Fullscreen,
         PhoebeIcon.Update,
-        PhoebeIcon.InterwovenArrows,
-        PhoebeIcon.Lyrics,
-        PhoebeIcon.Previous,
-        PhoebeIcon.Next,
-        PhoebeIcon.Volume,
-        PhoebeIcon.Equalizer,
-        PhoebeIcon.Queue,
-        PhoebeIcon.Cast,
-        PhoebeIcon.Repeat,
         -> null
     }
 

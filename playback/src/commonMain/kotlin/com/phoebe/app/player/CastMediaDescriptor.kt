@@ -35,17 +35,21 @@ object CastMediaCustomDataKeys {
 }
 
 fun Track.toCastMediaDescriptor(): CastMediaDescriptor {
-    val castUrl = chromecastMediaUrl()
+    // Plex queues intentionally retain host-free paths so a network change cannot leave stale
+    // origins behind. Cast receivers need an absolute URL, so bind the path only for this
+    // request using the same live origin and token as local playback.
+    val boundTrack = boundToLivePlaybackOrigin()
+    val castUrl = boundTrack.chromecastMediaUrl()
     return CastMediaDescriptor(
         trackId = id,
         title = title.ifBlank { "Chromecast audio" },
         artist = artist,
         album = album,
         durationMs = durationMs,
-        streamUrl = streamUrl,
+        streamUrl = boundTrack.streamUrl,
         castUrl = castUrl,
-        contentType = chromecastContentType(castUrl),
-        downloadUrl = downloadUrl,
+        contentType = boundTrack.chromecastContentType(castUrl),
+        downloadUrl = boundTrack.downloadUrl,
         thumbUrl = thumbUrl,
         filepath = filepath,
         audioCodec = audioCodec,
