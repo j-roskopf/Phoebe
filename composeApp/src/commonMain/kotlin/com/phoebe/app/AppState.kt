@@ -3036,7 +3036,11 @@ class AppState(
         val startIndex = index.coerceIn(playbackTracks.indices)
         val track = playbackTracks[startIndex]
         val remoteClientState = dependencies.remoteControlClient.state.value
-        if (remoteClientState.isConnected && remoteClientState.sameAccount) {
+        if (remoteClientState.isConnected) {
+            if (!remoteClientState.sameAccount) {
+                mutableMessage.value = "Queue control is unavailable for a different account."
+                return false
+            }
             // A same-account controller replaces the host's queue outright; the host's own
             // AppState records history / keep-playing continuation once it starts playing,
             // same as any other remotely-triggered playback (e.g. jump-to-index) does today.

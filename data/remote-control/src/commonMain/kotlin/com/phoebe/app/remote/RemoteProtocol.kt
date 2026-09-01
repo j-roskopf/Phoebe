@@ -190,6 +190,7 @@ fun Track.sanitizeForRemote(): Track = copy(
     localUri = null,
     filepath = null,
     playbackFallbackUrls = emptyList(),
+    thumbUrl = null,
 )
 
 fun List<Track>.sanitizeForRemote(): List<Track> = map { it.sanitizeForRemote() }

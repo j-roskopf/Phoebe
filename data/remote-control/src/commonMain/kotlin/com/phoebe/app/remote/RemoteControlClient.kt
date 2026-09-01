@@ -159,9 +159,9 @@ class RemoteControlClient(
     suspend fun setShuffle(shuffle: Boolean) = sendCommand(RemoteCommand.SetShuffle(shuffle))
     suspend fun setRepeat(repeat: RepeatMode) = sendCommand(RemoteCommand.SetRepeat(repeat))
     suspend fun replaceQueue(tracks: List<Track>, startIndex: Int, shuffle: Boolean = false) =
-        sendCommand(RemoteCommand.ReplaceQueue(tracks, startIndex, shuffle))
-    suspend fun appendToQueue(tracks: List<Track>) = sendCommand(RemoteCommand.AppendToQueue(tracks))
-    suspend fun insertNext(track: Track) = sendCommand(RemoteCommand.InsertNext(track))
+        sendCommand(RemoteCommand.ReplaceQueue(tracks.sanitizeForRemote(), startIndex, shuffle))
+    suspend fun appendToQueue(tracks: List<Track>) = sendCommand(RemoteCommand.AppendToQueue(tracks.sanitizeForRemote()))
+    suspend fun insertNext(track: Track) = sendCommand(RemoteCommand.InsertNext(track.sanitizeForRemote()))
 
     private enum class ConnectionExitReason {
         UserDisconnected,
@@ -309,8 +309,8 @@ class RemoteControlClient(
                         val snap = frame.snapshot
                         mutableState.update { current ->
                             current.copy(
-                                queue = snap.queue.ifEmpty { current.queue },
-                                currentIndex = if (snap.currentIndex >= 0 || snap.queue.isNotEmpty()) snap.currentIndex else current.currentIndex,
+                                queue = snap.queue,
+                                currentIndex = snap.currentIndex,
                                 isPlaying = snap.isPlaying,
                                 isBuffering = snap.isBuffering,
                                 positionMs = snap.positionMs,

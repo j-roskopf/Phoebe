@@ -11,6 +11,8 @@ expect object PhoebeDispatchers {
     val io: CoroutineDispatcher
 }
 
+expect fun secureRandomBytes(size: Int): ByteArray
+
 expect fun createPlatformHttpClient(): io.ktor.client.HttpClient
 
 /** Binary/media fetches (artwork). No JSON ContentNegotiation, so image bodies are not parsed as API payloads. */

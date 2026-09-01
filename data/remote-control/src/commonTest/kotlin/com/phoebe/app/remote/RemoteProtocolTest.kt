@@ -104,7 +104,7 @@ class RemoteProtocolTest {
         assertNull(sanitized.localUri)
         assertNull(sanitized.filepath)
         assertTrue(sanitized.playbackFallbackUrls.isEmpty())
-        assertEquals("http://192.168.1.50:32400/photo/thumb.jpg", sanitized.thumbUrl)
+        assertNull(sanitized.thumbUrl)
     }
 
     @Test

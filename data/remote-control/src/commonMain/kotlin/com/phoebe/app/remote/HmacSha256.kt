@@ -1,6 +1,6 @@
 package com.phoebe.app.remote
 
-import kotlin.random.Random
+import com.phoebe.app.platform.secureRandomBytes
 
 object HmacSha256 {
 
@@ -139,12 +139,12 @@ object HmacSha256 {
         hmac(keyHex.decodeHex(), data.encodeToByteArray()).toHex()
 
     fun generateSecretHex(byteLength: Int = 32): String {
-        val bytes = Random.nextBytes(byteLength)
+        val bytes = secureRandomBytes(byteLength)
         return bytes.toHex()
     }
 
     fun generateNonce(byteLength: Int = 16): String {
-        val bytes = Random.nextBytes(byteLength)
+        val bytes = secureRandomBytes(byteLength)
         return bytes.toHex()
     }
 
