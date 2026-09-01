@@ -31,7 +31,7 @@ class CoilArtworkVisualStateTest {
     }
 
     @Test
-    fun startupFallbackStaysVisibleUntilOriginPainterCanDraw() {
+    fun startupShowsLoadingUntilOriginPainterCanDraw() {
         val waitingForOrigin = resolveCoilArtworkVisualState(
             painterState = AsyncImagePainter.State.Empty,
             hasCandidate = false,
@@ -52,9 +52,9 @@ class CoilArtworkVisualStateTest {
             retainFallbackWhileLoading = true,
         )
 
-        assertEquals(RemoteArtworkVisualState.Missing, waitingForOrigin)
-        assertEquals(RemoteArtworkVisualState.Missing, originReadyButPainterEmpty)
-        assertEquals(RemoteArtworkVisualState.Missing, originPainterLoading)
+        assertEquals(RemoteArtworkVisualState.Loading, waitingForOrigin)
+        assertEquals(RemoteArtworkVisualState.Loading, originReadyButPainterEmpty)
+        assertEquals(RemoteArtworkVisualState.Loading, originPainterLoading)
     }
 
     @Test

@@ -99,6 +99,8 @@ import kotlin.math.max
 
 private const val RemoteArtworkRetryDelayMs = 15_000L
 private const val RemoteArtworkPreviewLoadGraceMs = 700L
+private const val ArtworkLoadRetryDelayMs = 900L
+private const val MaxArtworkLoadAutoRetries = 2
 
 @Composable
 fun ArtworkImage(
@@ -112,6 +114,7 @@ fun ArtworkImage(
     fallbackThumbUrl: String? = null,
     alignment: Alignment = Alignment.Center,
     contentScale: ContentScale = ContentScale.Crop,
+    pendingResolution: Boolean = false,
 ) {
     CoilArtworkImage(
         seed = seed,
@@ -124,6 +127,7 @@ fun ArtworkImage(
         maxDecodeDimension = maxDecodeDimension,
         alignment = alignment,
         contentScale = contentScale,
+        pendingResolution = pendingResolution,
     )
 }
 
@@ -139,13 +143,19 @@ private fun CoilArtworkImage(
     maxDecodeDimension: Int,
     alignment: Alignment,
     contentScale: ContentScale,
+    pendingResolution: Boolean = false,
 ) {
     val artworkOrigins by ArtworkOriginHolder.snapshot.collectAsState()
     val plexToken by ArtworkAuthHolder.tokenFlow.collectAsState()
     val candidates = remember(thumbUrl, fallbackThumbUrl, maxDecodeDimension, artworkOrigins, plexToken) {
         artworkImageCandidates(thumbUrl, maxDecodeDimension, fallbackThumbUrl)
     }
-    val waitingForLiveOrigin = remember(thumbUrl, fallbackThumbUrl, artworkOrigins, plexToken) {
+    // `pendingResolution` covers callers (e.g. play-history rows) that render a denormalized
+    // stand-in Track with no artwork URL yet while the real, catalog-backed track is still
+    // being resolved. Without it, a blank thumbUrl reads as "no candidate" and falls straight
+    // to the Missing placeholder instead of the loading spinner for however long resolution
+    // takes.
+    val waitingForLiveOrigin = pendingResolution || remember(thumbUrl, fallbackThumbUrl, artworkOrigins, plexToken) {
         listOfNotNull(thumbUrl, fallbackThumbUrl).any { url ->
             url.isNotBlank() && url.isRebaseableServerArtworkUrl()
         } && (artworkOrigins.candidateOrigins().isEmpty() || plexToken.isNullOrBlank())
@@ -156,6 +166,7 @@ private fun CoilArtworkImage(
         RemoteArtworkCache.retryFailedLoadsNow()
     }
     var candidateIndex by remember(candidates) { mutableIntStateOf(0) }
+    var retryAttempt by remember(candidates) { mutableIntStateOf(0) }
     val candidate = candidates.getOrNull(candidateIndex)
     var retainedPainter by remember(seed, thumbUrl, fallbackThumbUrl, maxDecodeDimension) {
         mutableStateOf<Painter?>(null)
@@ -173,19 +184,25 @@ private fun CoilArtworkImage(
         }
     }
     val imageLoader = rememberPhoebeArtworkImageLoader(platformContext)
-    val painter = key(candidate?.fetchUrl, candidateIndex, maxDecodeDimension, waitingForLiveOrigin) {
+    val painter = key(candidate?.fetchUrl, candidateIndex, maxDecodeDimension, waitingForLiveOrigin, retryAttempt) {
         rememberAsyncImagePainter(model = request, imageLoader = imageLoader)
     }
     val painterState by painter.state.collectAsState()
 
+    // A cold-start request can lose a transient race (connection pool warming up, origin
+    // resolving mid-flight) with no other origin left to try. Give it a couple of short,
+    // silent retries before conceding to the Missing placeholder, so a passing hiccup does
+    // not read to the user as a permanently failed load.
     LaunchedEffect(painterState) {
         val state = painterState
-        if (
-            state is AsyncImagePainter.State.Error &&
-            state.result.throwable !is CancellationException &&
-            candidateIndex < candidates.lastIndex
-        ) {
-            candidateIndex += 1
+        if (state is AsyncImagePainter.State.Error && state.result.throwable !is CancellationException) {
+            when {
+                candidateIndex < candidates.lastIndex -> candidateIndex += 1
+                retryAttempt < MaxArtworkLoadAutoRetries -> {
+                    delay(ArtworkLoadRetryDelayMs)
+                    retryAttempt += 1
+                }
+            }
         }
     }
 
@@ -202,7 +219,7 @@ private fun CoilArtworkImage(
     val visualState = resolveCoilArtworkVisualState(
         painterState = painterState,
         hasCandidate = candidate != null,
-        exhaustedCandidates = candidateIndex >= candidates.lastIndex,
+        exhaustedCandidates = candidateIndex >= candidates.lastIndex && retryAttempt >= MaxArtworkLoadAutoRetries,
         hasRetainedPainter = retainedPainter != null,
         retainFallbackWhileLoading = retainFallbackWhileLoading,
         waitingForLiveOrigin = waitingForLiveOrigin,
@@ -398,6 +415,7 @@ fun TrackArtworkImage(
     elevated: Boolean = true,
     maxDecodeDimension: Int = ListArtworkMaxDecodeDimension,
     alignment: Alignment = Alignment.Center,
+    pendingResolution: Boolean = false,
 ) {
     ArtworkImage(
         seed = track.album,
@@ -409,6 +427,7 @@ fun TrackArtworkImage(
         maxDecodeDimension = maxDecodeDimension,
         fallbackThumbUrl = track.thumbUrl,
         alignment = alignment,
+        pendingResolution = pendingResolution,
     )
 }
 
@@ -454,7 +473,7 @@ internal fun resolveCoilArtworkVisualState(
     waitingForLiveOrigin: Boolean = false,
 ): RemoteArtworkVisualState {
     if (painterState.painter != null || hasRetainedPainter) return RemoteArtworkVisualState.Image
-    if (waitingForLiveOrigin || retainFallbackWhileLoading) return RemoteArtworkVisualState.Missing
+    if (waitingForLiveOrigin || retainFallbackWhileLoading) return RemoteArtworkVisualState.Loading
     if (!hasCandidate) return RemoteArtworkVisualState.Missing
     return when (painterState) {
         is AsyncImagePainter.State.Success -> RemoteArtworkVisualState.Image

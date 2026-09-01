@@ -101,6 +101,12 @@ class AppDependencies(
     val routeViewModelFactory: RouteViewModelFactory,
     /** File-backed on desktop; NSUserDefaults keys on iOS; etc. Used for lightweight UI prefs. */
     val platformStorage: PlatformStorage,
+    val pairedDeviceStore: com.phoebe.app.remote.PairedDeviceStore,
+    val playbackRemoteHostBridge: com.phoebe.app.player.PlaybackRemoteHostBridge,
+    val remoteHostServer: com.phoebe.app.remote.RemoteHostServer,
+    val remoteDiscoveryServer: com.phoebe.app.remote.RemoteDiscoveryServer,
+    val remoteDiscoveryClient: com.phoebe.app.remote.RemoteDiscoveryClient,
+    val remoteControlClient: com.phoebe.app.remote.RemoteControlClient,
 ) : PlaybackRuntimeDependencies {
     /**
      * Sign out and wipe once when the stored-data revision moves.
@@ -208,6 +214,12 @@ class AppDependencies(
                 appUpdateService = services.appUpdateService,
                 routeViewModelFactory = services.routeViewModelFactory,
                 platformStorage = services.platformStorage,
+                pairedDeviceStore = services.pairedDeviceStore,
+                playbackRemoteHostBridge = services.playbackRemoteHostBridge,
+                remoteHostServer = services.remoteHostServer,
+                remoteDiscoveryServer = services.remoteDiscoveryServer,
+                remoteDiscoveryClient = services.remoteDiscoveryClient,
+                remoteControlClient = services.remoteControlClient,
             )
             dependencies.resetStoredDataIfRevisionChanged()
             sessionRepository.restore(refreshConnections = false)
@@ -215,6 +227,7 @@ class AppDependencies(
             searchHistoryRepository.restore()
             userArtifactsRepository.restore()
             radioRepository.restore()
+            services.pairedDeviceStore.restore()
             return dependencies
         }
     }

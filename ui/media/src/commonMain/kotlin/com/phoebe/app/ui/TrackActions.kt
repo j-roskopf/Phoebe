@@ -146,6 +146,7 @@ fun TrackActionMenu(
     onAddToUpNext: (() -> Unit)?,
     onDownload: (() -> Unit)?,
     track: Track? = null,
+    onAddToEndOfQueue: (() -> Unit)? = null,
 ) {
     val actions = LocalPlaylistActions.current
     val likeActions = LocalLikeActions.current
@@ -176,6 +177,15 @@ fun TrackActionMenu(
                 text = { Text("Add to Up Next") },
                 onClick = {
                     onAddToUpNext()
+                    onDismiss()
+                },
+            )
+        }
+        if (onAddToEndOfQueue != null) {
+            DropdownMenuItem(
+                text = { Text("Add to End of Queue") },
+                onClick = {
+                    onAddToEndOfQueue()
                     onDismiss()
                 },
             )

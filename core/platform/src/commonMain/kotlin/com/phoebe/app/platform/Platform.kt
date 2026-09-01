@@ -2,8 +2,14 @@ package com.phoebe.app.platform
 
 import androidx.compose.runtime.Composable
 import com.phoebe.app.domain.PlexServer
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+
+/** Dispatcher for blocking platform I/O such as SQLite and filesystem access. */
+expect object PhoebeDispatchers {
+    val io: CoroutineDispatcher
+}
 
 expect fun createPlatformHttpClient(): io.ktor.client.HttpClient
 
@@ -135,6 +141,16 @@ expect fun downloadParallelism(): Int
 expect fun schedulePlatformDownloadRunner()
 
 expect fun requestNotificationPermission()
+
+expect fun currentDeviceName(): String
+
+expect fun currentDeviceId(): String
+
+expect fun acquireMulticastLock(): AutoCloseable?
+
+expect fun getBroadcastAddresses(): List<String>
+
+expect fun localHostIpAddresses(): List<String>
 
 expect class DownloadNotifier() {
     suspend fun notifyDownloadFinished(title: String, body: String): Boolean

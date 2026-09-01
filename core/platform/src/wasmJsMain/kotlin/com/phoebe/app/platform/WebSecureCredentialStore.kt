@@ -68,6 +68,8 @@ private val SecureCredentialKey.webStorageName: String
         SecureCredentialKey.ListenBrainzUserToken -> "listenbrainz-user-token"
         SecureCredentialKey.LastFmSharedSecret -> "lastfm-shared-secret"
         SecureCredentialKey.LastFmSessionKey -> "lastfm-session-key"
+        SecureCredentialKey.RemoteControlPairedDevices -> "remote-control-paired-devices"
+        SecureCredentialKey.RemoteControlClientSecrets -> "remote-control-client-secrets"
     }
 
 private const val WebCredentialAvailabilityPersistent = "persistent"

@@ -44,6 +44,7 @@ fun PlayHistoryRoute(
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
 ) {
     LaunchedEffect(state) {
         viewModel.update(state)
@@ -62,6 +63,7 @@ fun PlayHistoryRoute(
         onPlayTracks = onPlayTracks,
         onAddToUpNext = onAddToUpNext,
         onDownload = onDownload,
+        onAddToEndOfQueue = onAddToEndOfQueue,
     )
 }
 
@@ -81,6 +83,7 @@ fun PlayHistoryRoute(
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
 ) {
     val catalogTrackIndexKey = catalog.trackIndexKey()
     val playHistoryKey = playHistory.derivationKey()
@@ -115,5 +118,6 @@ fun PlayHistoryRoute(
         onPlayTracks = onPlayTracks,
         onAddToUpNext = onAddToUpNext,
         onDownload = onDownload,
+        onAddToEndOfQueue = onAddToEndOfQueue,
     )
 }

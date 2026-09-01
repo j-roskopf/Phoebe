@@ -695,6 +695,80 @@ fun cancelPlatformDownloadRunner() {
     WorkManager.getInstance(context).cancelUniqueWork(PhoebeDownloadWorkerName)
 }
 
+actual fun currentDeviceName(): String {
+    val context = AndroidContextHolder.applicationOrNull
+    val globalName = if (context != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
+        runCatching { android.provider.Settings.Global.getString(context.contentResolver, "device_name") }.getOrNull()
+    } else null
+    return globalName?.takeIf { it.isNotBlank() }
+        ?: listOfNotNull(Build.MANUFACTURER?.replaceFirstChar { it.uppercase() }, Build.MODEL)
+            .filter { it.isNotBlank() }
+            .distinct()
+            .joinToString(" ")
+            .ifBlank { "Android Device" }
+}
+
+actual fun currentDeviceId(): String {
+    val context = AndroidContextHolder.application
+    val file = File(context.filesDir, "phoebe-device-id.txt")
+    if (file.exists()) {
+        val id = file.readText().trim()
+        if (id.isNotBlank()) return id
+    }
+    val newId = "android-" + java.util.UUID.randomUUID().toString()
+    runCatching { file.writeText(newId) }
+    return newId
+}
+
+actual fun acquireMulticastLock(): AutoCloseable? {
+    val context = AndroidContextHolder.applicationOrNull ?: return null
+    val wifiManager = context.getSystemService(Context.WIFI_SERVICE) as? android.net.wifi.WifiManager ?: return null
+    return runCatching {
+        val lock = wifiManager.createMulticastLock("phoebe-multicast-lock")
+        lock.setReferenceCounted(true)
+        lock.acquire()
+        AutoCloseable {
+            runCatching {
+                if (lock.isHeld) {
+                    lock.release()
+                }
+            }
+        }
+    }.getOrNull()
+}
+
+actual fun getBroadcastAddresses(): List<String> = runCatching {
+    val broadcasts = mutableListOf<String>()
+    val interfaces = java.net.NetworkInterface.getNetworkInterfaces() ?: return broadcasts
+    for (iface in interfaces) {
+        if (!iface.isUp || iface.isLoopback || iface.isVirtual || iface.isPointToPoint) continue
+        for (addr in iface.interfaceAddresses) {
+            val bcast = addr.broadcast
+            if (bcast != null) {
+                val host = bcast.hostAddress
+                if (!host.isNullOrBlank() && !host.contains('%')) {
+                    broadcasts.add(host)
+                }
+            }
+        }
+    }
+    broadcasts.distinct()
+}.getOrDefault(emptyList())
+
+actual fun localHostIpAddresses(): List<String> = runCatching {
+    val addresses = mutableListOf<String>()
+    val interfaces = java.net.NetworkInterface.getNetworkInterfaces() ?: return addresses
+    for (iface in interfaces) {
+        if (!iface.isUp || iface.isLoopback || iface.isVirtual || iface.isPointToPoint) continue
+        for (addr in iface.inetAddresses) {
+            if (addr is java.net.Inet4Address && !addr.isLoopbackAddress && !addr.isLinkLocalAddress) {
+                addr.hostAddress?.takeIf { it.isNotBlank() }?.let { addresses.add(it) }
+            }
+        }
+    }
+    addresses.distinct()
+}.getOrDefault(emptyList())
+
 actual fun isDebugBuild(): Boolean =
     AndroidContextHolder.applicationOrNull?.applicationInfo?.flags
         ?.let { flags -> flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 }

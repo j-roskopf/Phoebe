@@ -85,6 +85,7 @@ abstract class SimpleAudioPlayer(
     protected fun isPlayRequestCurrent(generation: Int): Boolean = generation == playGeneration
 
     override fun play(queue: List<Track>, startIndex: Int) {
+        if (queue.isEmpty()) return
         val previous = mutableState.value
         val playbackQueue = queue.preferStickyPlaybackOrigin()
         val index = startIndex.coerceIn(playbackQueue.indices)
@@ -253,16 +254,44 @@ abstract class SimpleAudioPlayer(
                 durationMs = track.durationMs,
             )
         }
-        val initialUri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
-            .ifBlank { track.playbackUriCandidates().firstOrNull().orEmpty() }
-        if (initialUri.isNotBlank()) notePlaybackUri(initialUri, generation)
-        openPlaybackOrigin = initialUri.takeIf { it.isNotBlank() }?.let(::playbackOriginOf)
+        val initialUri = resolvedInitialPlaybackUriOrNull(track)
+        if (initialUri == null) {
+            failNoPlayableSource(track, generation)
+            return
+        }
+        notePlaybackUri(initialUri, generation)
+        openPlaybackOrigin = playbackOriginOf(initialUri)
         startPlaybackStartupWatchdog(generation)
         if (sameQueue) {
             skipToInQueueOnPlatform(queue, index, track, generation)
         } else {
             playQueueOnPlatform(queue, index, track, generation)
         }
+    }
+
+    /**
+     * The URI [launchPreparedPlayback]/[prepare] would hand the platform player, or null when
+     * the track has neither a local file nor a bindable stream URL.
+     *
+     * Handing the platform player an empty URI does not fail cleanly: on Android, ExoPlayer
+     * resolves a schemeless/empty URI to a local file path and crashes with a bare
+     * "open failed: ENOENT" instead of a reportable player error. Checking here lets that one
+     * track fail with a normal [PlaybackFailure] instead.
+     */
+    private fun resolvedInitialPlaybackUriOrNull(track: Track): String? =
+        StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
+            .ifBlank { track.playbackUriCandidates().firstOrNull().orEmpty() }
+            .takeIf { it.isNotBlank() }
+
+    private fun failNoPlayableSource(track: Track, generation: Int) {
+        PhoebeLog.d("AudioPlayer") { "no playable uri for track=${track.id}; skipping" }
+        publishPlaybackFailure(
+            PlaybackFailure(
+                kind = PlaybackFailureKind.NotFound,
+                message = "no playable source for track ${track.id}",
+            ),
+            generation,
+        )
     }
 
     private fun List<Track>.withResolvedOrigin(origin: String): List<Track> {
@@ -310,9 +339,13 @@ abstract class SimpleAudioPlayer(
         )
         setOutputVolume(effectiveOutputVolume())
         if (track != null) {
-            playQueueOnPlatform(queue, index, track, generation)
-            if (boundedPositionMs > 0L) {
-                seek(boundedPositionMs)
+            if (resolvedInitialPlaybackUriOrNull(track) == null) {
+                failNoPlayableSource(track, generation)
+            } else {
+                playQueueOnPlatform(queue, index, track, generation)
+                if (boundedPositionMs > 0L) {
+                    seek(boundedPositionMs)
+                }
             }
         }
     }
@@ -480,8 +513,9 @@ abstract class SimpleAudioPlayer(
 
     override fun previous() {
         val state = mutableState.value
+        if (state.queue.isEmpty() || state.currentIndex < 0) return
         val previousIndex = (state.currentIndex - 1).coerceAtLeast(0)
-        if (previousIndex >= 0) play(state.queue, previousIndex)
+        play(state.queue, previousIndex)
     }
 
     override fun seekTo(positionMs: Long) {

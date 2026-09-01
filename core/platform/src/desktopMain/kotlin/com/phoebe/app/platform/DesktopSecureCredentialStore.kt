@@ -319,6 +319,8 @@ private val SecureCredentialKey.account: String
         SecureCredentialKey.ListenBrainzUserToken -> "userToken"
         SecureCredentialKey.LastFmSharedSecret -> "lastFmSharedSecret"
         SecureCredentialKey.LastFmSessionKey -> "lastFmSessionKey"
+        SecureCredentialKey.RemoteControlPairedDevices -> "remoteControlPairedDevices"
+        SecureCredentialKey.RemoteControlClientSecrets -> "remoteControlClientSecrets"
     }
 
 private val SecureCredentialKey.windowsTargetName: String
@@ -326,6 +328,8 @@ private val SecureCredentialKey.windowsTargetName: String
         SecureCredentialKey.ListenBrainzUserToken -> "Phoebe.ListenBrainzToken"
         SecureCredentialKey.LastFmSharedSecret -> "Phoebe.LastFmSharedSecret"
         SecureCredentialKey.LastFmSessionKey -> "Phoebe.LastFmSessionKey"
+        SecureCredentialKey.RemoteControlPairedDevices -> "Phoebe.RemoteControlPairedDevices"
+        SecureCredentialKey.RemoteControlClientSecrets -> "Phoebe.RemoteControlClientSecrets"
     }
 
 private const val MacListenBrainzService = "com.phoebe.listenbrainz"

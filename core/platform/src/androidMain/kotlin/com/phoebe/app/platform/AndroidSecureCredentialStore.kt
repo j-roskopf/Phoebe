@@ -89,6 +89,8 @@ private val SecureCredentialKey.fileName: String
         SecureCredentialKey.ListenBrainzUserToken -> "listenbrainz-user-token"
         SecureCredentialKey.LastFmSharedSecret -> "lastfm-shared-secret"
         SecureCredentialKey.LastFmSessionKey -> "lastfm-session-key"
+        SecureCredentialKey.RemoteControlPairedDevices -> "remote-control-paired-devices"
+        SecureCredentialKey.RemoteControlClientSecrets -> "remote-control-client-secrets"
     }
 
 private const val AndroidKeyStore = "AndroidKeyStore"

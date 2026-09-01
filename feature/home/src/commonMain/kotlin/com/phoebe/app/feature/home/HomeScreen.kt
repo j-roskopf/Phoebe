@@ -1655,6 +1655,7 @@ private fun HomePlayedTableRow(
                 Modifier.fillMaxSize().sharedArtworkTransition("song:${track.id}"),
                 elevated = false,
                 maxDecodeDimension = 128,
+                pendingResolution = row.isPlaceholder,
             )
             if (isNowPlaying) {
                 Box(
@@ -3445,6 +3446,7 @@ private fun RecentPlayedPanel(
                     sharedKey = sharedKeyForTrack(row.track),
                     showFavoriteAction = showFavoriteAction,
                     rowHeight = rowHeight,
+                    pendingResolution = row.isPlaceholder,
                 )
             }
         }
@@ -3895,6 +3897,7 @@ private fun MostPlayedPanel(
                     showFavoriteAction = showFavoriteAction,
                     rowHeight = rowHeight,
                     maxDecodeDimension = maxDecodeDimension,
+                    pendingResolution = row.isPlaceholder,
                 )
             }
         }
@@ -4041,6 +4044,7 @@ private fun HomePlayedTrackRow(
     showFavoriteAction: Boolean = true,
     rowHeight: Dp = 88.dp,
     maxDecodeDimension: Int = ListArtworkMaxDecodeDimension,
+    pendingResolution: Boolean = false,
 ) {
     var menuExpanded by remember(track.id) { mutableStateOf(false) }
     val nowPlaying = LocalNowPlaying.current
@@ -4071,6 +4075,7 @@ private fun HomePlayedTrackRow(
                 Modifier.fillMaxSize().sharedArtworkTransition(sharedKey),
                 elevated = false,
                 maxDecodeDimension = maxDecodeDimension,
+                pendingResolution = pendingResolution,
             )
             if (isNowPlaying) {
                 Box(

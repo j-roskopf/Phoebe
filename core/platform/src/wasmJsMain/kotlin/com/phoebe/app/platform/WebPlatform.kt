@@ -796,3 +796,19 @@ private external fun requestBrowserNotificationPermission(callback: (String) -> 
 @OptIn(ExperimentalWasmJsInterop::class)
 @JsFun("(title, body) => { new Notification(title, { body }); }")
 private external fun showBrowserNotification(title: String, body: String)
+
+actual fun currentDeviceName(): String = "Web Browser"
+
+actual fun currentDeviceId(): String {
+    val existing = window.localStorage.getItem("phoebe:device-id")
+    if (!existing.isNullOrBlank()) return existing
+    val newId = "web-" + (100000..999999).random().toString() + "-" + jsDateNow().toLong()
+    window.localStorage.setItem("phoebe:device-id", newId)
+    return newId
+}
+
+actual fun acquireMulticastLock(): AutoCloseable? = null
+
+actual fun getBroadcastAddresses(): List<String> = emptyList()
+
+actual fun localHostIpAddresses(): List<String> = emptyList()

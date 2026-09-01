@@ -73,7 +73,6 @@ import com.phoebe.app.data.DownloadServiceResult
 import com.phoebe.app.data.ArtworkAuthHolder
 import com.phoebe.app.data.ArtworkOriginHolder
 import com.phoebe.app.data.isLocalOnlyServerOrigin
-import com.phoebe.app.data.isPlexMediaPathOrUrl
 import com.phoebe.app.data.BackupRestoreMode
 import com.phoebe.app.data.JellyfinQuickConnectResult
 import com.phoebe.app.data.JellyfinPlayHistorySyncResult
@@ -83,7 +82,6 @@ import com.phoebe.app.data.PlayHistoryRankedEntries
 import com.phoebe.app.data.PlexPlayHistorySyncResult
 import com.phoebe.app.data.PlexClient
 import com.phoebe.app.data.defaultPlexRadioStations
-import com.phoebe.app.data.shouldSkipAdvertisedLan
 import com.phoebe.app.playlists.PlaylistExportFormat
 import com.phoebe.app.player.MusicAssistantRemotePlayback
 import com.phoebe.app.player.PlaybackOriginResolver
@@ -92,8 +90,7 @@ import com.phoebe.app.player.StreamingPlaybackPolicyHolder
 import com.phoebe.app.player.asPlayerState
 import com.phoebe.app.player.isPlaybackActive
 import com.phoebe.app.player.playbackOriginCandidates
-import com.phoebe.app.player.withPlaybackOrigins
-import com.phoebe.app.player.withRelativePlexPlaybackPaths
+import com.phoebe.app.player.withFreshPlaybackUrls
 import com.phoebe.app.domain.RecentSearchItem
 import com.phoebe.app.platform.MemoryPressureLevel
 import com.phoebe.app.platform.PhoebeAppLifecycle
@@ -110,9 +107,7 @@ import com.phoebe.app.platform.requestNotificationPermission
 import com.phoebe.app.ui.AppNavigationRequest
 import com.phoebe.app.ui.CollectionMixSeed
 import com.phoebe.app.updates.AppUpdateState
-import io.ktor.http.Url
 import kotlin.random.Random
-import io.ktor.http.encodeURLParameter
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -178,6 +173,12 @@ class AppState(
     val tracksLoading = dependencies.catalogRepository.tracksLoading
     val mediaSources = dependencies.mediaSourcesRepository.state
     val cast = dependencies.castController.state
+    val remoteControl = dependencies.remoteControlClient.state
+    val remoteHost = dependencies.remoteHostServer
+    val pairedDevices = dependencies.pairedDeviceStore
+    private val mutableDiscoveredHosts = MutableStateFlow<List<com.phoebe.app.remote.DiscoveredHost>>(emptyList())
+    val discoveredHosts: StateFlow<List<com.phoebe.app.remote.DiscoveredHost>> = mutableDiscoveredHosts.asStateFlow()
+    private var remoteDiscoveryJob: Job? = null
     private val mutableMusicAssistantRemotePlayback = MutableStateFlow<MusicAssistantRemotePlayback?>(null)
     val musicAssistantRemotePlayback = mutableMusicAssistantRemotePlayback.asStateFlow()
     private val mutableUpNextDivider = MutableStateFlow<UpNextDividerMarker?>(null)
@@ -185,8 +186,10 @@ class AppState(
         dependencies.audioPlayer.state,
         dependencies.castController.state,
         mutableMusicAssistantRemotePlayback,
-    ) { audio, castState, musicAssistantRemote ->
+        dependencies.remoteControlClient.state,
+    ) { audio, castState, musicAssistantRemote, remoteState ->
         when {
+            remoteState.isConnectedOrReconnecting -> remoteState.asPlayerState(audio)
             castState.isPlaybackActive -> castState.asPlayerState(audio)
             musicAssistantRemote != null -> musicAssistantRemote.asPlayerState(audio)
             else -> audio
@@ -454,6 +457,10 @@ class AppState(
         popularMixSeedTracks = emptyList()
         topTracksMixBuildDeferred = null
         topTracksMixBuildSignature = null
+        dependencies.remoteHostServer.stop()
+        dependencies.remoteDiscoveryServer.stop()
+        dependencies.remoteControlClient.disconnect()
+        stopRemoteDiscovery()
         if (!closeDependenciesOnDispose) return
         if (isDesktopPlatform()) {
             CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
@@ -462,6 +469,35 @@ class AppState(
         } else {
             dependencies.close()
         }
+    }
+
+    fun startRemoteDiscovery() {
+        if (remoteDiscoveryJob?.isActive == true) return
+        mutableDiscoveredHosts.value = emptyList()
+        remoteDiscoveryJob = scope.launch {
+            dependencies.remoteDiscoveryClient.discover().collect { host ->
+                mutableDiscoveredHosts.update { current ->
+                    if (current.any { it.deviceId == host.deviceId && it.hostAddress == host.hostAddress }) {
+                        current
+                    } else {
+                        current + host
+                    }
+                }
+            }
+        }
+    }
+
+    fun stopRemoteDiscovery() {
+        remoteDiscoveryJob?.cancel()
+        remoteDiscoveryJob = null
+    }
+
+    fun connectRemoteControl(host: String, port: Int = com.phoebe.app.remote.DEFAULT_REMOTE_TCP_PORT) {
+        dependencies.remoteControlClient.connect(host, port)
+    }
+
+    fun disconnectRemoteControl() {
+        dependencies.remoteControlClient.disconnect()
     }
 
     private fun publishActiveDownloadJobCount() {
@@ -495,9 +531,23 @@ class AppState(
                             dependencies.radioNowPlayingRepository.resolve(track)
                         }.getOrNull()
                         mutableRadioNowPlaying.value = metadata
-                            ?.takeIf { it.hasTrack }
-                            ?.copy(trackId = track.id)
+                        ?.takeIf { it.hasTrack }
+                        ?.copy(trackId = track.id)
                         delay(RadioNowPlayingRefreshMs)
+                    }
+                }
+        }
+        scope.launch {
+            appSettings
+                .map { it.remoteControlHostEnabled }
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    if (enabled) {
+                        dependencies.remoteHostServer.start(scope)
+                        dependencies.remoteDiscoveryServer.start(scope)
+                    } else {
+                        dependencies.remoteHostServer.stop()
+                        dependencies.remoteDiscoveryServer.stop()
                     }
                 }
         }
@@ -560,34 +610,65 @@ class AppState(
             if (session.value.isPlex() && session.value?.selectedServer != null) {
                 coroutineScope {
                     val connectionsJob = async {
-                        runCatching {
-                            dependencies.sessionRepository.refreshSelectedServerConnections()
-                        }.onFailure { error ->
-                            PhoebeLog.d("AppState") {
-                                "refreshSelectedServerConnections failed: ${error.message}"
-                            }
-                        }
-                        seedPlexArtworkOrigins()
-                        val current = session.value
-                        val server = current?.selectedServer
-                        val token = current?.serverAuthToken() ?: current?.token
                         val resolver = runCatching {
                             dependencies.appGraph.plexConnectionResolver
                         }.getOrNull()
-                        val live = runCatching {
-                            if (server != null && !token.isNullOrBlank() && resolver != null) {
-                                resolver.resolveFresh(server, token)
-                            } else {
-                                dependencies.sessionRepository.warmServerConnection()
-                                resolver?.probedOrigin?.value
+                        val initialServer = session.value?.selectedServer
+                        val token = session.value?.serverAuthToken() ?: session.value?.token
+                        seedPlexArtworkOrigins()
+
+                        // Race immediately against whatever connections we already have on disk
+                        // (LAN rarely changes) instead of blocking first paint on the plex.tv
+                        // round trip below. Relay/remote origins are never trusted without their
+                        // own live /identity probe, so racing a possibly-stale list here is safe.
+                        val raceJob = async {
+                            runCatching {
+                                if (initialServer != null && !token.isNullOrBlank() && resolver != null) {
+                                    resolver.resolveFresh(initialServer, token)
+                                } else {
+                                    dependencies.sessionRepository.warmServerConnection()
+                                    resolver?.probedOrigin?.value
+                                }
+                            }.onFailure { error ->
+                                if (error is CancellationException) throw error
+                                PhoebeLog.d("AppState") {
+                                    "plex identity race failed: ${error.message}"
+                                }
+                            }.getOrNull()
+                        }
+                        val refreshJob = async {
+                            runCatching {
+                                dependencies.sessionRepository.refreshSelectedServerConnections()
+                            }.onFailure { error ->
+                                PhoebeLog.d("AppState") {
+                                    "refreshSelectedServerConnections failed: ${error.message}"
+                                }
                             }
-                        }.onFailure { error ->
-                            if (error is CancellationException) throw error
-                            PhoebeLog.d("AppState") {
-                                "plex identity race failed: ${error.message}"
-                            }
-                        }.getOrNull()
+                        }
+
+                        val live = raceJob.await()
                         applyLivePlexOrigin(live ?: resolver?.probedOrigin?.value)
+                        refreshJob.await()
+
+                        // The race above ran against whatever connections we already had. If
+                        // plex.tv returned a different list (a rotated WAN/relay address) and
+                        // that race came up completely empty, re-race with the fresh list before
+                        // giving up — mirrors resolveFresh's own "only after every known URL has
+                        // failed" retry philosophy.
+                        val refreshedServer = session.value?.selectedServer
+                        if (live == null && resolver != null && !token.isNullOrBlank() &&
+                            refreshedServer != null && refreshedServer != initialServer
+                        ) {
+                            val retried = runCatching {
+                                resolver.resolveFresh(refreshedServer, token)
+                            }.onFailure { error ->
+                                if (error is CancellationException) throw error
+                                PhoebeLog.d("AppState") {
+                                    "plex identity re-race failed: ${error.message}"
+                                }
+                            }.getOrNull()
+                            applyLivePlexOrigin(retried ?: resolver.probedOrigin.value)
+                        }
                         if (ArtworkOriginHolder.liveOrigin == null) {
                             PhoebeLog.d("AppState") {
                                 "plex live base unavailable after identity race; retrying"
@@ -2954,6 +3035,16 @@ class AppState(
         if (playbackTracks.isEmpty()) return false
         val startIndex = index.coerceIn(playbackTracks.indices)
         val track = playbackTracks[startIndex]
+        val remoteClientState = dependencies.remoteControlClient.state.value
+        if (remoteClientState.isConnected && remoteClientState.sameAccount) {
+            // A same-account controller replaces the host's queue outright; the host's own
+            // AppState records history / keep-playing continuation once it starts playing,
+            // same as any other remotely-triggered playback (e.g. jump-to-index) does today.
+            scope.launch {
+                dependencies.remoteControlClient.replaceQueue(playbackTracks, startIndex, shuffleEnabled)
+            }
+            return true
+        }
         if (dependencies.castController.state.value.isConnected) {
             mutableMusicAssistantRemotePlayback.value = null
             val support = dependencies.castController.canLoadQueue(playbackTracks)
@@ -3124,6 +3215,7 @@ class AppState(
         dependencies.playbackTransportService.addToUpNext(track)
     }
     fun appendToQueue(tracks: List<Track>) = dependencies.playbackTransportService.appendToQueue(tracks)
+    fun addToEndOfQueue(track: Track) = dependencies.playbackTransportService.appendToQueue(listOf(track))
     fun moveUpNext(fromIndex: Int, toIndex: Int) {
         markKeepPlayingQueueEditedByUser()
         dependencies.playbackTransportService.moveUpNext(fromIndex, toIndex)
@@ -3739,6 +3831,18 @@ class AppState(
         dependencies.lastFmService.setSubmitScrobbles(enabled)
     }
 
+    fun setRemoteControlHostEnabled(enabled: Boolean) = scope.launch {
+        dependencies.appSettingsRepository.setRemoteControlHostEnabled(enabled)
+    }
+
+    fun setRemoteControlHostName(name: String) = scope.launch {
+        dependencies.appSettingsRepository.setRemoteControlHostName(name)
+    }
+
+    fun revokePairedDevice(deviceId: String) = scope.launch {
+        dependencies.pairedDeviceStore.revokeDevice(deviceId)
+    }
+
     fun setEqualizerEnabled(enabled: Boolean) {
         applyEqualizerProfile(mutableEqualizerProfile.value.withEnabled(enabled))
     }
@@ -4313,120 +4417,6 @@ private fun PlexSession?.topTracksMixSessionSignature(): String? {
     val serverId = this?.selectedServer?.id?.takeIf { it.isNotBlank() } ?: return null
     val libraryKey = selectedLibrary?.key?.takeIf { it.isNotBlank() } ?: return null
     return "$serverId:$libraryKey"
-}
-
-internal fun List<Track>.withFreshPlaybackUrls(
-    session: PlexSession?,
-    liveOrigin: String? = null,
-): List<Track> {
-    if (session == null || isEmpty()) return this
-    var changed = false
-    val refreshed = map { track ->
-        val next = track.withFreshPlaybackUrls(session, liveOrigin)
-        if (next !== track) changed = true
-        next
-    }
-    return if (changed) refreshed else this
-}
-
-internal fun Track.withFreshPlaybackUrls(
-    session: PlexSession,
-    liveOrigin: String? = null,
-): Track {
-    val identity = currentNetworkIdentity()
-    val demoteLocalOrigins = StreamingPlaybackPolicyHolder.settings.shouldDemoteLocalOrigins(
-        identity.demotesLocalOrigins,
-    ) || session.selectedServer?.let { identity.shouldSkipAdvertisedLan(it) } == true
-    val preferred = liveOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }
-    val origins = playbackOriginCandidates(
-        server = session.selectedServer,
-        preferredOrigin = preferred,
-        demoteLocalOrigins = demoteLocalOrigins,
-    )
-    if (session.providerType == MediaProviderType.Plex &&
-        (streamUrl.isPlexMediaPathOrUrl() || downloadUrl.isPlexMediaPathOrUrl())
-    ) {
-        // Plex queues carry relative part keys only. Stamping an absolute origin here is what
-        // made a queue go stale the instant the network changed: every entry pointed at the
-        // address that happened to be live when the queue was built. The origin is bound at
-        // open time instead, in StreamingPlaybackPolicyHolder.resolvePlaybackUri.
-        return withRelativePlexPlaybackPaths()
-    }
-    val withOrigins = if (origins.isEmpty()) this else withPlaybackOrigins(origins.first(), origins.drop(1))
-    val refreshedStreamUrl = withOrigins.streamUrl.withFreshPlaybackAuth(session)
-    val refreshedDownloadUrl = withOrigins.downloadUrl.withFreshPlaybackAuth(session)
-    val refreshedFallbacks = withOrigins.playbackFallbackUrls.map { url ->
-        url.withFreshPlaybackAuth(session)
-    }.filter { it.isNotBlank() && it != refreshedStreamUrl }.distinct()
-    if (refreshedStreamUrl == streamUrl &&
-        refreshedDownloadUrl == downloadUrl &&
-        refreshedFallbacks == playbackFallbackUrls
-    ) {
-        return this
-    }
-    return withOrigins.copy(
-        streamUrl = refreshedStreamUrl,
-        downloadUrl = refreshedDownloadUrl,
-        playbackFallbackUrls = refreshedFallbacks,
-    )
-}
-
-internal fun String.withFreshPlaybackAuth(session: PlexSession): String {
-    if (isBlank() || session.token.isBlank()) return this
-    val parsed = runCatching { Url(this) }.getOrNull() ?: return this
-    if (parsed.protocol.name != "http" && parsed.protocol.name != "https") return this
-    return when (session.providerType) {
-        MediaProviderType.Plex -> withQueryParameter(parsed, "X-Plex-Token", session.token)
-        MediaProviderType.Jellyfin,
-        MediaProviderType.Emby -> withQueryParameter(parsed, "api_key", session.token)
-        MediaProviderType.Navidrome -> withQueryParameters(
-            parsed,
-            "u" to session.userName,
-            "p" to session.token,
-        )
-        MediaProviderType.MusicAssistant -> this
-    }
-}
-
-private fun withQueryParameter(url: Url, name: String, value: String): String =
-    withQueryParameters(url, name to value)
-
-private fun withQueryParameters(url: Url, vararg replacements: Pair<String, String>): String {
-    val original = url.toString()
-    val fragment = original.substringAfter('#', missingDelimiterValue = "")
-    val withoutFragment = original.substringBefore('#')
-    val base = withoutFragment.substringBefore('?')
-    val query = withoutFragment.substringAfter('?', missingDelimiterValue = "")
-    val replacementMap = replacements
-        .filter { (_, value) -> value.isNotBlank() }
-        .associate { (name, value) -> name to value }
-    if (replacementMap.isEmpty()) return original
-    val seen = mutableSetOf<String>()
-    val pairs = query
-        .split('&')
-        .filter { it.isNotBlank() }
-        .mapNotNull { pair ->
-            val name = pair.substringBefore('=')
-            val replacement = replacementMap[name] ?: return@mapNotNull pair
-            seen += name
-            "$name=${replacement.encodeURLParameter()}"
-        }
-        .toMutableList()
-    replacementMap.forEach { (name, value) ->
-        if (name !in seen) pairs += "$name=${value.encodeURLParameter()}"
-    }
-    val rebuilt = buildString {
-        append(base)
-        if (pairs.isNotEmpty()) {
-            append('?')
-            append(pairs.joinToString("&"))
-        }
-        if (fragment.isNotBlank()) {
-            append('#')
-            append(fragment)
-        }
-    }
-    return rebuilt
 }
 
 private data class PlaybackHistorySignal(

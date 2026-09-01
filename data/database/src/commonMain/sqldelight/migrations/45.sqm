@@ -1,0 +1,2 @@
+ALTER TABLE AppSettingsRow ADD COLUMN remoteControlHostEnabled INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE AppSettingsRow ADD COLUMN remoteControlHostName TEXT NOT NULL DEFAULT '';

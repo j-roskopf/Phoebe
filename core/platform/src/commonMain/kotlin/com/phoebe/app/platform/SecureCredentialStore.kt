@@ -6,6 +6,8 @@ enum class SecureCredentialKey {
     ListenBrainzUserToken,
     LastFmSharedSecret,
     LastFmSessionKey,
+    RemoteControlPairedDevices,
+    RemoteControlClientSecrets,
 }
 
 data class SecureCredentialAvailability(

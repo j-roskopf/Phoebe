@@ -114,6 +114,7 @@ fun LibraryMobileView(
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
     modifier: Modifier = Modifier,
     searchQuery: String = "",
     onSearchQuery: (String) -> Unit = {},
@@ -227,6 +228,7 @@ fun LibraryMobileView(
                     ascending = ascending,
                     onPlay = { index -> onPlayTracks(trackPage.items, index) },
                     onAddToUpNext = onAddToUpNext,
+                    onAddToEndOfQueue = onAddToEndOfQueue,
                     onDownload = onDownload,
                     contentPadding = listContentPadding,
                     contentHeader = libraryHeader,
@@ -1001,6 +1003,7 @@ private fun MobileSongsList(
     onPlay: (Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(),
     contentHeader: (@Composable () -> Unit)? = null,
 ) {
@@ -1043,6 +1046,7 @@ private fun MobileSongsList(
                 val track = tracks[index]
                 val onPlayClick = remember(index, onPlay) { { onPlay(index) } }
                 val onAddClick = remember(track, onAddToUpNext) { { onAddToUpNext(track) } }
+                val onAddToEndClick = remember(track, onAddToEndOfQueue) { { onAddToEndOfQueue(track) } }
                 val onDownloadClick = remember(track, onDownload) { { onDownload(track) } }
                 MobileSongRow(
                     track = track,
@@ -1053,6 +1057,7 @@ private fun MobileSongsList(
                     onPlay = onPlayClick,
                     onAddToUpNext = onAddClick,
                     onDownload = onDownloadClick,
+                    onAddToEndOfQueue = onAddToEndClick,
                 )
             }
         }
@@ -1095,6 +1100,7 @@ fun MobileSongRow(
     onToggleSelection: (() -> Unit)? = null,
     playCount: Long? = null,
     lastPlayedMs: Long? = null,
+    onAddToEndOfQueue: (() -> Unit)? = null,
 ) {
     var menuExpanded by remember(track.id) { mutableStateOf(false) }
     val likeActions = LocalLikeActions.current
@@ -1270,6 +1276,7 @@ fun MobileSongRow(
                 onAddToUpNext = onAddToUpNext,
                 onDownload = onDownload,
                 track = track,
+                onAddToEndOfQueue = onAddToEndOfQueue,
             )
         }
     }

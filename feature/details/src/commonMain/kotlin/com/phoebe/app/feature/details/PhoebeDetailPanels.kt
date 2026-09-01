@@ -2152,6 +2152,7 @@ fun ArtistDetailPanel(
     onArtist: (Artist) -> Unit,
     onCollectionItems: (CollectionEntry, String) -> Unit = { _, _ -> },
     onLibraryColumns: (LibraryColumnVisibility) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
 ) {
     val albums = remember(catalog.albums, artist.title) { catalogAlbumsForArtist(catalog, artist.title) }
     val artistThumbUrl = remember(artist.thumbUrl, albums) {
@@ -2341,6 +2342,7 @@ fun ArtistDetailPanel(
                                             onPlayTracks = onPlayTracks,
                                             onAddToUpNext = onAddToUpNext,
                                             onDownload = onDownload,
+                                            onAddToEndOfQueue = onAddToEndOfQueue,
                                         )
                                         Spacer(Modifier.height(10.dp))
                                     }
@@ -2396,6 +2398,7 @@ fun ArtistDetailPanel(
                                         onAddToUpNext = onAddToUpNext,
                                         onDownload = onDownload,
                                         modifier = contentPaddingModifier.padding(top = 8.dp),
+                                        onAddToEndOfQueue = onAddToEndOfQueue,
                                     )
                                 }
                                 DetailSectionHeader(
@@ -2553,6 +2556,7 @@ fun ArtistDetailPanel(
                                 onDownload = { onDownload(track) },
                                 modifier = contentPaddingModifier,
                                 showPlaylistDragHandle = false,
+                                onAddToEndOfQueue = { onAddToEndOfQueue(track) },
                             )
                         }
                     } else {
@@ -2568,6 +2572,7 @@ fun ArtistDetailPanel(
                                 onAddToUpNext = { onAddToUpNext(track) },
                                 onDownload = { onDownload(track) },
                                 modifier = contentPaddingModifier,
+                                onAddToEndOfQueue = { onAddToEndOfQueue(track) },
                             )
                         }
                     }
@@ -3098,6 +3103,7 @@ private fun PopularTracksSection(
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     modifier: Modifier = Modifier,
+    onAddToEndOfQueue: (Track) -> Unit = {},
 ) {
     val nowPlaying = LocalNowPlaying.current
     Column(modifier, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -3114,6 +3120,7 @@ private fun PopularTracksSection(
                     onDownload = { onDownload(track) },
                     showPlaylistDragHandle = false,
                     sharedKey = "popular:${track.id}",
+                    onAddToEndOfQueue = { onAddToEndOfQueue(track) },
                 )
             } else {
                 MobileSongRow(
@@ -3125,6 +3132,7 @@ private fun PopularTracksSection(
                     onPlay = { onPlayTracks(tracks, index) },
                     onAddToUpNext = { onAddToUpNext(track) },
                     onDownload = { onDownload(track) },
+                    onAddToEndOfQueue = { onAddToEndOfQueue(track) },
                 )
             }
         }
@@ -3743,6 +3751,7 @@ fun AlbumDetailPanel(
     onArtist: (Artist) -> Unit,
     onCollectionItems: (CollectionEntry, String) -> Unit = { _, _ -> },
     onLibraryColumns: (LibraryColumnVisibility) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
 ) {
     val resolvedAlbum = remember(catalog.albums, album.id) {
         catalog.albums.firstOrNull { it.id == album.id } ?: album
@@ -3950,6 +3959,7 @@ fun AlbumDetailPanel(
                     onAddToUpNext = { onAddToUpNext(track) },
                     onDownload = { onDownload(track) },
                     modifier = contentPaddingModifier,
+                    onAddToEndOfQueue = { onAddToEndOfQueue(track) },
                 )
             }
         } else {
@@ -3965,6 +3975,7 @@ fun AlbumDetailPanel(
                     onAddToUpNext = { onAddToUpNext(track) },
                     onDownload = { onDownload(track) },
                     modifier = contentPaddingModifier,
+                    onAddToEndOfQueue = { onAddToEndOfQueue(track) },
                 )
             }
         }
@@ -4153,6 +4164,7 @@ fun PlaylistDetailPanel(
     onDeleteDownloadPlaylist: (Playlist) -> Unit = {},
     onMovePlaylistTrack: (Playlist, Int, Int) -> Unit = { _, _, _ -> },
     onLibraryColumns: (LibraryColumnVisibility) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
 ) {
     val tracks = remember(catalog.tracksByParent, playlist.id) {
         catalog.tracksByParent[playlist.id].orEmpty()
@@ -4464,6 +4476,7 @@ fun PlaylistDetailPanel(
                                 null
                             },
                             selectionMode = editEnabled,
+                            onAddToEndOfQueue = { onAddToEndOfQueue(track) },
                         )
                     }
                 } else {
@@ -4487,6 +4500,7 @@ fun PlaylistDetailPanel(
                             selectionMode = editEnabled,
                             selected = trackKey in selectedTrackKeys,
                             onToggleSelection = { toggleTrackSelection(track) },
+                            onAddToEndOfQueue = { onAddToEndOfQueue(track) },
                         )
                     }
                 }

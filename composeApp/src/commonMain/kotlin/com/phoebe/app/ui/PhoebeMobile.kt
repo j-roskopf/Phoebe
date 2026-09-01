@@ -326,6 +326,7 @@ internal fun MobileBrowseShell(
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
     artistRadioAvailability: Map<String, ArtistRadioAvailability> = emptyMap(),
     onProbeArtistRadio: (Artist) -> Unit = {},
     onPlayArtistRadio: (Artist) -> Unit = {},
@@ -405,6 +406,13 @@ internal fun MobileBrowseShell(
     onCheckForUpdates: () -> Unit = {},
     routeViewModelFactory: RouteViewModelFactory,
     onInstallUpdate: () -> Unit = {},
+    pairedDevices: List<com.phoebe.app.remote.PairedRemoteDevice> = emptyList(),
+    onRemoteControlHostEnabled: (Boolean) -> Unit = {},
+    onRemoteControlHostName: (String) -> Unit = {},
+    onRevokePairedDevice: (String) -> Unit = {},
+    remoteControlClientState: com.phoebe.app.remote.RemoteControlSessionState = com.phoebe.app.remote.RemoteControlSessionState(),
+    onOpenRemoteControl: () -> Unit = {},
+    onDisconnectRemoteControl: () -> Unit = {},
     initialExpandedPhoneSection: PhoneHomeAccordionSection? = null,
     homeListState: LazyListState? = null,
     showBottomChrome: Boolean = true,
@@ -553,6 +561,28 @@ internal fun MobileBrowseShell(
                 DropdownMenuItem(
                     text = {
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            PhoebeIconView(
+                                PhoebeIcon.RemoteDevice,
+                                tint = if (remoteControlClientState.isConnected) PhoebeUi.accentLight else PhoebeUi.secondaryText,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Text(
+                                if (remoteControlClientState.isConnected) {
+                                    "Controlling ${remoteControlClientState.hostName ?: "Remote Player"}"
+                                } else {
+                                    "Connect to remote player"
+                                },
+                            )
+                        }
+                    },
+                    onClick = {
+                        onOpenRemoteControl()
+                        menuExpanded = false
+                    },
+                )
+                DropdownMenuItem(
+                    text = {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
                             PhoebeIconView(PhoebeIcon.Settings, tint = PhoebeUi.secondaryText, modifier = Modifier.size(18.dp))
                             Text("Settings")
                         }
@@ -621,6 +651,8 @@ internal fun MobileBrowseShell(
                         session = session,
                         listenBrainzCredentialAvailability = listenBrainzCredentialAvailability,
                         appUpdateState = appUpdateState,
+                        pairedDevices = pairedDevices,
+                        remoteControlClientState = remoteControlClientState,
                         initialCategory = if (section == BrowseSection.Downloads) {
                             SettingsCategory.Downloads
                         } else {
@@ -677,6 +709,11 @@ internal fun MobileBrowseShell(
                         onEventSettings = onEventSettings,
                         onCheckForUpdates = onCheckForUpdates,
                         onInstallUpdate = onInstallUpdate,
+                        onRemoteControlHostEnabled = onRemoteControlHostEnabled,
+                        onRemoteControlHostName = onRemoteControlHostName,
+                        onRevokePairedDevice = onRevokePairedDevice,
+                        onConnectRemoteControl = onOpenRemoteControl,
+                        onDisconnectRemoteControl = onDisconnectRemoteControl,
                     ),
                     modifier = Modifier.fillMaxSize().padding(top = chromePadding.top, bottom = chromePadding.bottom),
                 )
@@ -795,6 +832,7 @@ internal fun MobileBrowseShell(
                         onAddToUpNext = onAddToUpNext,
                         onDownload = onDownload,
                         onSearchQuery = onSearchQuery,
+                        onAddToEndOfQueue = onAddToEndOfQueue,
                     ),
                     modifier = Modifier.fillMaxSize(),
                     libraryViewMode = mobileLibraryViewMode,
@@ -887,6 +925,7 @@ internal fun MobileBrowseShell(
                     onPlayTracks = onPlayTracks,
                     onAddToUpNext = onAddToUpNext,
                     onDownload = onDownload,
+                    onAddToEndOfQueue = onAddToEndOfQueue,
                     onLibrarySortBy = onLibrarySortBy,
                     onLibraryAscending = onLibraryAscending,
                     onLibraryColumns = onLibraryColumns,

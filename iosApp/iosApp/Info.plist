@@ -28,7 +28,7 @@
 		<string>_CC1AD845._googlecast._tcp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>Phoebe uses the local network to discover and control Chromecast devices on your Wi-Fi network.</string>
+	<string>Phoebe uses the local network to discover and connect to Chromecast devices and other Phoebe players on your Wi-Fi network.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

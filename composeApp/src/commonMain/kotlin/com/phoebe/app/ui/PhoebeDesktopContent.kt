@@ -202,6 +202,7 @@ internal fun DesktopContent(
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
     onLibrarySortBy: (LibrarySortBy) -> Unit,
     onLibraryAscending: (Boolean) -> Unit,
     onLibraryColumns: (LibraryColumnVisibility) -> Unit,
@@ -247,6 +248,7 @@ internal fun DesktopContent(
                 onDownload = onDownload,
                 onLibraryColumns = onLibraryColumns,
                 onDownloadPlaylist = onDownloadPlaylist,
+                onAddToEndOfQueue = onAddToEndOfQueue,
             ),
             modifier = modifier,
             edgePadding = edgePadding,
@@ -378,6 +380,7 @@ internal fun DesktopContent(
                 onPlayTracks,
                 onAddToUpNext,
                 onDownload,
+                onAddToEndOfQueue = onAddToEndOfQueue,
                 libraryColumns = libraryUi.columns,
             )
         }

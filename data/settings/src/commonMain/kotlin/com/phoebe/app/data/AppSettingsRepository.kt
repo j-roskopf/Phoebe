@@ -205,6 +205,18 @@ class AppSettingsRepository(
         }
     }
 
+    suspend fun setRemoteControlHostEnabled(enabled: Boolean) {
+        updateAndSave { current ->
+            current.copy(remoteControlHostEnabled = enabled)
+        }
+    }
+
+    suspend fun setRemoteControlHostName(name: String) {
+        updateAndSave { current ->
+            current.copy(remoteControlHostName = name)
+        }
+    }
+
     fun resetInMemoryState() {
         mutableState.value = AppSettings.Default
     }
@@ -238,6 +250,8 @@ class AppSettingsRepository(
                         streamingPolicySettings = json.encodeToString(persisted.streamingPolicy),
                         audioProcessingSettings = json.encodeToString(persisted.audioProcessing),
                         eventSettings = json.encodeToString(persisted.events),
+                        remoteControlHostEnabled = persisted.remoteControlHostEnabled.toDb(),
+                        remoteControlHostName = persisted.remoteControlHostName,
                     )
                 } catch (error: Throwable) {
                     mutableState.value = previous
@@ -269,6 +283,8 @@ class AppSettingsRepository(
             streamingPolicy = decodeStreamingPolicySettings(streamingPolicySettings),
             audioProcessing = decodeAudioProcessingSettings(audioProcessingSettings),
             events = decodeEventSettings(eventSettings),
+            remoteControlHostEnabled = remoteControlHostEnabled.toBool(),
+            remoteControlHostName = remoteControlHostName,
         ).normalized()
 
     private fun AppSettings.withoutSessionSettings(): AppSettings =

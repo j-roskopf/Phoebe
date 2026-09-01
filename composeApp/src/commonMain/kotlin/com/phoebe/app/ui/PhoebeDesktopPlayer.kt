@@ -261,6 +261,7 @@ internal fun DesktopPlayer(
     val onPlayAllTracks = browseActions.onPlayAllTracks
     val onShuffleAllTracks = browseActions.onShuffleAllTracks
     val onAddToUpNext = browseActions.onAddToUpNext
+    val onAddToEndOfQueue = browseActions.onAddToEndOfQueue
     val onDownload = browseActions.onDownload
     val onDownloadArtist = browseActions.onDownloadArtist
     val onProbeArtistRadio = browseActions.onProbeArtistRadio
@@ -726,6 +727,7 @@ internal fun DesktopPlayer(
                                         onPlayTracks = onPlayTracks,
                                         onAddToUpNext = onAddToUpNext,
                                         onDownload = onDownload,
+                                        onAddToEndOfQueue = onAddToEndOfQueue,
                                     )
                                 }
                                 AppScreen.FavoritePlaylists -> FavoritePlaylistsDesktopRoute(
@@ -900,6 +902,7 @@ internal fun DesktopPlayer(
                                                 onSearchQuery = onSearchQuery,
                                                 onAddToUpNext = onAddToUpNext,
                                                 onDownload = onDownload,
+                                                onAddToEndOfQueue = onAddToEndOfQueue,
                                             ),
                                             modifier = Modifier.fillMaxSize(),
                                         )
@@ -940,6 +943,8 @@ internal fun DesktopPlayer(
                                             } else {
                                                 settingsInitialCategory
                                             },
+                                            pairedDevices = settingsState.pairedDevices,
+                                            remoteControlClientState = settingsState.remoteControlClientState,
                                         ),
                                         actions = SettingsRouteActions(
                                             onLightModeChange = onUseLightAppearanceChange,
@@ -994,6 +999,11 @@ internal fun DesktopPlayer(
                                             onEventSettings = settingsActions.onEventSettings,
                                             onCheckForUpdates = settingsActions.onCheckForUpdates,
                                             onInstallUpdate = settingsActions.onInstallUpdate,
+                                            onRemoteControlHostEnabled = settingsActions.onRemoteControlHostEnabled,
+                                            onRemoteControlHostName = settingsActions.onRemoteControlHostName,
+                                            onRevokePairedDevice = settingsActions.onRevokePairedDevice,
+                                            onConnectRemoteControl = settingsActions.onConnectRemoteControl,
+                                            onDisconnectRemoteControl = settingsActions.onDisconnectRemoteControl,
                                         ),
                                         modifier = Modifier.fillMaxSize(),
                                     )
@@ -1016,6 +1026,7 @@ internal fun DesktopPlayer(
                                         onPlayTracks = onPlayTracks,
                                         onAddToUpNext = onAddToUpNext,
                                         onDownload = onDownload,
+                                        onAddToEndOfQueue = onAddToEndOfQueue,
                                         onLibrarySortBy = onLibrarySortBy,
                                         onLibraryAscending = onLibraryAscending,
                                         onLibraryColumns = onLibraryColumns,

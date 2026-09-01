@@ -53,6 +53,7 @@ fun PlaylistDetailDesktopView(
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     onLibraryColumns: (LibraryColumnVisibility) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
     modifier: Modifier = Modifier,
     edgePadding: Dp = 36.dp,
     headlineFontSize: TextUnit = 30.sp,
@@ -101,6 +102,7 @@ fun PlaylistDetailDesktopView(
             onAddToUpNext = onAddToUpNext,
             onDownload = onDownload,
             onLibraryColumns = onLibraryColumns,
+            onAddToEndOfQueue = onAddToEndOfQueue,
             onMoveTrack = playlistActions.onMovePlaylistTrack,
             onRemoveTracks = playlistActions.onRemovePlaylistTracks,
             onDownloadPlaylist = onDownloadPlaylist,
@@ -171,6 +173,7 @@ private fun PlaylistDetailDesktopContent(
     onMoveTrack: (Playlist, Int, Int) -> Unit,
     onRemoveTracks: (Playlist, List<Track>) -> Unit,
     onDownloadPlaylist: (Playlist) -> Unit,
+    onAddToEndOfQueue: (Track) -> Unit = {},
 ) {
     var playlistSortBy by remember(playlist.id) { mutableStateOf(LibrarySortBy.PlaylistOrder) }
     var playlistAscending by remember(playlist.id) { mutableStateOf(true) }
@@ -288,6 +291,7 @@ private fun PlaylistDetailDesktopContent(
             showLoadingWhenEmpty = searchQuery.isBlank(),
             onPlayTracks = playFilteredTracks,
             onAddToUpNext = onAddToUpNext,
+            onAddToEndOfQueue = onAddToEndOfQueue,
             onDownload = onDownload,
             libraryColumns = libraryColumns,
             onMoveTrack = if (

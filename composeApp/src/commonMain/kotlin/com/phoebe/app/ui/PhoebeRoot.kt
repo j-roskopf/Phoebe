@@ -439,6 +439,17 @@ private fun PhoebeRootStateHolder(
     val playEventsByTrack by state.playEventsByTrack.collectAsState()
     val topMostPlayed by state.topMostPlayed.collectAsState()
     val topRecentlyPlayed by state.topRecentlyPlayed.collectAsState()
+    val pairedDevices by state.pairedDevices.pairedDevices.collectAsState()
+    val pendingPairings by state.remoteHost.pendingPairings.collectAsState()
+    val discoveredHosts by state.discoveredHosts.collectAsState()
+    val remoteControlClientState by state.remoteControl.collectAsState()
+    var showDevicePicker by remember { mutableStateOf(false) }
+    val currentMusicAssistantRemote = musicAssistantRemotePlayback
+    val effectiveRemotePlaybackTarget = when {
+        remoteControlClientState.isConnected -> remoteControlClientState.hostName ?: "Remote Host"
+        currentMusicAssistantRemote != null -> currentMusicAssistantRemote.target
+        else -> null
+    }
     val upNext = playerQueue.upNext
     var showEventsDebugMenu by remember { mutableStateOf(false) }
     val currentTrack = remember(shellPlayback.currentTrack, radioNowPlaying) {
@@ -1385,6 +1396,24 @@ private fun PhoebeRootStateHolder(
             },
         )
     }
+    pendingPairings.firstOrNull()?.let { pairingRequest ->
+        RemoteControlPairingApprovalDialog(
+            request = pairingRequest,
+            onApprove = pairingRequest::approve,
+            onDeny = pairingRequest::reject,
+        )
+    }
+    if (showDevicePicker) {
+        RemoteControlHostPickerDialog(
+            discoveredHosts = discoveredHosts,
+            clientState = remoteControlClientState,
+            onStartDiscovery = state::startRemoteDiscovery,
+            onStopDiscovery = state::stopRemoteDiscovery,
+            onConnect = state::connectRemoteControl,
+            onDisconnect = state::disconnectRemoteControl,
+            onDismiss = { showDevicePicker = false },
+        )
+    }
     // Wrap everything in a single Box so the drag-ghost overlay actually sits ON TOP of the
     // app rather than under it (CompositionLocalProvider isn't a layout, so emitting siblings
     // here results in painter order = source order, with the last one rendered last/highest).
@@ -1581,6 +1610,7 @@ private fun PhoebeRootStateHolder(
                                 onShuffleAllTracks = shuffleAllTracksFromMobile,
                                 onAddToUpNext = state::addToUpNext,
                                 onDownload = state::download,
+                                onAddToEndOfQueue = state::addToEndOfQueue,
                                 onDownloadArtist = state::download,
                                 onProbeArtistRadio = state::probeArtistRadio,
                                 onLoadMusicBrainzArtwork = state::loadArtistMusicBrainzArtwork,
@@ -1642,6 +1672,7 @@ private fun PhoebeRootStateHolder(
                                 onPlayTracks = playTracksFromMobile,
                                 onAddToUpNext = state::addToUpNext,
                                 onDownload = state::download,
+                                onAddToEndOfQueue = state::addToEndOfQueue,
                                 onDownloadAlbum = state::download,
                                 onArtist = { navigator.open(it.route()) },
                                 onLibraryColumns = state::setLibraryColumns,
@@ -1752,6 +1783,7 @@ private fun PhoebeRootStateHolder(
                             onPlayTracks = playTracksFromMobile,
                             onAddToUpNext = state::addToUpNext,
                             onDownload = state::download,
+                            onAddToEndOfQueue = state::addToEndOfQueue,
                         )
                     }
                     AppScreen.ArtistMixBuilder -> ArtistMixBuilderRoute(
@@ -1850,6 +1882,7 @@ private fun PhoebeRootStateHolder(
                             onPlayTracks = playTracksFromMobile,
                             onAddToUpNext = state::addToUpNext,
                             onDownload = state::download,
+                            onAddToEndOfQueue = state::addToEndOfQueue,
                             onDownloadPlaylist = state::download,
                             onCancelDownloadPlaylist = state::cancelDownloads,
                             onDeleteDownloadPlaylist = state::deleteDownloads,
@@ -1867,7 +1900,7 @@ private fun PhoebeRootStateHolder(
                         currentIndex = mobilePlayerCurrentIndex,
                         playbackStarting = mobilePlaybackStarting,
                         castState = cast,
-                        remotePlaybackTarget = musicAssistantRemotePlayback?.target,
+                        remotePlaybackTarget = effectiveRemotePlaybackTarget,
                         onToggle = state::togglePlayPause,
                         onPrevious = state::previous,
                         onNext = state::next,
@@ -1998,6 +2031,7 @@ private fun PhoebeRootStateHolder(
                         onPlayTracks = playTracksFromMobile,
                         onAddToUpNext = state::addToUpNext,
                         onDownload = state::download,
+                        onAddToEndOfQueue = state::addToEndOfQueue,
                         onOpenNowPlaying = { openMobilePlayer() },
                         onTogglePlayPause = state::togglePlayPause,
                         onPreviousTrack = state::previous,
@@ -2078,6 +2112,13 @@ private fun PhoebeRootStateHolder(
                         } else {
                             null
                         },
+                        pairedDevices = pairedDevices,
+                        onRemoteControlHostEnabled = state::setRemoteControlHostEnabled,
+                        onRemoteControlHostName = state::setRemoteControlHostName,
+                        onRevokePairedDevice = state::revokePairedDevice,
+                        remoteControlClientState = remoteControlClientState,
+                        onOpenRemoteControl = { showDevicePicker = true },
+                        onDisconnectRemoteControl = state::disconnectRemoteControl,
                         showBottomChrome = false,
                     )
                     }
@@ -2293,7 +2334,7 @@ private fun PhoebeRootStateHolder(
                         lyricsTrack = lyricsTrack,
                         lyricsState = lyricsState,
                         castState = cast,
-                        remotePlaybackTarget = musicAssistantRemotePlayback?.target,
+                        remotePlaybackTarget = effectiveRemotePlaybackTarget,
                         listenBrainzFeedbackTarget = listenBrainzFeedbackTarget,
                         equalizerProfile = equalizerProfile,
                         persistEqualizerSettings = appSettings.persistEqualizerSettings,
@@ -2461,6 +2502,7 @@ private fun PhoebeRootStateHolder(
                         onShuffleAllTracks = shuffleAllTracks,
                         onAddToUpNext = state::addToUpNext,
                         onDownload = state::download,
+                        onAddToEndOfQueue = state::addToEndOfQueue,
                         onDownloadArtist = state::download,
                         onProbeArtistRadio = state::probeArtistRadio,
                         onPlayArtistRadio = state::playArtistRadio,
@@ -2529,6 +2571,8 @@ private fun PhoebeRootStateHolder(
                         },
                         listenBrainzCredentialAvailability = state.listenBrainzCredentialAvailability,
                         appUpdateState = appUpdateState,
+                        pairedDevices = pairedDevices,
+                        remoteControlClientState = remoteControlClientState,
                     ),
                     settingsActions = SettingsActions(
                         onHomeSections = state::setHomeSections,
@@ -2584,6 +2628,11 @@ private fun PhoebeRootStateHolder(
                         onEventSettings = state::setEventSettings,
                         onCheckForUpdates = state::checkForUpdates,
                         onInstallUpdate = state::installAvailableUpdate,
+                        onRemoteControlHostEnabled = state::setRemoteControlHostEnabled,
+                        onRemoteControlHostName = state::setRemoteControlHostName,
+                        onRevokePairedDevice = state::revokePairedDevice,
+                        onConnectRemoteControl = { showDevicePicker = true },
+                        onDisconnectRemoteControl = state::disconnectRemoteControl,
                     ),
                     onOpenEventsDebugMenu = if (isDebugBuild()) {
                         { showEventsDebugMenu = true }
