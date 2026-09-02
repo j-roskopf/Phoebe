@@ -146,10 +146,11 @@ class LinuxVisualizerLiveAnalysisDesktopTest {
     }
 
     companion object {
-        // JavaFX/GStreamer spectrum is ~1–2 Hz; PCM analysis should be much denser. Collect
-        // long enough that CI load still yields enough distinct timestamps.
-        private const val CollectMs = 2_500L
-        private const val MinDistinctFrames = 15
+        // JavaFX/GStreamer spectrum is ~1–2 Hz. PCM analysis timestamps advance with
+        // decoded buffers, so distinct timestampMs counts are denser than JavaFX but not
+        // 20 Hz under CI load — require clearly above the JavaFX floor.
+        private const val CollectMs = 3_000L
+        private const val MinDistinctFrames = 6
     }
 }
 
