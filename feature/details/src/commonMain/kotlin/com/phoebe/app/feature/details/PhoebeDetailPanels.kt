@@ -2175,9 +2175,12 @@ fun ArtistDetailPanel(
             ?: popularTracksFromPlayHistory(tracks, playHistory, limit = 10)
     }
     val onPlayPopularTracks: (List<Track>, Int) -> Unit = { tracksToPlay, index ->
-        onPlayTracks(tracksToPlay, index)
         val playedIds = tracksToPlay.mapTo(mutableSetOf()) { it.id }
-        tracks.filterNot { it.id in playedIds }.shuffled().forEach(onAddToEndOfQueue)
+        val fullQueue = buildList {
+            addAll(tracksToPlay)
+            addAll(tracks.filterNot { it.id in playedIds }.shuffled())
+        }
+        onPlayTracks(fullQueue, index)
     }
     val albumWord = if (albums.size == 1) "album" else "albums"
     val songWord = if (tracks.size == 1) "song" else "songs"
