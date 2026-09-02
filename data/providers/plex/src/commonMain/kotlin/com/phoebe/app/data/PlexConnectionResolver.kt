@@ -318,10 +318,14 @@ class PlexConnectionResolver(
         }
         forgottenServers.remove(serverId)
         forgottenOrigins.remove(ForgottenOrigin(serverId, trimmed))
+        val server = lastServer?.takeIf { it.id == serverId }
+        if (keepEstablishedOrigin(server, trimmed, mutableIdentity.value) != null) {
+            noteWorkingOrigin(serverId, fingerprint, trimmed)
+            return
+        }
         memoryCache[CacheKey(serverId, fingerprint)] = trimmed
         lastGoodByServer[CacheKey(serverId, fingerprint)] = trimmed
         markProbed(serverId, fingerprint, trimmed)
-        val server = lastServer?.takeIf { it.id == serverId }
         if (isPlexRelayOrigin(trimmed, server)) {
             sessionRelayByServer[serverId] = trimmed
             return
@@ -518,7 +522,6 @@ class PlexConnectionResolver(
         }
         PhoebeLog.d("PlexConnectionResolver") { "identity race winner=$winner" }
         adoptWinner(server, winner, identity.fingerprint)
-        winner
     }
 
     private suspend fun probeIdentity(
@@ -584,7 +587,8 @@ class PlexConnectionResolver(
             ?.takeIf { it.isNotBlank() }
     }
 
-    private suspend fun adoptWinner(server: PlexServer, origin: String, fingerprint: String) {
+    /** Returns the base that is in force for [server] afterwards, which may be the established one. */
+    private suspend fun adoptWinner(server: PlexServer, origin: String, fingerprint: String): String? {
         if (fingerprint != mutableIdentity.value.fingerprint) {
             // The network moved while this race was in flight. Its winner only proves the origin
             // was reachable from where we no longer are, so publishing it would bind artwork and
@@ -592,7 +596,14 @@ class PlexConnectionResolver(
             PhoebeLog.d("PlexConnectionResolver") {
                 "discarding origin=$origin from previous network fingerprint=$fingerprint"
             }
-            return
+            return null
+        }
+        keepEstablishedOrigin(server, origin, mutableIdentity.value)?.let { established ->
+            PhoebeLog.d("PlexConnectionResolver") {
+                "keeping established base=$established over race winner=$origin"
+            }
+            noteWorkingOrigin(server.id, fingerprint, origin)
+            return established
         }
         forgottenServers.remove(server.id)
         forgottenOrigins.remove(ForgottenOrigin(server.id, origin))
@@ -604,13 +615,50 @@ class PlexConnectionResolver(
             PhoebeLog.d("PlexConnectionResolver") {
                 "resolved relay origin=$origin server=${server.id} fingerprint=$fingerprint (session only)"
             }
-            return
+            return origin
         }
         sessionRelayByServer.remove(server.id)
         persist(server.id, fingerprint, origin)
         PhoebeLog.d("PlexConnectionResolver") {
             "resolved origin=$origin server=${server.id} fingerprint=$fingerprint"
         }
+        return origin
+    }
+
+    /**
+     * The base already in force for [server], when [candidate] is no reason to leave it.
+     *
+     * An origin that answered proves *that hop* works — not that the app should move onto it.
+     * plex.tv hands back a different relay in nearly every connections refresh, and a startup runs
+     * several API calls that each finish on whichever base was live when they began, so "the last
+     * answer wins" made the published base alternate between two equally good relays six times in
+     * the first seven seconds. Every flip re-bound artwork (cancelling and restarting every
+     * in-flight thumbnail fetch, on the slowest hop there is) and looked to playback like the
+     * server had moved.
+     *
+     * So the established base stands while it is still one this resolver would hand out
+     * ([cached]) and still `/identity`-confirmed on this network. Only a genuinely better hop —
+     * LAN or direct over a relay — takes over. Anything worse or equal is recorded and ignored;
+     * when the live base does break, [forget] clears it and the next answer is adopted normally.
+     */
+    private fun keepEstablishedOrigin(
+        server: PlexServer?,
+        candidate: String,
+        identity: NetworkIdentity,
+    ): String? {
+        if (server == null) return null
+        val current = cached(server, identity)?.takeIf { it == mutableProbedOrigin.value } ?: return null
+        if (current == candidate) return null
+        if (ProbedOrigin(server.id, identity.fingerprint, current) !in probedOk) return null
+        val demote = demoteLocalOrigins(identity)
+        val better = locationRank(candidate, server, demote) < locationRank(current, server, demote)
+        return if (better) null else current
+    }
+
+    /** Record a hop that answered without promoting it, so a later [forget] can fall back to it. */
+    private fun noteWorkingOrigin(serverId: String, fingerprint: String, origin: String) {
+        probedOk.add(ProbedOrigin(serverId, fingerprint, origin))
+        lastGoodByServer[CacheKey(serverId, fingerprint)] = origin
     }
 
     private fun markProbed(serverId: String, fingerprint: String, origin: String) {

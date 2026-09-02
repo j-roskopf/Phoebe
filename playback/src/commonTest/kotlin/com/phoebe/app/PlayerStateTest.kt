@@ -1419,7 +1419,7 @@ class PlayerStateTest {
 
             // Wi-Fi -> cellular: the resolver publishes a new base.
             ArtworkOriginHolder.update(cellular)
-            player.rebasePlaybackOrigins(cellular)
+            player.rebasePlaybackOrigins(cellular, networkChanged = true)
             runCurrent()
 
             // Without this, the open socket sits on the dead LAN address until the platform
@@ -1453,6 +1453,39 @@ class PlayerStateTest {
             runCurrent()
 
             assertEquals(1, player.openedUris.size, "re-resolving to the same base must be a no-op")
+        } finally {
+            player.close()
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
+    }
+
+    @Test
+    fun rotatedRelayOnTheSameNetworkDoesNotRestartTheCurrentTrack() = runTest {
+        val firstRelay = "https://45-79-202-250.abc.plex.direct:8443"
+        val secondRelay = "https://23-92-30-53.abc.plex.direct:8443"
+        ArtworkAuthHolder.update("token")
+        ArtworkOriginHolder.update(firstRelay)
+        val player = OpenedUriTestPlayer()
+        try {
+            player.play(
+                listOf(Track("t1", "One", "Artist", "Album", 60_000, "/library/parts/1/file.mp3", "")),
+                0,
+            )
+            player.finishPendingLoad()
+
+            // Same network, second `/identity` race (or a successful API call) adopts the other
+            // relay plex.tv handed out. The open stream is fine; restarting it is what made a
+            // freshly started song play a second and jump back to the top.
+            ArtworkOriginHolder.update(secondRelay)
+            player.rebasePlaybackOrigins(secondRelay)
+            runCurrent()
+
+            assertEquals(
+                1,
+                player.openedUris.size,
+                "a rotated relay on the same network must not re-open the stream, got ${player.openedUris}",
+            )
         } finally {
             player.close()
             ArtworkOriginHolder.clear()

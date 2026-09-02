@@ -246,6 +246,61 @@ class PlexConnectionResolverTest {
     }
 
     @Test
+    fun aSecondRelayDoesNotDisplaceTheEstablishedOne() = runBlocking {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val firstRelay = "https://45-79-202-250.abc.plex.direct:8443"
+        val secondRelay = "https://23-92-30-53.abc.plex.direct:8443"
+        val server = sampleServer(relayUris = listOf(firstRelay, secondRelay))
+        val resolver = resolver(db)
+        resolver.hydrateFromDisk(server)
+        resolver.remember(server.id, firstRelay)
+
+        // plex.tv rotates relays, so a second in-flight API call finishes on the other one. That
+        // is not a reason to move the whole app onto it: each move re-binds artwork mid-load.
+        resolver.remember(server.id, secondRelay)
+
+        assertEquals(firstRelay, resolver.probedOrigin.value)
+        assertEquals(firstRelay, ArtworkOriginHolder.liveOrigin)
+        assertEquals(firstRelay, resolver.cached(server))
+    }
+
+    @Test
+    fun aBetterHopStillDisplacesAnEstablishedRelay() = runBlocking {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val lan = "http://192.168.1.9:32400"
+        val relay = "https://45-79-202-250.abc.plex.direct:8443"
+        val server = sampleServer(lan = lan, relayUris = listOf(relay))
+        val resolver = resolver(db)
+        resolver.hydrateFromDisk(server)
+        resolver.remember(server.id, relay)
+
+        resolver.remember(server.id, lan)
+
+        assertEquals(lan, resolver.probedOrigin.value, "LAN outranks a relay and must take over")
+        assertEquals(lan, ArtworkOriginHolder.liveOrigin)
+    }
+
+    @Test
+    fun forgettingTheEstablishedRelayLetsTheNextOneTakeOver() = runBlocking {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val firstRelay = "https://45-79-202-250.abc.plex.direct:8443"
+        val secondRelay = "https://23-92-30-53.abc.plex.direct:8443"
+        val server = sampleServer(relayUris = listOf(firstRelay, secondRelay))
+        val resolver = resolver(db)
+        resolver.hydrateFromDisk(server)
+        resolver.remember(server.id, firstRelay)
+        resolver.forget(server.id, firstRelay)
+
+        resolver.remember(server.id, secondRelay)
+
+        assertEquals(secondRelay, resolver.probedOrigin.value)
+        assertEquals(secondRelay, resolver.cached(server))
+    }
+
+    @Test
     fun withReachableBaseHitsOnlyTheProbedRelay() = runBlocking {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d

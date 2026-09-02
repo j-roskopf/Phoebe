@@ -1316,11 +1316,18 @@ abstract class SimpleAudioPlayer(
      *
      * Plex queue entries hold relative part keys, so nothing in the queue needs rewriting; the
      * next read binds onto the new base by itself. What does need attention is the stream that
-     * is *already open*: its socket points at the old address and will sit there until the
-     * platform player's own timeout expires, which is 20-30s of silence. Re-prepare it at the
-     * current position instead.
+     * is *already open* after a handoff ([networkChanged]): its socket points at the old address
+     * and will sit there until the platform player's own timeout expires, which is 20-30s of
+     * silence. Re-prepare it at the current position instead.
+     *
+     * A new origin on the same network is not that. Plex relay hosts rotate — a fresh connection
+     * list or a second `/identity` race adopts a different `*.plex.direct:8443` address most
+     * times it runs, and startup runs several — so treating every adoption as a moved server
+     * re-opened a perfectly healthy stream once per adoption. At startup the position is still
+     * near zero, so each one sounded like the song restarting from the top. If the origin we are
+     * playing on really is dead, the stream stalls and the failover path recovers it.
      */
-    override fun rebasePlaybackOrigins(origin: String) {
+    override fun rebasePlaybackOrigins(origin: String, networkChanged: Boolean) {
         val trimmed = origin.trimEnd('/').takeIf { it.isNotBlank() } ?: return
         rememberStickyPlaybackOrigin(trimmed)
         val current = mutableState.value
@@ -1334,7 +1341,7 @@ abstract class SimpleAudioPlayer(
             mutableState.value = current.copy(queue = playbackQueue)
             onQueueEdited(playbackQueue, current.currentIndex)
         }
-        reopenCurrentStreamOnNewOrigin(trimmed)
+        if (networkChanged) reopenCurrentStreamOnNewOrigin(trimmed)
     }
 
     private fun reopenCurrentStreamOnNewOrigin(origin: String) {
