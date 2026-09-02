@@ -181,9 +181,30 @@ fun Track.withRelativePlexPlaybackPaths(): Track {
 internal fun Track.holdsRelativePlexPath(): Boolean =
     localUri.isNullOrBlank() &&
         streamUrl.isNotBlank() &&
-        !streamUrl.startsWith("http://", ignoreCase = true) &&
-        !streamUrl.startsWith("https://", ignoreCase = true) &&
-        streamUrl.isPlexMediaPathOrUrl()
+        isUnboundServerPath(streamUrl)
+
+/**
+ * True when [uri] is a media-server path that never got an origin bound onto it.
+ *
+ * Such a URI is non-blank but not openable: it has no host. Platform players do not reject it,
+ * they reinterpret it as a local file path — on Android that surfaces as "open failed: ENOENT"
+ * only after the startup watchdog expires, which reads as a hang rather than "server is down".
+ *
+ * Deliberately stricter than [isPlexMediaPathOrUrl], which matches any scheme-less string that
+ * merely *contains* `/library/` — a downloaded file under `.../Music/library/` would qualify.
+ * Only the exact prefixes the catalog stores for unbound Plex assets count here.
+ */
+internal fun isUnboundServerPath(uri: String): Boolean {
+    if (uri.isBlank()) return false
+    // Any scheme at all (file://, content://, http://) means something can open it.
+    if (Regex("^[a-zA-Z][a-zA-Z0-9+.-]*:").containsMatchIn(uri)) return false
+    val path = uri.substringBefore('?')
+    return path.startsWith("/library/") ||
+        path.startsWith("/playlists/") ||
+        path.startsWith("/photo/") ||
+        path.startsWith("/:/") ||
+        path.startsWith("/music/:/transcode/")
+}
 
 internal fun Track.playbackUriCandidates(): List<String> {
     localUri?.takeIf { it.isNotBlank() }?.let { return listOf(it) }

@@ -46,6 +46,7 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.Dp
@@ -92,6 +93,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import kotlin.math.PI
@@ -180,10 +182,21 @@ private fun CoilArtworkImage(
             ImageRequest.Builder(platformContext)
                 .data(it.fetchUrl)
                 .applyArtworkHeaders(it.fetchUrl)
+                .applyStableArtworkCacheKeys(it.fetchUrl)
                 .build()
         }
     }
     val imageLoader = rememberPhoebeArtworkImageLoader(platformContext)
+    // Paint from Coil's disk cache while the origin is still being probed. Without this the
+    // whole screen sits on spinners for as long as `/identity` takes, even though every one of
+    // these images is already on disk.
+    val diskPreview = rememberDiskCachedArtwork(
+        imageLoader = imageLoader,
+        thumbUrl = thumbUrl,
+        fallbackThumbUrl = fallbackThumbUrl,
+        maxDecodeDimension = maxDecodeDimension,
+        enabled = waitingForLiveOrigin,
+    )
     val painter = key(candidate?.fetchUrl, candidateIndex, maxDecodeDimension, waitingForLiveOrigin, retryAttempt) {
         rememberAsyncImagePainter(model = request, imageLoader = imageLoader)
     }
@@ -216,17 +229,19 @@ private fun CoilArtworkImage(
         }
     }
 
+    val diskPreviewPainter = remember(diskPreview) { diskPreview?.let(::BitmapPainter) }
     val visualState = resolveCoilArtworkVisualState(
         painterState = painterState,
         hasCandidate = candidate != null,
         exhaustedCandidates = candidateIndex >= candidates.lastIndex && retryAttempt >= MaxArtworkLoadAutoRetries,
-        hasRetainedPainter = retainedPainter != null,
+        hasRetainedPainter = retainedPainter != null || diskPreviewPainter != null,
         retainFallbackWhileLoading = retainFallbackWhileLoading,
         waitingForLiveOrigin = waitingForLiveOrigin,
     )
     val displayPainter = when {
         painterState.painter != null -> painter
-        else -> retainedPainter
+        retainedPainter != null -> retainedPainter
+        else -> diskPreviewPainter
     }
 
     Box(modifier) {
@@ -284,6 +299,75 @@ internal fun phoebeArtworkImageLoader(context: PlatformContext): ImageLoader {
 private fun rememberPhoebeArtworkImageLoader(context: PlatformContext): ImageLoader {
     val loaderContext = stableArtworkImageLoaderContext(context)
     return remember(loaderContext) { phoebeArtworkImageLoader(context) }
+}
+
+/**
+ * Pin this request to an origin-independent cache key.
+ *
+ * See [stableArtworkCacheKey]: without it Coil keys on the full URL, so the relay host and the
+ * session token become part of the key and every cached thumbnail is orphaned the moment either
+ * one changes.
+ */
+private fun ImageRequest.Builder.applyStableArtworkCacheKeys(fetchUrl: String): ImageRequest.Builder {
+    val key = stableArtworkCacheKey(fetchUrl) ?: return this
+    return memoryCacheKey(key).diskCacheKey(key)
+}
+
+/**
+ * Decode this artwork straight out of Coil's disk cache, bypassing the request pipeline.
+ *
+ * Only used while [enabled] (no probed origin), where the pipeline cannot run at all: there is
+ * no host to build a URL against. Reading the snapshot directly means a cold start paints known
+ * artwork immediately instead of holding spinners for the length of the `/identity` race.
+ */
+@Composable
+private fun rememberDiskCachedArtwork(
+    imageLoader: ImageLoader,
+    thumbUrl: String?,
+    fallbackThumbUrl: String?,
+    maxDecodeDimension: Int,
+    enabled: Boolean,
+): ImageBitmap? = produceState<ImageBitmap?>(
+    initialValue = null,
+    thumbUrl,
+    fallbackThumbUrl,
+    maxDecodeDimension,
+    enabled,
+    imageLoader,
+) {
+    if (!enabled) {
+        value = null
+        return@produceState
+    }
+    val sources = listOfNotNull(
+        thumbUrl?.takeIf { it.isNotBlank() },
+        fallbackThumbUrl?.takeIf { it.isNotBlank() },
+    )
+    if (sources.isEmpty()) return@produceState
+    value = withContext(artworkIoDispatcher()) {
+        sources.firstNotNullOfOrNull { source ->
+            placeholderArtworkFetchUrls(source, maxDecodeDimension)
+                .firstNotNullOfOrNull { fetchUrl ->
+                    val key = stableArtworkCacheKey(fetchUrl) ?: return@firstNotNullOfOrNull null
+                    readDiskCachedArtwork(imageLoader, key, maxDecodeDimension)
+                }
+        }
+    }
+}.value
+
+@OptIn(ExperimentalCoilApi::class)
+private fun readDiskCachedArtwork(
+    imageLoader: ImageLoader,
+    key: String,
+    maxDecodeDimension: Int,
+): ImageBitmap? {
+    val diskCache = imageLoader.diskCache ?: return null
+    return runCatching {
+        diskCache.openSnapshot(key)?.use { snapshot ->
+            val bytes = diskCache.fileSystem.read(snapshot.data) { readByteArray() }
+            bytes.takeIf { it.isNotEmpty() }?.let { decodeImageBitmap(it, maxDecodeDimension) }
+        }
+    }.getOrNull()
 }
 
 @OptIn(ExperimentalCoilApi::class)

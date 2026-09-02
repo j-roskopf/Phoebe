@@ -1,6 +1,7 @@
 package com.phoebe.app.ui
 
 import com.phoebe.app.AndroidContextHolder
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -88,3 +89,5 @@ private class AndroidArtworkDiskCacheBackend : ArtworkDiskCacheBackend {
 private const val ArtworkDiskCacheDirectory = "phoebe-artwork"
 private const val MaxArtworkDiskCacheBytes = 128L * 1024L * 1024L
 private const val TrimIntervalMs = 5L * 60L * 1000L
+
+internal actual fun artworkIoDispatcher(): CoroutineDispatcher = Dispatchers.IO

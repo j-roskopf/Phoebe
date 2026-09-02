@@ -2174,6 +2174,11 @@ fun ArtistDetailPanel(
             ?.take(10)
             ?: popularTracksFromPlayHistory(tracks, playHistory, limit = 10)
     }
+    val onPlayPopularTracks: (List<Track>, Int) -> Unit = { tracksToPlay, index ->
+        onPlayTracks(tracksToPlay, index)
+        val playedIds = tracksToPlay.mapTo(mutableSetOf()) { it.id }
+        tracks.filterNot { it.id in playedIds }.shuffled().forEach(onAddToEndOfQueue)
+    }
     val albumWord = if (albums.size == 1) "album" else "albums"
     val songWord = if (tracks.size == 1) "song" else "songs"
 
@@ -2339,7 +2344,7 @@ fun ArtistDetailPanel(
                                             tracks = popularTracks,
                                             useTable = true,
                                             columns = libraryUi.columns,
-                                            onPlayTracks = onPlayTracks,
+                                            onPlayTracks = onPlayPopularTracks,
                                             onAddToUpNext = onAddToUpNext,
                                             onDownload = onDownload,
                                             onAddToEndOfQueue = onAddToEndOfQueue,
@@ -2394,7 +2399,7 @@ fun ArtistDetailPanel(
                                         tracks = popularTracks,
                                         useTable = false,
                                         columns = libraryUi.columns,
-                                        onPlayTracks = onPlayTracks,
+                                        onPlayTracks = onPlayPopularTracks,
                                         onAddToUpNext = onAddToUpNext,
                                         onDownload = onDownload,
                                         modifier = contentPaddingModifier.padding(top = 8.dp),
