@@ -23,6 +23,8 @@ internal const val PlaybackReadyBufferedAheadMs = 500L
 internal const val PlaybackStartupTimeoutMs = 9_000L
 internal const val PlaybackStartupTimeoutLocalMs = 4_000L
 internal const val PlaybackStartupTimeoutRemoteMs = 9_000L
+internal const val ColdOriginResolveAttempts = 2
+internal const val ColdOriginResolveRetryDelayMs = 500L
 
 internal fun hasPlaybackReadyBuffer(
     positionMs: Long,
@@ -190,11 +192,7 @@ abstract class SimpleAudioPlayer(
             return
         }
         scope.launch {
-            val resolved = runCatching {
-                resolver.resolveOrigin(PlaybackOriginResolver.DefaultPlayResolveDeadlineMs)
-            }
-                .onFailure { if (it is CancellationException) throw it }
-                .getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+            val resolved = resolveColdOriginWithRetries(resolver, generation)
             if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
             val accepted = acceptedPlaybackOrigin(resolved)
             // No origin and nothing to bind the queue onto: the server is unreachable right now.
@@ -214,6 +212,31 @@ abstract class SimpleAudioPlayer(
                 origin = accepted,
             )
         }
+    }
+
+    /**
+     * A cold play tap with no cached origin joins whatever identity race is already in flight
+     * (`PlexConnectionResolver` coalesces concurrent callers into one race) rather than getting
+     * its own full [PlaybackOriginResolver.DefaultPlayResolveDeadlineMs] budget. That race can
+     * miss by a hair — observed on-device: a race missed all candidates, and the very next race,
+     * ~1s later, won — so one miss must not be a permanent failure while the server is this close
+     * to answering. Retry a couple more full-budget attempts before giving up.
+     */
+    private suspend fun resolveColdOriginWithRetries(
+        resolver: PlaybackOriginResolver,
+        generation: Int,
+    ): String? {
+        repeat(ColdOriginResolveAttempts) { attempt ->
+            val resolved = runCatching {
+                resolver.resolveOrigin(PlaybackOriginResolver.DefaultPlayResolveDeadlineMs)
+            }
+                .onFailure { if (it is CancellationException) throw it }
+                .getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() }
+            if (resolved != null) return resolved
+            if (!isPlayRequestCurrent(generation) || !playWhenReady) return null
+            if (attempt < ColdOriginResolveAttempts - 1) delay(ColdOriginResolveRetryDelayMs)
+        }
+        return null
     }
 
     /**

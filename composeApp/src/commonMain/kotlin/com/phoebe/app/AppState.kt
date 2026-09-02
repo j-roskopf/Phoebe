@@ -2919,6 +2919,12 @@ class AppState(
         dependencies.catalogRepository.rebasePlexMediaOrigins(candidate, emptyList())
     }
 
+    private data class RetryOriginKey(
+        val serverId: String?,
+        val token: String?,
+        val hasOrigin: Boolean,
+    )
+
     /**
      * Publish the `/identity`-confirmed origin to Coil, and keep racing while there is none.
      *
@@ -2938,16 +2944,33 @@ class AppState(
         }
         // Retry only while there is nothing probed. `collectLatest` cancels the pending backoff
         // the moment a race succeeds or the session changes, so a healthy app is not polling.
+        //
+        // Keyed off (serverId, token, hasOrigin) rather than the raw session: the loop itself
+        // calls refreshSelectedServerConnections() each round, which rewrites selectedServer
+        // (relay reassignment gives a different connection list nearly every call) and used to
+        // re-emit `session` with the *same* server/token. That re-emission fed back into this
+        // same combine and made collectLatest restart the block on every round, resetting
+        // backoffMs to 2s forever instead of doubling (observed: "retry in 2000ms" indefinitely).
         scope.launch {
-            combine(session, resolver.probedOrigin) { current, origin -> current to origin }
-                .collectLatest { (current, origin) ->
-                    if (origin != null) return@collectLatest
-                    val plex = current?.takeIf { it.isPlex() } ?: return@collectLatest
-                    val server = plex.selectedServer ?: return@collectLatest
-                    val token = plex.serverAuthToken() ?: plex.token
-                    if (token.isBlank()) return@collectLatest
+            combine(session, resolver.probedOrigin) { current, origin ->
+                val plex = current?.takeIf { it.isPlex() }
+                RetryOriginKey(
+                    serverId = plex?.selectedServer?.id,
+                    token = plex?.serverAuthToken() ?: plex?.token,
+                    hasOrigin = origin != null,
+                )
+            }
+                .distinctUntilChanged()
+                .collectLatest { key ->
+                    if (key.hasOrigin || key.serverId == null) return@collectLatest
+                    val token = key.token?.takeIf { it.isNotBlank() } ?: return@collectLatest
                     var backoffMs = 2_000L
                     while (!disposed) {
+                        // Re-read the server fresh each round: refreshSelectedServerConnections()
+                        // below may have handed us a new relay/connection list to try.
+                        val server = session.value?.takeIf { it.isPlex() }?.selectedServer
+                            ?.takeIf { it.id == key.serverId }
+                            ?: return@collectLatest
                         val resolved = runCatching {
                             resolver.resolveFresh(server, token)
                         }.onFailure { error ->
