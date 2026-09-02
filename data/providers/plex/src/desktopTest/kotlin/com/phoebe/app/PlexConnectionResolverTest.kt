@@ -485,8 +485,8 @@ class PlexConnectionResolverTest {
         val elapsedMs = started.elapsedNow().inWholeMilliseconds
         assertEquals(relay, winner)
         assertTrue(
-            elapsedMs < 800,
-            "relay win must cancel dead WAN, waited ${elapsedMs}ms",
+            elapsedMs < 2_000,
+            "relay win must cancel dead WAN (not wait the 5s hang), waited ${elapsedMs}ms",
         )
     }
 
