@@ -416,6 +416,7 @@ class AppState(
     private val activeDownloadJobs = mutableSetOf<Job>()
     private var lastPlaybackHistoryRecord = PlaybackHistoryRecord()
     private var lastRebasedPlaybackOrigin: String? = null
+    private var lastRebasedPlaybackNetwork: String? = null
     private var pendingLastFmAuth: PendingLastFmAuth? = null
     private val artistEventJobs = mutableMapOf<String, Job>()
     private val albumMusicBrainzJobs = mutableMapOf<String, Job>()
@@ -2882,8 +2883,18 @@ class AppState(
         publishPlexArtworkOrigins(probedOrigin = originOverride, logMiss = true)
         val origin = ArtworkOriginHolder.liveOrigin ?: return
         if (origin == lastRebasedPlaybackOrigin) return
+        // Only a handoff invalidates the socket a playing track is already streaming over. On one
+        // network the base still moves — Plex relays rotate and startup adopts a few in a row —
+        // and re-opening the current stream for each of those restarted the song mid-play.
+        val network = runCatching { dependencies.appGraph.plexConnectionResolver }
+            .getOrNull()
+            ?.networkIdentity
+            ?.value
+            ?.fingerprint
+        val networkChanged = lastRebasedPlaybackOrigin != null && network != lastRebasedPlaybackNetwork
         lastRebasedPlaybackOrigin = origin
-        dependencies.audioPlayer.rebasePlaybackOrigins(origin)
+        lastRebasedPlaybackNetwork = network
+        dependencies.audioPlayer.rebasePlaybackOrigins(origin, networkChanged = networkChanged)
         scope.launch {
             runCatching { dependencies.sessionRepository.adoptProbedServerOrigin(origin) }
         }

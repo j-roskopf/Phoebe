@@ -65,8 +65,14 @@ interface AudioPlayer {
     /**
      * Prefer [origin] for upcoming queue entries after a network change or successful race,
      * without restarting the currently playing item.
+     *
+     * [networkChanged] is the one case where the item that is already playing must be re-opened:
+     * a handoff leaves its socket pointing at an address this network cannot reach. A new origin
+     * on the *same* network is just a better/rotated address (Plex hands out a different relay
+     * host almost every time it is asked), and re-opening a healthy stream for that restarts the
+     * song from where it is — audibly, and once per adoption.
      */
-    fun rebasePlaybackOrigins(origin: String) = Unit
+    fun rebasePlaybackOrigins(origin: String, networkChanged: Boolean = false) = Unit
 
     /**
      * Keep per-app output at unity while [updateReportedVolume] mirrors the OS level on the slider.
