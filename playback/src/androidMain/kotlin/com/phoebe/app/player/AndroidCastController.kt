@@ -147,6 +147,11 @@ private class AndroidCastController : CastController {
         }
 
         override fun onSessionEnding(session: CastSession) {
+            // Reached for any graceful teardown (our own disconnect() call, or the user tapping
+            // Disconnect/Stop casting in the system Cast dialog) — unexpected drops go straight to
+            // onSessionEnded with an error instead. Mark it intentional here so both paths restore
+            // local playback instead of showing a "Reconnecting..." message that's doomed to time out.
+            endingSessionIntentionally = true
             PhoebeLog.d(TAG) { "session ending intentional=$endingSessionIntentionally" }
         }
 

@@ -752,20 +752,85 @@ class AndroidAudioPlayer(
             val shouldPlay = playWhenReady && (player.isPlaying || player.playWhenReady)
             appControllerMutationInProgress = true
             try {
-                rebasePlatformQueueOnCurrentTrackLocked(
+                val windowEndExclusive = platformQueueWindowEndExclusive(
+                    startIndex = currentIndex,
+                    queueSize = queue.size,
+                    repeatMode = state.value.repeat,
+                )
+                val windowTracks = queue.subList(currentIndex, windowEndExclusive)
+                val reconciled = reconcilePlatformQueueIncrementally(
                     player = player,
                     queue = queue,
                     currentIndex = currentIndex,
-                    generation = generation,
-                    startPositionMs = positionMs,
-                    shouldPlay = shouldPlay,
+                    windowTracks = windowTracks,
                 )
+                if (!reconciled) {
+                    rebasePlatformQueueOnCurrentTrackLocked(
+                        player = player,
+                        queue = queue,
+                        currentIndex = currentIndex,
+                        generation = generation,
+                        startPositionMs = positionMs,
+                        shouldPlay = shouldPlay,
+                    )
+                }
             } finally {
                 appControllerMutationInProgress = false
             }
             clearPendingPlatformQueueRebase(queue, currentIndex, generation)
             syncFromController(generation)
         }
+    }
+
+    /**
+     * Queue edits (append to end, insert at "up next", remove/move an upcoming item) never
+     * touch the item that's already playing — only its neighbors in the Media3 window. Media3
+     * supports inserting/removing items anywhere in the window via addMediaItem/removeMediaItem
+     * without stopping playback, as long as we never move the currently-playing index itself.
+     * So diff the already-loaded platform ids against the target window (common prefix + common
+     * suffix, same idea as a line diff) and patch just the differing middle span, instead of the
+     * previous unconditional stop/clear/prepare cycle that paused (or, if a second edit raced in
+     * mid-reload, sometimes never resumed) on every single queue edit — including a plain
+     * "add to up next" tap.
+     */
+    private fun reconcilePlatformQueueIncrementally(
+        player: Player,
+        queue: List<Track>,
+        currentIndex: Int,
+        windowTracks: List<Track>,
+    ): Boolean {
+        val platformCurrentIndex = player.currentMediaItemIndex
+        if (platformCurrentIndex < 0) return false
+        val currentIds = (platformCurrentIndex until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
+        val targetIds = windowTracks.map { it.id }
+        if (currentIds.isEmpty() || targetIds.isEmpty() || currentIds[0] != targetIds[0]) return false
+
+        val maxOverlap = minOf(currentIds.size, targetIds.size)
+        var prefix = 0
+        while (prefix < maxOverlap && currentIds[prefix] == targetIds[prefix]) prefix++
+        var suffix = 0
+        val maxSuffix = maxOverlap - prefix
+        while (suffix < maxSuffix &&
+            currentIds[currentIds.size - 1 - suffix] == targetIds[targetIds.size - 1 - suffix]
+        ) {
+            suffix++
+        }
+
+        val removeFrom = platformCurrentIndex + prefix
+        val removeToExclusive = platformCurrentIndex + currentIds.size - suffix
+        for (i in removeToExclusive - 1 downTo removeFrom) {
+            player.removeMediaItem(i)
+        }
+        for (targetIndex in prefix until targetIds.size - suffix) {
+            val mediaItem = playbackMediaItem(windowTracks[targetIndex], inAppPlayback = true)
+            player.addMediaItem(removeFrom + (targetIndex - prefix), mediaItem)
+        }
+        loadedPlatformQueue = LoadedPlatformQueue(
+            queueIds = queue.map { it.id },
+            firstAppIndex = currentIndex,
+            itemCount = windowTracks.size,
+        )
+        return true
     }
 
     private suspend fun rebasePlatformQueueOnCurrentTrackLocked(
