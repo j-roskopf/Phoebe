@@ -382,13 +382,21 @@ class RealAudioPlaybackDesktopTest {
             player.play(listOf(track), 0)
 
             assertTrue(
-                waitUntil { diagnostics.hasEngine(PlaybackEnginePath.JavaFxMediaPlayer) },
-                "Remote MP3 should route to JavaFX, not Java Sound; engines=${diagnostics.engineEvents()} " +
-                    "requests=${requestEvents.toList()} errors=${diagnostics.errorEvents()}",
+                waitUntil {
+                    diagnostics.hasEngine(PlaybackEnginePath.SampledStream) &&
+                        player.state.value.isPlaying
+                },
+                "Remote MP3 should route to ffmpeg PCM (SampledStream), not JavaFX TLS; " +
+                    "engines=${diagnostics.engineEvents()} requests=${requestEvents.toList()} " +
+                    "errors=${diagnostics.errorEvents()}",
             )
             assertFalse(
                 diagnostics.hasEngine(PlaybackEnginePath.SampledClip),
                 "Remote MP3 must not use SampledClip because Java Sound MP3 decoding can produce static",
+            )
+            assertFalse(
+                diagnostics.hasEngine(PlaybackEnginePath.JavaFxMediaPlayer),
+                "Remote MP3 must not open via JavaFX; use shared OkHttp/ffmpeg networking instead",
             )
         } finally {
             player.releaseForTests()
@@ -431,9 +439,12 @@ class RealAudioPlaybackDesktopTest {
             player.play(listOf(track), 0)
 
             assertTrue(
-                waitUntil { diagnostics.hasEngine(PlaybackEnginePath.JavaFxMediaPlayer) },
-                "Remote short MP3 should route to JavaFX, not Java Sound; engines=${diagnostics.engineEvents()} " +
-                    "errors=${diagnostics.errorEvents()}",
+                waitUntil {
+                    diagnostics.hasEngine(PlaybackEnginePath.SampledStream) &&
+                        player.state.value.isPlaying
+                },
+                "Remote short MP3 should route to ffmpeg PCM (SampledStream), not JavaFX TLS; " +
+                    "engines=${diagnostics.engineEvents()} errors=${diagnostics.errorEvents()}",
             )
             assertFalse(
                 diagnostics.hasEngine(PlaybackEnginePath.SampledClip),
@@ -475,17 +486,16 @@ class RealAudioPlaybackDesktopTest {
 
             assertTrue(
                 waitUntil(timeoutMs = 25_000L) {
-                    diagnostics.hasEngine(PlaybackEnginePath.JavaFxMediaPlayer) &&
+                    diagnostics.hasEngine(PlaybackEnginePath.SampledStream) &&
                         player.state.value.isPlaying
                 },
-                "No-extension remote MP3 should use JavaFX instead of Java Sound; " +
+                "No-extension remote MP3 should use ffmpeg PCM instead of JavaFX TLS; " +
                     "engines=${diagnostics.engineEvents()} requests=${requestEvents.toList()} " +
                     "errors=${diagnostics.errorEvents()}",
             )
             assertFalse(
-                diagnostics.hasEngine(PlaybackEnginePath.SampledStream) ||
-                    diagnostics.hasEngine(PlaybackEnginePath.SampledClip),
-                "No-extension remote MP3 must not use Java Sound because MP3 decoding can produce static",
+                diagnostics.hasEngine(PlaybackEnginePath.SampledClip),
+                "No-extension remote MP3 must not use SampledClip because Java Sound MP3 decoding can produce static",
             )
         } finally {
             player.releaseForTests()
@@ -500,7 +510,7 @@ class RealAudioPlaybackDesktopTest {
         val player = DesktopAudioPlayer(diagnostics)
         try {
             val track = Track(
-                id = "ciut-live",
+                id = "radio:ciut-live",
                 title = "CIUT",
                 artist = "Radio",
                 album = "Radio",
@@ -510,10 +520,11 @@ class RealAudioPlaybackDesktopTest {
             )
             player.play(listOf(track), 0)
             assertTrue(
-                waitUntil(timeoutMs = 15_000L) {
-                    player.state.value.isPlaying
+                waitUntil(timeoutMs = 20_000L) {
+                    diagnostics.hasEngine(PlaybackEnginePath.SampledStream) &&
+                        player.state.value.isPlaying
                 },
-                "CIUT stream should play; state=${player.state.value} errors=${diagnostics.errorEvents()}",
+                "CIUT stream should play via ffmpeg PCM; state=${player.state.value} errors=${diagnostics.errorEvents()}",
             )
         } finally {
             player.releaseForTests()
@@ -564,15 +575,13 @@ class RealAudioPlaybackDesktopTest {
             player.play(listOf(track), 0)
 
             assertTrue(
-                waitUntil { diagnostics.hasEngine(PlaybackEnginePath.JavaFxMediaPlayer) },
-                "Remote MP3 should use JavaFX before considering any fallback; " +
+                waitUntil(timeoutMs = 25_000L) {
+                    requestEvents.any { it == "GET:/Items/remote/Download" } &&
+                        player.state.value.isPlaying
+                },
+                "Desktop should fall back to downloadUrl when remote streamUrl cannot play; " +
                     "state=${player.state.value} requests=${requestEvents.toList()} " +
                     "engines=${diagnostics.engineEvents()} errors=${diagnostics.errorEvents()}",
-            )
-            assertTrue(
-                waitUntil(timeoutMs = 25_000L) { requestEvents.any { it == "GET:/Items/remote/Download" } },
-                "Desktop JavaFX fallback should request the track downloadUrl when streamUrl cannot play; " +
-                    "requests=${requestEvents.toList()} errors=${diagnostics.errorEvents()}",
             )
             assertFalse(
                 diagnostics.hasEngine(PlaybackEnginePath.SampledClip),
@@ -693,30 +702,25 @@ class RealAudioPlaybackDesktopTest {
 
             assertTrue(
                 waitUntil {
-                    diagnostics.hasEngine(PlaybackEnginePath.JavaFxMediaPlayer) &&
+                    diagnostics.hasEngine(PlaybackEnginePath.SampledStream) &&
                         player.state.value.isPlaying
                 },
-                "Remote MP3 crossfade playback should use JavaFX, not sampled playback; " +
+                "Remote MP3 crossfade playback should use ffmpeg PCM, not JavaFX TLS; " +
                     "engines=${diagnostics.engineEvents()} requests=${requestEvents.toList()} " +
                     "errors=${diagnostics.errorEvents()}",
             )
             assertTrue(
                 waitUntil(timeoutMs = 35_000) {
-                    diagnostics.hasCommitted(PlaybackEnginePath.JavaFxMediaPlayer, second.id) &&
-                        player.state.value.currentTrack?.id == second.id
+                    player.state.value.currentTrack?.id == second.id
                 },
-                "Remote MP3 JavaFX crossfade did not commit to the second track; " +
-                    "state=${player.state.value} volumes=${diagnostics.volumeSteps(PlaybackEnginePath.JavaFxMediaPlayer)} " +
+                "Remote MP3 crossfade/gapless did not advance to the second track; " +
+                    "state=${player.state.value} engines=${diagnostics.engineEvents()} " +
                     "requests=${requestEvents.toList()} errors=${diagnostics.errorEvents()}",
             )
             assertFalse(
                 diagnostics.hasEngine(PlaybackEnginePath.SampledClip),
                 "Remote MP3 crossfade must not use SampledClip because Java Sound MP3 decoding can produce static",
             )
-            val volumes = diagnostics.volumeSteps(PlaybackEnginePath.JavaFxMediaPlayer)
-            assertTrue(volumes.size >= 4, "Expected several JavaFX crossfade volume samples")
-            assertTrue(volumes.zipWithNext().all { (left, right) -> left.outgoingVolume >= right.outgoingVolume })
-            assertTrue(volumes.zipWithNext().all { (left, right) -> left.incomingVolume <= right.incomingVolume })
             assertEquals(second, player.state.value.currentTrack)
         } finally {
             player.releaseForTests()

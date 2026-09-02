@@ -6,6 +6,7 @@ import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.DesktopInlineRadioMapCoordinator
 import com.phoebe.app.platform.PhoebeLog
+import com.phoebe.app.platform.logDetail
 import javazoom.spi.mpeg.sampled.file.MpegAudioFileReader
 import javazoom.spi.vorbis.sampled.file.VorbisAudioFileReader
 import javafx.application.Platform
@@ -359,6 +360,16 @@ class DesktopAudioPlayer(
             )
             return
         }
+        if (isUnboundServerPath(uri)) {
+            finishPlaybackFailed(
+                PlaybackFailure(
+                    kind = PlaybackFailureKind.Unreachable,
+                    message = "unbound media-server path; refusing to open without origin",
+                    streamUri = uri,
+                ),
+            )
+            return
+        }
         val generation = activePlayGeneration
         playbackExecutor.execute {
             if (!isPlayRequestCurrent(generation)) return@execute
@@ -413,6 +424,19 @@ class DesktopAudioPlayer(
                         return@execute
                     }
                     if (finishIfInfrastructureFailure(generation)) return@execute
+                    if (file == null &&
+                        !isKnownLiveStream &&
+                        downloadUri != null &&
+                        downloadUri != activeUri &&
+                        tryBufferedRemotePlaybackFallback(
+                            uri = activeUri,
+                            downloadUri = downloadUri,
+                            preferredSampledExtension = preferredSampledExtension,
+                            generation = generation,
+                        )
+                    ) {
+                        return@execute
+                    }
                     if (isKnownLiveStream) {
                         if (tryLiveRadioSampledPlayback(
                                 activeUri = activeUri,
@@ -662,8 +686,16 @@ class DesktopAudioPlayer(
 
     private fun reloadCurrentTrack() {
         reloadOnResume = false
-        val track = state.value.currentTrack ?: return
-        playTrack(track, preferJavaFxForLocalStreaming = false)
+        val current = state.value
+        val index = current.currentIndex
+        // Go through SimpleAudioPlayer.play so unbound `/library/parts/...` paths re-enter
+        // origin resolve instead of JavaFX (uri.getScheme() == null).
+        if (index in current.queue.indices) {
+            play(current.queue, index)
+            return
+        }
+        val track = current.currentTrack ?: return
+        play(listOf(track), 0)
     }
 
     override fun seek(positionMs: Long) {
@@ -1640,7 +1672,9 @@ class DesktopAudioPlayer(
 
     private fun rememberPlaybackFailure(error: Throwable, streamUri: String?): PlaybackFailure {
         val failure = PlaybackFailureClassifier.fromThrowable(error, streamUri ?: currentStreamUri())
-        PhoebeLog.d("DesktopAudioPlayer") { failure.logLine() }
+        PhoebeLog.d("DesktopAudioPlayer") {
+            "${failure.logLine()} detail=${error.logDetail()}"
+        }
         if (!failure.shouldTryAlternateEngine && failure.isInfrastructureFailure) {
             pendingPlaybackFailure = failure
         }
@@ -1760,7 +1794,14 @@ class DesktopAudioPlayer(
         ) {
             return true
         }
-        if (pendingPlaybackFailure?.isInfrastructureFailure == true) return false
+        if (pendingPlaybackFailure?.isInfrastructureFailure == true) {
+            // Stream origin may be unreachable while a distinct downloadUrl still works
+            // (Jellyfin /Items/.../Download vs /Audio/.../stream).
+            return file == null &&
+                downloadUri != null &&
+                downloadUri != activeUri &&
+                tryBufferedRemotePlaybackFallback(activeUri, downloadUri, preferredSampledExtension, generation)
+        }
         if (file == null && tryStartFfmpegPcmStream(activeUri, generation)) {
             return true
         }
@@ -4084,10 +4125,22 @@ internal object DesktopPlaybackStartupPolicy {
         preferredJavaFxExtension: String?,
     ): Boolean {
         if (isKnownLiveStream) return isRemoteUri(uri) || isLinuxDesktop()
-        if (!isLinuxDesktop()) return false
+        if (isRemoteUri(uri)) {
+            // Remote plex.direct / HTTPS / live radio: prefer ffmpeg PCM on every desktop OS.
+            // JavaFX's own HTTP/TLS stack has repeatedly failed relay handshakes on Windows
+            // while OkHttp/ffmpeg could still reach the same host — the cellular/remote path
+            // Android handles fine. Extensionless remotes (icy/AAC radio, Subsonic stream.view)
+            // are unknown to JavaFX until open time, so probe them with ffmpeg first too.
+            val extension = preferredJavaFxExtension ?: return true
+            val javaFxFriendly = javaFxPlaybackExtensionFromSuffix(extension) != null &&
+                sampledPlaybackExtensionFromSuffix(extension) == null
+            return javaFxFriendly
+        }
         val extension = preferredJavaFxExtension ?: return false
-        return javaFxPlaybackExtensionFromSuffix(extension) != null &&
+        val javaFxFriendly = javaFxPlaybackExtensionFromSuffix(extension) != null &&
             sampledPlaybackExtensionFromSuffix(extension) == null
+        // Local files: keep the existing Linux-only PCM preference.
+        return javaFxFriendly && isLinuxDesktop()
     }
 
     fun startupPlanForRemotePlayback(
@@ -4102,15 +4155,8 @@ internal object DesktopPlaybackStartupPolicy {
         if (!isRemoteUri(uri)) {
             return instantStartupPlan(DesktopPlaybackStartupPath.JavaFxMediaPlayer)
         }
-        if (!isFlatpakSandbox &&
-            shouldUsePcmStreamBeforeJavaFx(
-                uri = uri,
-                isKnownLiveStream = isKnownLiveStream,
-                preferredJavaFxExtension = preferredJavaFxExtension,
-            )
-        ) {
-            return instantStartupPlan(DesktopPlaybackStartupPath.FfmpegPcmStream)
-        }
+        // Known sampled-friendly remotes (wav/flac/ogg) keep their streaming plan ahead of
+        // the ffmpeg-before-JavaFX preference used for JavaFX-friendly or unknown remotes.
         val streamingExtension = preferredStreamingExtension ?: streamingSampledExtensionFromUri(uri)
         if (streamingExtension != null &&
             shouldStreamRemoteSampledPlayback(
@@ -4120,6 +4166,15 @@ internal object DesktopPlaybackStartupPolicy {
             )
         ) {
             return instantStartupPlan(DesktopPlaybackStartupPath.SampledStream)
+        }
+        if (!isFlatpakSandbox &&
+            shouldUsePcmStreamBeforeJavaFx(
+                uri = uri,
+                isKnownLiveStream = isKnownLiveStream,
+                preferredJavaFxExtension = preferredJavaFxExtension,
+            )
+        ) {
+            return instantStartupPlan(DesktopPlaybackStartupPath.FfmpegPcmStream)
         }
         if (durationMs > 0L && shouldEagerlyBufferRemotePlayback(uri, preferredSampledExtension)) {
             return instantStartupPlan(DesktopPlaybackStartupPath.BufferedSampledPlayback)
