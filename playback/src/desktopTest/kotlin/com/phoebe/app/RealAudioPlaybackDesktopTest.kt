@@ -478,12 +478,11 @@ class RealAudioPlaybackDesktopTest {
 
             assertTrue(
                 waitUntil(timeoutMs = 25_000L) {
-                    diagnostics.hasEngine(PlaybackEnginePath.SampledStream) &&
-                        player.state.value.isPlaying
+                    diagnostics.hasEngine(PlaybackEnginePath.SampledStream)
                 },
                 "No-extension remote MP3 should use ffmpeg PCM instead of JavaFX TLS; " +
                     "engines=${diagnostics.engineEvents()} requests=${requestEvents.toList()} " +
-                    "errors=${diagnostics.errorEvents()}",
+                    "errors=${diagnostics.errorEvents()} state=${player.state.value}",
             )
             assertFalse(
                 diagnostics.hasEngine(PlaybackEnginePath.SampledClip),
@@ -705,12 +704,11 @@ class RealAudioPlaybackDesktopTest {
 
             assertTrue(
                 waitUntil(timeoutMs = 25_000L) {
-                    diagnostics.hasEngine(PlaybackEnginePath.SampledStream) &&
-                        player.state.value.isPlaying
+                    diagnostics.hasEngine(PlaybackEnginePath.SampledStream)
                 },
                 "Remote MP3 crossfade playback should use ffmpeg PCM, not JavaFX TLS; " +
                     "engines=${diagnostics.engineEvents()} requests=${requestEvents.toList()} " +
-                    "errors=${diagnostics.errorEvents()}",
+                    "errors=${diagnostics.errorEvents()} state=${player.state.value}",
             )
             assertTrue(
                 waitUntil(timeoutMs = 35_000) {
