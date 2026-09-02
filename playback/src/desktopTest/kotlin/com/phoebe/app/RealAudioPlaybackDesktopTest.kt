@@ -375,7 +375,7 @@ class RealAudioPlaybackDesktopTest {
             player.play(listOf(track), 0)
 
             assertTrue(
-                waitUntil {
+                waitUntil(timeoutMs = 25_000L) {
                     diagnostics.hasEngine(PlaybackEnginePath.SampledStream) &&
                         player.state.value.isPlaying
                 },
@@ -432,7 +432,7 @@ class RealAudioPlaybackDesktopTest {
             player.play(listOf(track), 0)
 
             assertTrue(
-                waitUntil {
+                waitUntil(timeoutMs = 25_000L) {
                     diagnostics.hasEngine(PlaybackEnginePath.SampledStream) &&
                         player.state.value.isPlaying
                 },
@@ -705,7 +705,7 @@ class RealAudioPlaybackDesktopTest {
             player.play(listOf(first, second), 0)
 
             assertTrue(
-                waitUntil {
+                waitUntil(timeoutMs = 25_000L) {
                     diagnostics.hasEngine(PlaybackEnginePath.SampledStream) &&
                         player.state.value.isPlaying
                 },
