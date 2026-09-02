@@ -8,6 +8,7 @@ import com.phoebe.app.platform.NetworkIdentity
 import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.currentNetworkIdentity
 import com.phoebe.app.platform.currentTimeMs
+import com.phoebe.app.platform.logDetail
 import com.phoebe.app.platform.observeNetworkIdentity
 import com.phoebe.app.platform.withNetworkTimeoutOrNull
 import dev.zacsweers.metro.AppScope
@@ -564,7 +565,7 @@ class PlexConnectionResolver(
         }.getOrElse { error ->
             if (error is CancellationException) throw error
             PhoebeLog.d("PlexConnectionResolver") {
-                "identity probe miss origin=$base reason=${error::class.simpleName}"
+                "identity probe miss origin=$base detail=${error.logDetail()}"
             }
             false
         }

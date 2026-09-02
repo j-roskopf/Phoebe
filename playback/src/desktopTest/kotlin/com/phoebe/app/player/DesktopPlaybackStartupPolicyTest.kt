@@ -66,23 +66,15 @@ class DesktopPlaybackStartupPolicyTest {
                 "https://music.example.test/library/track.mp3?token=abc",
             ),
         )
-        if (DesktopPlaybackStartupPolicy.isLinuxDesktop()) {
-            assertTrue(
-                DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
-                    uri = "https://music.example.test/library/track.mp3?token=abc",
-                    isKnownLiveStream = false,
-                    preferredJavaFxExtension = "mp3",
-                ),
-            )
-        } else {
-            assertFalse(
-                DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
-                    uri = "https://music.example.test/library/track.mp3?token=abc",
-                    isKnownLiveStream = false,
-                    preferredJavaFxExtension = "mp3",
-                ),
-            )
-        }
+        // Remote MP3 prefers ffmpeg PCM on every desktop OS (JavaFX TLS is unreliable on
+        // Windows plex.direct relays). Local Linux still uses PCM; covered below separately.
+        assertTrue(
+            DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
+                uri = "https://music.example.test/library/track.mp3?token=abc",
+                isKnownLiveStream = false,
+                preferredJavaFxExtension = "mp3",
+            ),
+        )
     }
 
     @Test
@@ -95,23 +87,13 @@ class DesktopPlaybackStartupPolicyTest {
                 uri = "https://music.example.test/rest/stream.view?id=abc",
             ),
         )
-        if (DesktopPlaybackStartupPolicy.isLinuxDesktop()) {
-            assertTrue(
-                DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
-                    uri = "https://music.example.test/rest/stream.view?id=abc",
-                    isKnownLiveStream = false,
-                    preferredJavaFxExtension = "mp3",
-                ),
-            )
-        } else {
-            assertFalse(
-                DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
-                    uri = "https://music.example.test/rest/stream.view?id=abc",
-                    isKnownLiveStream = false,
-                    preferredJavaFxExtension = "mp3",
-                ),
-            )
-        }
+        assertTrue(
+            DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
+                uri = "https://music.example.test/rest/stream.view?id=abc",
+                isKnownLiveStream = false,
+                preferredJavaFxExtension = "mp3",
+            ),
+        )
     }
 
     @Test
@@ -262,22 +244,30 @@ class DesktopPlaybackStartupPolicyTest {
     }
 
     @Test
-    fun unknownExtensionlessRemoteStreamKeepsJavaFxFallbackDelayVisible() {
+    fun unknownExtensionlessRemoteStreamPrefersFfmpegPcmImmediately() {
         val plan = startupPlan(
             RemoteStartupCase(
                 label = "unknown extensionless stream",
                 uri = "https://music.example.test/stream",
                 durationMs = 0L,
-                expectedPath = DesktopPlaybackStartupPath.JavaFxThenFallback,
+                expectedPath = DesktopPlaybackStartupPath.FfmpegPcmStream,
             ),
         )
 
-        assertEquals(DesktopPlaybackStartupPath.JavaFxThenFallback, plan.path)
-        assertEquals(
-            DesktopPlaybackStartupPolicy.JavaFxFailureFallbackDelayMs,
-            plan.deterministicDelayBeforeFirstEngineMs,
+        assertEquals(DesktopPlaybackStartupPath.FfmpegPcmStream, plan.path)
+        assertEquals(0L, plan.deterministicDelayBeforeFirstEngineMs)
+        assertFalse(plan.waitsForJavaFxFailureBeforeFallback)
+    }
+
+    @Test
+    fun unknownExtensionlessRemotePrefersPcmBeforeJavaFx() {
+        assertTrue(
+            DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
+                uri = "https://ice23.securenetsystems.net/CIUT",
+                isKnownLiveStream = false,
+                preferredJavaFxExtension = null,
+            ),
         )
-        assertTrue(plan.waitsForJavaFxFailureBeforeFallback)
     }
 
     @Test
@@ -580,11 +570,7 @@ class DesktopPlaybackStartupPolicyTest {
         )
 
     private fun linuxJavaFxOrFfmpeg(): DesktopPlaybackStartupPath =
-        if (DesktopPlaybackStartupPolicy.isLinuxDesktop()) {
-            DesktopPlaybackStartupPath.FfmpegPcmStream
-        } else {
-            DesktopPlaybackStartupPath.JavaFxMediaPlayer
-        }
+        DesktopPlaybackStartupPath.FfmpegPcmStream
 
     private fun sampledExtension(case: RemoteStartupCase): String? =
         DesktopPlaybackStartupPolicy.sampledPlaybackExtensionFromSuffix(case.audioCodec.orEmpty())

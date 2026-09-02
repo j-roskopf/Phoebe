@@ -33,4 +33,27 @@ object PhoebeLog {
     }
 }
 
+/**
+ * Compact class + message chain for probe/player diagnostics.
+ * Strips query strings from http(s) URLs so tokens do not land in Sentry.
+ */
+fun Throwable.logDetail(maxDepth: Int = 3): String = buildString {
+    var current: Throwable? = this@logDetail
+    var depth = 0
+    while (current != null && depth < maxDepth) {
+        if (depth > 0) append(" | ")
+        append(current::class.simpleName ?: "Throwable")
+        current.message?.takeIf { it.isNotBlank() }?.let { message ->
+            append(": ").append(redactUrlQueryParams(message).take(240))
+        }
+        current = current.cause
+        depth++
+    }
+}
+
+private fun redactUrlQueryParams(text: String): String =
+    text.replace(Regex("""(https?://[^\s"'<>?]+)(\?[^\s"'<>]*)""", RegexOption.IGNORE_CASE)) { match ->
+        match.groupValues[1]
+    }
+
 internal expect fun platformLog(tag: String, message: String)

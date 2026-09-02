@@ -1,5 +1,7 @@
 package com.phoebe.app.player
 
+import com.phoebe.app.platform.logDetail
+
 /**
  * Why a track failed to start. Used to decide retry vs. stop, and to keep the queue
  * from marching through every song when the music server is unreachable.
@@ -231,6 +233,10 @@ object PlaybackFailureClassifier {
         text.replace(Regex("""(https?://[^\s"'<>?]+)(\?[^\s"'<>]*)""", RegexOption.IGNORE_CASE)) { match ->
             match.groupValues[1]
         }
+
+    /** Compact cause chain for probe/player logs (class + message, redacted). */
+    fun throwableDetail(error: Throwable, maxDepth: Int = 3): String =
+        error.logDetail(maxDepth)
 
     private fun kindForHttpStatus(statusCode: Int?): PlaybackFailureKind = when (statusCode) {
         401, 403 -> PlaybackFailureKind.Unauthorized

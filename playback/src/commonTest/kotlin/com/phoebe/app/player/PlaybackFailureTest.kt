@@ -252,4 +252,19 @@ class PlaybackFailureTest {
         assertTrue(failure.isInfrastructureFailure)
         assertFalse(failure.shouldTryAlternateEngine)
     }
+
+    @Test
+    fun throwableDetailIncludesCauseChainAndRedactsQuery() {
+        val cause = RuntimeException("PKIX path building failed")
+        val error = IllegalStateException(
+            "handshake failed https://relay.example/library/parts/1?X-Plex-Token=secret",
+            cause,
+        )
+        val detail = PlaybackFailureClassifier.throwableDetail(error)
+        assertTrue(detail.contains("IllegalStateException"))
+        assertTrue(detail.contains("https://relay.example/library/parts/1"))
+        assertFalse(detail.contains("X-Plex-Token=secret"))
+        assertTrue(detail.contains("RuntimeException"))
+        assertTrue(detail.contains("PKIX"))
+    }
 }

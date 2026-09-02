@@ -117,3 +117,14 @@ kotlin {
         }
     }
 }
+
+val phoebeRealAudioTests = providers.gradleProperty("phoebe.realAudioTests")
+    .map(String::toBoolean)
+    .orElse(false)
+
+tasks.withType<Test>().configureEach {
+    systemProperty("phoebe.realAudioTests", phoebeRealAudioTests.get().toString())
+    if (phoebeRealAudioTests.get() && name.contains("desktop", ignoreCase = true)) {
+        maxParallelForks = 1
+    }
+}

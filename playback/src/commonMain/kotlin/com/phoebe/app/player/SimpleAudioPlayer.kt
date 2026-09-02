@@ -23,8 +23,16 @@ internal const val PlaybackReadyBufferedAheadMs = 500L
 internal const val PlaybackStartupTimeoutMs = 9_000L
 internal const val PlaybackStartupTimeoutLocalMs = 4_000L
 internal const val PlaybackStartupTimeoutRemoteMs = 9_000L
-internal const val ColdOriginResolveAttempts = 2
+/** Initial back-to-back races before slowing into sustained reconnect. */
+internal const val ColdOriginResolveAttempts = 3
 internal const val ColdOriginResolveRetryDelayMs = 500L
+/**
+ * Keep trying to bind a live origin while the user still wants audio. Giving up early left
+ * Windows/cellular clients stuck until a manual tap, even after AppState later found a relay.
+ */
+internal const val ColdOriginResolveMaxAttempts = 40
+internal const val ColdOriginResolveSustainedDelayMs = 2_000L
+internal const val ColdOriginRediscoverEveryAttempts = 3
 
 internal fun hasPlaybackReadyBuffer(
     positionMs: Long,
@@ -54,6 +62,11 @@ abstract class SimpleAudioPlayer(
     private var originRetryGeneration = -1
     /** Origin the stream currently open on the platform player was built from. */
     private var openPlaybackOrigin: String? = null
+    /**
+     * [playGeneration] for which [launchPreparedPlayback] already handed work to the platform.
+     * Used so same-track resume does not short-circuit a cold origin wait that never opened.
+     */
+    private var preparedPlayGeneration = -1
     private val triedPlaybackUris = linkedSetOf<String>()
     private var stickyPlaybackOrigin: String? = null
     private var crossfadeDurationMs = 0L
@@ -101,7 +114,16 @@ abstract class SimpleAudioPlayer(
             previous.durationMs > 0L &&
             previous.positionMs >= previous.durationMs
 
-        if (sameCurrentTrack && !currentTrackEnded) {
+        // Same track with a still-relative `/library/parts/...` path must re-enter origin
+        // resolve. resume()/reloadOnResume would hand JavaFX or ExoPlayer a host-less URI.
+        // Also require that this generation already prepared the platform — cold origin wait
+        // buffers with nothing open yet, and sticky-binding alone must not resume into silence.
+        val canResumeSameTrack = sameCurrentTrack &&
+            !currentTrackEnded &&
+            track != null &&
+            !trackNeedsLiveOriginBind(track) &&
+            preparedPlayGeneration == playGeneration
+        if (canResumeSameTrack) {
             if (previous.isPlaying && !previous.isBuffering && playWhenReady) {
                 return
             }
@@ -141,7 +163,6 @@ abstract class SimpleAudioPlayer(
         setOutputVolume(effectiveOutputVolume())
         if (track != null) {
             resetPlaybackUriFailover(generation)
-            startPlaybackStartupWatchdog(generation)
             beginPlaybackAfterOriginResolve(
                 queue = playbackQueue,
                 startIndex = index,
@@ -191,18 +212,32 @@ abstract class SimpleAudioPlayer(
             if (resolver != null) followOriginResolutionInBackground(generation, resolver)
             return
         }
+        val primaryUri = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
+            .ifBlank { track.streamUrl }
+        val mustWaitForLiveOrigin = track.holdsRelativePlexPath() ||
+            (resolver.demoteLocalOrigins() && isLocalOnlyPlaybackOrigin(primaryUri))
+        // Remote absolute URLs (cellular/off-LAN stamped relays) can start immediately.
+        // Relative paths and demoted LAN-only primaries must wait for a probed origin.
+        if (!mustWaitForLiveOrigin) {
+            launchPreparedPlayback(
+                queue = queue,
+                startIndex = startIndex,
+                generation = generation,
+                sameQueue = sameQueue,
+                origin = null,
+            )
+            followOriginResolutionInBackground(generation, resolver)
+            return
+        }
         scope.launch {
             val resolved = resolveColdOriginWithRetries(resolver, generation)
             if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
             val accepted = acceptedPlaybackOrigin(resolved)
-            // No origin and nothing to bind the queue onto: the server is unreachable right now.
-            // Opening anyway hands the platform player a host-less `/library/parts/...` path,
-            // which ExoPlayer reads as a local file and fails with a bare ENOENT ~9s later
-            // (the startup watchdog). Say so immediately instead.
             if (accepted == null && track.holdsRelativePlexPath()) {
                 failServerUnreachable(track, generation)
                 return@launch
             }
+            // Demoted LAN probe miss / rejected LAN: still open stamped fallbacks if any.
             val playbackQueue = if (accepted != null) queue.withResolvedOrigin(accepted) else queue
             launchPreparedPlayback(
                 queue = playbackQueue,
@@ -220,13 +255,18 @@ abstract class SimpleAudioPlayer(
      * its own full [PlaybackOriginResolver.DefaultPlayResolveDeadlineMs] budget. That race can
      * miss by a hair — observed on-device: a race missed all candidates, and the very next race,
      * ~1s later, won — so one miss must not be a permanent failure while the server is this close
-     * to answering. Retry a couple more full-budget attempts before giving up.
+     * to answering.
+     *
+     * Keep racing (and periodically rediscovering connection lists) while [playWhenReady] so a
+     * flaky plex.direct TLS path eventually binds instead of stranding the user on "can't play".
      */
     private suspend fun resolveColdOriginWithRetries(
         resolver: PlaybackOriginResolver,
         generation: Int,
     ): String? {
-        repeat(ColdOriginResolveAttempts) { attempt ->
+        var attempt = 0
+        while (isPlayRequestCurrent(generation) && playWhenReady && attempt < ColdOriginResolveMaxAttempts) {
+            attempt++
             val resolved = runCatching {
                 resolver.resolveOrigin(PlaybackOriginResolver.DefaultPlayResolveDeadlineMs)
             }
@@ -234,7 +274,16 @@ abstract class SimpleAudioPlayer(
                 .getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() }
             if (resolved != null) return resolved
             if (!isPlayRequestCurrent(generation) || !playWhenReady) return null
-            if (attempt < ColdOriginResolveAttempts - 1) delay(ColdOriginResolveRetryDelayMs)
+            if (attempt % ColdOriginRediscoverEveryAttempts == 0) {
+                runCatching { resolver.rediscoverOrigins() }
+                    .onFailure { if (it is CancellationException) throw it }
+            }
+            val delayMs = if (attempt < ColdOriginResolveAttempts) {
+                ColdOriginResolveRetryDelayMs
+            } else {
+                ColdOriginResolveSustainedDelayMs
+            }
+            delay(delayMs)
         }
         return null
     }
@@ -292,6 +341,7 @@ abstract class SimpleAudioPlayer(
         }
         notePlaybackUri(initialUri, generation)
         openPlaybackOrigin = playbackOriginOf(initialUri)
+        preparedPlayGeneration = generation
         startPlaybackStartupWatchdog(generation)
         if (sameQueue) {
             skipToInQueueOnPlatform(queue, index, track, generation)
@@ -349,7 +399,7 @@ abstract class SimpleAudioPlayer(
     private fun List<Track>.withResolvedOrigin(origin: String): List<Track> {
         var changed = false
         val next = map { track ->
-            val preferred = track.preferPlaybackOrigin(origin)
+            val preferred = track.boundForPlaybackOrigin(origin)
             if (preferred !== track) changed = true
             preferred
         }
@@ -440,17 +490,37 @@ abstract class SimpleAudioPlayer(
             stopCurrentPlaybackImmediately()
             return
         }
-        val nextPlaying = !state.isPlaying
-        playWhenReady = nextPlaying
-        mutableState.value = state.copy(isPlaying = nextPlaying)
-        if (nextPlaying) {
-            resume()
-            startProgressTicker()
-        } else {
+        if (state.isPlaying) {
+            playWhenReady = false
+            mutableState.value = state.copy(isPlaying = false)
             pause()
             cancelGaplessPrepare()
             stopProgressTicker()
+            return
         }
+        val track = state.currentTrack
+        // After an unreachable cold start the queue still holds relative Plex paths. Resume
+        // (and desktop reloadOnResume → playTrack) would open those unbound; re-play instead.
+        if (track != null &&
+            trackNeedsLiveOriginBind(track) &&
+            state.currentIndex in state.queue.indices
+        ) {
+            play(state.queue, state.currentIndex)
+            return
+        }
+        playWhenReady = true
+        mutableState.value = state.copy(isPlaying = true)
+        resume()
+        startProgressTicker()
+    }
+
+    /** True when this track still needs a live media-server origin before the platform player. */
+    private fun trackNeedsLiveOriginBind(track: Track): Boolean {
+        if (!track.localUri.isNullOrBlank()) return false
+        if (track.holdsRelativePlexPath()) return true
+        val resolved = StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
+            .ifBlank { track.streamUrl }
+        return isUnboundServerPath(resolved)
     }
 
     override fun clearQueue() {
@@ -1304,7 +1374,7 @@ abstract class SimpleAudioPlayer(
         val origin = stickyPlaybackOrigin ?: return this
         var changed = false
         val next = map { track ->
-            val preferred = track.preferPlaybackOrigin(origin)
+            val preferred = track.boundForPlaybackOrigin(origin)
             if (preferred !== track) changed = true
             preferred
         }
@@ -1312,13 +1382,28 @@ abstract class SimpleAudioPlayer(
     }
 
     /**
+     * Stamp or reorder a track onto [origin].
+     *
+     * Relative Plex paths and already-absolute Plex URLs both go through
+     * [boundToLivePlaybackOrigin] so a later relay/Wi-Fi handoff re-homes every queue
+     * entry — not just the ones that still look relative. Non-Plex multi-candidate
+     * tracks only reorder via [preferPlaybackOrigin].
+     */
+    private fun Track.boundForPlaybackOrigin(origin: String): Track {
+        val rebound = boundToLivePlaybackOrigin(origin)
+        if (rebound !== this) return rebound
+        return preferPlaybackOrigin(origin)
+    }
+
+    /**
      * The live server base changed — most often a Wi-Fi -> cellular handoff.
      *
-     * Plex queue entries hold relative part keys, so nothing in the queue needs rewriting; the
-     * next read binds onto the new base by itself. What does need attention is the stream that
-     * is *already open* after a handoff ([networkChanged]): its socket points at the old address
-     * and will sit there until the platform player's own timeout expires, which is 20-30s of
-     * silence. Re-prepare it at the current position instead.
+     * Queue entries may already carry absolute Plex URLs from an earlier bind; those are
+     * re-homed onto the new base via [preferStickyPlaybackOrigin]. What still needs special
+     * attention is the stream that is *already open* after a handoff ([networkChanged]): its
+     * socket points at the old address and will sit there until the platform player's own
+     * timeout expires, which is 20-30s of silence. Re-prepare it at the current position
+     * instead.
      *
      * A new origin on the same network is not that. Plex relay hosts rotate — a fresh connection
      * list or a second `/identity` race adopts a different `*.plex.direct:8443` address most
@@ -1340,6 +1425,22 @@ abstract class SimpleAudioPlayer(
             }
             mutableState.value = current.copy(queue = playbackQueue)
             onQueueEdited(playbackQueue, current.currentIndex)
+        }
+        val state = mutableState.value
+        // Cold play was waiting for a live base (or already failed unreachable). Origin is here
+        // now — start immediately. Skip when a stream is already open; network handoffs use
+        // reopenCurrentStreamOnNewOrigin below.
+        val shouldStartDeferredPlay = state.currentTrack != null &&
+            state.currentIndex in state.queue.indices &&
+            openPlaybackOrigin == null &&
+            !state.isPlaying &&
+            (playWhenReady || state.isBuffering || state.playbackErrorMessage != null)
+        if (shouldStartDeferredPlay) {
+            PhoebeLog.d("AudioPlayer") {
+                "rebasePlaybackOrigins starting deferred play on $trimmed"
+            }
+            play(state.queue, state.currentIndex)
+            return
         }
         if (networkChanged) reopenCurrentStreamOnNewOrigin(trimmed)
     }

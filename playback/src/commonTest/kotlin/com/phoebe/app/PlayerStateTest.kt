@@ -6,6 +6,9 @@ import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.EqualizerProfile
 import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.RepeatMode
+import com.phoebe.app.player.ColdOriginResolveMaxAttempts
+import com.phoebe.app.player.ColdOriginResolveRetryDelayMs
+import com.phoebe.app.player.ColdOriginResolveSustainedDelayMs
 import com.phoebe.app.player.MaxTriedPlaybackUris
 import com.phoebe.app.player.PlaybackFailure
 import com.phoebe.app.player.PlaybackFailureClassifier
@@ -195,7 +198,8 @@ class PlayerStateTest {
                 ),
                 0,
             )
-            assertEquals(0, player.fullLoads)
+            // Remote stamped URL starts immediately; background probe may return demoted LAN.
+            assertEquals(1, player.fullLoads)
             advanceTimeBy(25)
             runCurrent()
             // Probe returned demoted LAN — keep the remote stamped URL, don't restamp onto LAN.
@@ -1488,6 +1492,205 @@ class PlayerStateTest {
             )
         } finally {
             player.close()
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
+    }
+
+    @Test
+    fun stickyOriginRebindsAbsolutePlexQueueEntriesForLaterTracks() = runTest {
+        val firstRelay = "https://45-79-202-250.abc.plex.direct:8443"
+        val secondRelay = "https://23-92-30-53.abc.plex.direct:8443"
+        ArtworkAuthHolder.update("token")
+        ArtworkOriginHolder.update(firstRelay)
+        val player = OpenedUriTestPlayer()
+        try {
+            player.play(
+                listOf(
+                    Track("t1", "One", "Artist", "Album", 60_000, "/library/parts/1/file.mp3", ""),
+                    Track("t2", "Two", "Artist", "Album", 60_000, "/library/parts/2/file.mp3", ""),
+                ),
+                0,
+            )
+            player.finishPendingLoad()
+            assertTrue(
+                player.state.value.queue[1].streamUrl.startsWith(firstRelay),
+                "first bind should stamp absolute URLs onto the live origin",
+            )
+
+            ArtworkOriginHolder.update(secondRelay)
+            player.rebasePlaybackOrigins(secondRelay, networkChanged = false)
+            runCurrent()
+
+            assertEquals(1, player.openedUris.size, "relay rotation must not reopen the current stream")
+            assertTrue(
+                player.state.value.queue[1].streamUrl.startsWith(secondRelay),
+                "later queue entries must re-home onto the new origin, got ${player.state.value.queue[1].streamUrl}",
+            )
+
+            player.next()
+            player.finishPendingLoad()
+            assertTrue(
+                player.openedUris.last().startsWith(secondRelay),
+                "next track must open on the rebinding origin, got ${player.openedUris}",
+            )
+        } finally {
+            player.close()
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
+    }
+
+    @Test
+    fun togglePlayPauseAfterColdUnreachableReResolvesInsteadOfOpeningRelativePath() = runTest {
+        PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
+            override fun cachedOrigin(): String? = null
+            override suspend fun resolveOrigin(deadlineMs: Long): String? = null
+            override fun demoteLocalOrigins(): Boolean = true
+        }
+        try {
+            val player = OpenedUriTestPlayer(this)
+            val tracks = listOf(
+                Track("plex:1", "One", "Artist", "Album", 60_000, "/library/parts/1/file.mp3", ""),
+            )
+            player.play(tracks, 0)
+            // Exhaust sustained cold retries until unreachable is published.
+            repeat(ColdOriginResolveMaxAttempts + 1) {
+                advanceTimeBy(ColdOriginResolveSustainedDelayMs)
+                runCurrent()
+            }
+
+            assertEquals(0, player.openedUris.size, "cold miss must not open a relative path")
+            assertEquals(
+                "Can't reach the music server. Check your connection and try again.",
+                player.state.value.playbackErrorMessage,
+            )
+            assertFalse(player.state.value.isPlaying)
+
+            player.togglePlayPause()
+            advanceTimeBy(ColdOriginResolveRetryDelayMs)
+            runCurrent()
+
+            assertEquals(
+                0,
+                player.openedUris.size,
+                "resume after unreachable must not hand the platform a host-less URI, got ${player.openedUris}",
+            )
+            assertTrue(player.state.value.isBuffering || player.state.value.playbackErrorMessage != null)
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
+        }
+    }
+
+    @Test
+    fun togglePlayPauseAfterColdUnreachableBindsWhenOriginAppears() = runTest {
+        var origin: String? = null
+        PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
+            override fun cachedOrigin(): String? = origin
+            override suspend fun resolveOrigin(deadlineMs: Long): String? = origin
+            override fun demoteLocalOrigins(): Boolean = true
+        }
+        try {
+            val player = OpenedUriTestPlayer(this)
+            val tracks = listOf(
+                Track("plex:1", "One", "Artist", "Album", 60_000, "/library/parts/1/file.mp3", ""),
+            )
+            player.play(tracks, 0)
+            repeat(ColdOriginResolveMaxAttempts + 1) {
+                advanceTimeBy(ColdOriginResolveSustainedDelayMs)
+                runCurrent()
+            }
+            assertEquals(0, player.openedUris.size)
+            assertFalse(player.state.value.isBuffering)
+
+            origin = "https://relay.example"
+            player.togglePlayPause()
+            runCurrent()
+
+            assertEquals(1, player.openedUris.size)
+            assertTrue(
+                player.openedUris.single().startsWith("https://relay.example/"),
+                "expected bound stream URL, got ${player.openedUris}",
+            )
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
+        }
+    }
+
+    @Test
+    fun coldResolveKeepsTryingUntilOriginAppearsWithoutManualRetry() = runTest {
+        var origin: String? = null
+        var resolveCalls = 0
+        PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
+            override fun cachedOrigin(): String? = origin
+            override suspend fun resolveOrigin(deadlineMs: Long): String? {
+                resolveCalls++
+                return origin
+            }
+            override fun demoteLocalOrigins(): Boolean = true
+        }
+        try {
+            val player = OpenedUriTestPlayer(this)
+            player.play(
+                listOf(Track("plex:1", "One", "Artist", "Album", 60_000, "/library/parts/1/file.mp3", "")),
+                0,
+            )
+            assertEquals(0, player.openedUris.size)
+            assertTrue(player.state.value.isBuffering)
+
+            // Stay in sustained reconnect for several cycles with no origin.
+            repeat(5) {
+                advanceTimeBy(ColdOriginResolveSustainedDelayMs)
+                runCurrent()
+            }
+            assertEquals(0, player.openedUris.size)
+            assertTrue(resolveCalls >= 5)
+
+            origin = "https://relay.example"
+            advanceTimeBy(ColdOriginResolveSustainedDelayMs)
+            runCurrent()
+
+            assertEquals(1, player.openedUris.size)
+            assertTrue(player.openedUris.single().startsWith("https://relay.example/"))
+            assertNull(player.state.value.playbackErrorMessage)
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
+        }
+    }
+
+    @Test
+    fun rebaseStartsDeferredPlayWhenColdOriginFinallyArrives() = runTest {
+        PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
+            override fun cachedOrigin(): String? = null
+            override suspend fun resolveOrigin(deadlineMs: Long): String? = null
+            override fun demoteLocalOrigins(): Boolean = true
+        }
+        try {
+            val player = OpenedUriTestPlayer(this)
+            ArtworkAuthHolder.update("token")
+            player.play(
+                listOf(Track("plex:1", "One", "Artist", "Album", 60_000, "/library/parts/1/file.mp3", "")),
+                0,
+            )
+            advanceTimeBy(ColdOriginResolveRetryDelayMs)
+            runCurrent()
+            assertEquals(0, player.openedUris.size)
+            assertTrue(player.state.value.isBuffering)
+
+            val live = "https://relay.example"
+            ArtworkOriginHolder.update(live)
+            PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
+                override fun cachedOrigin(): String = live
+                override suspend fun resolveOrigin(deadlineMs: Long): String = live
+                override fun demoteLocalOrigins(): Boolean = true
+            }
+            player.rebasePlaybackOrigins(live)
+            runCurrent()
+
+            assertEquals(1, player.openedUris.size)
+            assertTrue(player.openedUris.single().startsWith("$live/"))
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
             ArtworkOriginHolder.clear()
             ArtworkAuthHolder.clear()
         }
