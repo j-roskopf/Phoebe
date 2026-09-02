@@ -547,6 +547,7 @@ internal fun DesktopPlayer(
                                             onLibraryColumns = onLibraryColumns,
                                             onCollectionItems = onCollectionValue,
                                             onSearchQuery = onSearchQuery,
+                                            onAddToEndOfQueue = onAddToEndOfQueue,
                                         ),
                                         modifier = Modifier.fillMaxSize(),
                                     )

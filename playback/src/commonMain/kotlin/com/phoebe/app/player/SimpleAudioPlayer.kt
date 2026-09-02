@@ -197,6 +197,14 @@ abstract class SimpleAudioPlayer(
                 .getOrNull()?.trimEnd('/')?.takeIf { it.isNotBlank() }
             if (!isPlayRequestCurrent(generation) || !playWhenReady) return@launch
             val accepted = acceptedPlaybackOrigin(resolved)
+            // No origin and nothing to bind the queue onto: the server is unreachable right now.
+            // Opening anyway hands the platform player a host-less `/library/parts/...` path,
+            // which ExoPlayer reads as a local file and fails with a bare ENOENT ~9s later
+            // (the startup watchdog). Say so immediately instead.
+            if (accepted == null && track.holdsRelativePlexPath()) {
+                failServerUnreachable(track, generation)
+                return@launch
+            }
             val playbackQueue = if (accepted != null) queue.withResolvedOrigin(accepted) else queue
             launchPreparedPlayback(
                 queue = playbackQueue,
@@ -277,18 +285,39 @@ abstract class SimpleAudioPlayer(
      * resolves a schemeless/empty URI to a local file path and crashes with a bare
      * "open failed: ENOENT" instead of a reportable player error. Checking here lets that one
      * track fail with a normal [PlaybackFailure] instead.
+     *
+     * A still-relative Plex path (`/library/parts/...`) is the same trap: it is non-blank, so
+     * it survives the emptiness check, but no origin has been bound onto it yet. Every caller
+     * must have resolved an origin first, so treat an unbound path as "nothing to play".
      */
     private fun resolvedInitialPlaybackUriOrNull(track: Track): String? =
         StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
             .ifBlank { track.playbackUriCandidates().firstOrNull().orEmpty() }
-            .takeIf { it.isNotBlank() }
+            .takeIf { it.isNotBlank() && !isUnboundServerPath(it) }
 
     private fun failNoPlayableSource(track: Track, generation: Int) {
+        // An unbound server path means "no live origin", not "this file is missing". NotFound
+        // walks the queue, which would march through every song while the server is down.
+        if (track.localUri.isNullOrBlank() && track.holdsRelativePlexPath()) {
+            failServerUnreachable(track, generation)
+            return
+        }
         PhoebeLog.d("AudioPlayer") { "no playable uri for track=${track.id}; skipping" }
         publishPlaybackFailure(
             PlaybackFailure(
                 kind = PlaybackFailureKind.NotFound,
                 message = "no playable source for track ${track.id}",
+            ),
+            generation,
+        )
+    }
+
+    private fun failServerUnreachable(track: Track, generation: Int) {
+        PhoebeLog.d("AudioPlayer") { "no live origin for track=${track.id}; server unreachable" }
+        publishPlaybackFailure(
+            PlaybackFailure(
+                kind = PlaybackFailureKind.Unreachable,
+                message = "no live music-server origin for track ${track.id}",
             ),
             generation,
         )
