@@ -1381,18 +1381,29 @@ abstract class SimpleAudioPlayer(
         return if (changed) next else this
     }
 
-    /** Relative Plex paths need a host; absolute stamped URLs only need reordering. */
-    private fun Track.boundForPlaybackOrigin(origin: String): Track =
-        if (holdsRelativePlexPath()) boundToLivePlaybackOrigin(origin) else preferPlaybackOrigin(origin)
+    /**
+     * Stamp or reorder a track onto [origin].
+     *
+     * Relative Plex paths and already-absolute Plex URLs both go through
+     * [boundToLivePlaybackOrigin] so a later relay/Wi-Fi handoff re-homes every queue
+     * entry — not just the ones that still look relative. Non-Plex multi-candidate
+     * tracks only reorder via [preferPlaybackOrigin].
+     */
+    private fun Track.boundForPlaybackOrigin(origin: String): Track {
+        val rebound = boundToLivePlaybackOrigin(origin)
+        if (rebound !== this) return rebound
+        return preferPlaybackOrigin(origin)
+    }
 
     /**
      * The live server base changed — most often a Wi-Fi -> cellular handoff.
      *
-     * Plex queue entries hold relative part keys, so nothing in the queue needs rewriting; the
-     * next read binds onto the new base by itself. What does need attention is the stream that
-     * is *already open* after a handoff ([networkChanged]): its socket points at the old address
-     * and will sit there until the platform player's own timeout expires, which is 20-30s of
-     * silence. Re-prepare it at the current position instead.
+     * Queue entries may already carry absolute Plex URLs from an earlier bind; those are
+     * re-homed onto the new base via [preferStickyPlaybackOrigin]. What still needs special
+     * attention is the stream that is *already open* after a handoff ([networkChanged]): its
+     * socket points at the old address and will sit there until the platform player's own
+     * timeout expires, which is 20-30s of silence. Re-prepare it at the current position
+     * instead.
      *
      * A new origin on the same network is not that. Plex relay hosts rotate — a fresh connection
      * list or a second `/identity` race adopts a different `*.plex.direct:8443` address most

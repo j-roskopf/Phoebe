@@ -1498,6 +1498,50 @@ class PlayerStateTest {
     }
 
     @Test
+    fun stickyOriginRebindsAbsolutePlexQueueEntriesForLaterTracks() = runTest {
+        val firstRelay = "https://45-79-202-250.abc.plex.direct:8443"
+        val secondRelay = "https://23-92-30-53.abc.plex.direct:8443"
+        ArtworkAuthHolder.update("token")
+        ArtworkOriginHolder.update(firstRelay)
+        val player = OpenedUriTestPlayer()
+        try {
+            player.play(
+                listOf(
+                    Track("t1", "One", "Artist", "Album", 60_000, "/library/parts/1/file.mp3", ""),
+                    Track("t2", "Two", "Artist", "Album", 60_000, "/library/parts/2/file.mp3", ""),
+                ),
+                0,
+            )
+            player.finishPendingLoad()
+            assertTrue(
+                player.state.value.queue[1].streamUrl.startsWith(firstRelay),
+                "first bind should stamp absolute URLs onto the live origin",
+            )
+
+            ArtworkOriginHolder.update(secondRelay)
+            player.rebasePlaybackOrigins(secondRelay, networkChanged = false)
+            runCurrent()
+
+            assertEquals(1, player.openedUris.size, "relay rotation must not reopen the current stream")
+            assertTrue(
+                player.state.value.queue[1].streamUrl.startsWith(secondRelay),
+                "later queue entries must re-home onto the new origin, got ${player.state.value.queue[1].streamUrl}",
+            )
+
+            player.next()
+            player.finishPendingLoad()
+            assertTrue(
+                player.openedUris.last().startsWith(secondRelay),
+                "next track must open on the rebinding origin, got ${player.openedUris}",
+            )
+        } finally {
+            player.close()
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
+    }
+
+    @Test
     fun togglePlayPauseAfterColdUnreachableReResolvesInsteadOfOpeningRelativePath() = runTest {
         PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
             override fun cachedOrigin(): String? = null
