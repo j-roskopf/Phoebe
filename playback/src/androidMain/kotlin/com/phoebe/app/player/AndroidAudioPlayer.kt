@@ -825,10 +825,16 @@ class AndroidAudioPlayer(
             val mediaItem = playbackMediaItem(windowTracks[targetIndex], inAppPlayback = true)
             player.addMediaItem(removeFrom + (targetIndex - prefix), mediaItem)
         }
+        // The reconcile only patches the window from the currently-playing item onward, so any
+        // platform items before platformCurrentIndex are retained untouched. Map them too:
+        // platform index 0 is app index (currentIndex - platformCurrentIndex), and the whole
+        // platform queue is indexable. Recording firstAppIndex == currentIndex (as if the rebuilt
+        // window began at platform 0) would make appIndexFor() double the offset whenever the
+        // queue had already advanced past platform index 0.
         loadedPlatformQueue = LoadedPlatformQueue(
             queueIds = queue.map { it.id },
-            firstAppIndex = currentIndex,
-            itemCount = windowTracks.size,
+            firstAppIndex = currentIndex - platformCurrentIndex,
+            itemCount = player.mediaItemCount,
         )
         return true
     }
