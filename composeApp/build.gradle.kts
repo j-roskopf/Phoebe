@@ -354,7 +354,7 @@ kotlin {
             implementation("org.jetbrains.compose.desktop:desktop-jvm-$composeDesktopTarget:${libs.versions.compose.get()}")
             if (composeDesktopTarget.startsWith("windows")) {
                 // ANGLE backend: more stable than raw D3D12/OpenGL-in-Swing on many Windows GPUs.
-                implementation("org.jetbrains.skiko:skiko-awt-runtime-angle-$composeDesktopTarget:0.144.6")
+                implementation("org.jetbrains.skiko:skiko-awt-runtime-angle-$composeDesktopTarget:${libs.versions.skiko.get()}")
             }
             implementation(libs.jnativehook)
             implementation(libs.jna)

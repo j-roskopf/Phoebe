@@ -88,7 +88,7 @@ private class AndroidCastController : CastController {
     override val state: StateFlow<CastState> = mutableState
 
     override fun canLoadQueue(queue: List<Track>): CastQueueSupport =
-        queue.plexChromecastQueueSupport()
+        queue.chromecastQueueSupport()
 
     private val remoteMediaClientListener = object : RemoteMediaClient.Callback() {
         override fun onStatusUpdated() {
@@ -991,10 +991,14 @@ private class AndroidCastController : CastController {
             descriptor.thumbUrl?.let { addImage(com.google.android.gms.common.images.WebImage(android.net.Uri.parse(it))) }
         }
         return MediaInfo.Builder(descriptor.castUrl)
-            .setStreamType(MediaInfo.STREAM_TYPE_BUFFERED)
+            .setStreamType(
+                if (descriptor.isLiveStream) MediaInfo.STREAM_TYPE_LIVE else MediaInfo.STREAM_TYPE_BUFFERED,
+            )
             .setContentType(descriptor.contentType)
             .setMetadata(metadata)
-            .setStreamDuration(descriptor.durationMs)
+            // A live stream has no end to seek toward; a stamped duration makes the receiver
+            // stop at that mark.
+            .setStreamDuration(if (descriptor.isLiveStream) 0L else descriptor.durationMs)
             .setCustomData(descriptor.toCastCustomData())
             .build()
     }

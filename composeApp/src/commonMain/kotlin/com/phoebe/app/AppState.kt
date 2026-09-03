@@ -4368,6 +4368,9 @@ class AppState(
                 refreshJob?.cancelAndJoin()
                 historyJob?.cancelAndJoin()
                 providerHistoryJob?.cancelAndJoin()
+                // Joined like the rest: cancel() alone let this one run on and re-import Plex
+                // play-count aggregates after the wipe had already cleared them.
+                plexCountRefreshJob?.cancelAndJoin()
                 lightweightSyncJob?.cancelAndJoin()
                 dependencies.deleteDatabaseDataForSignOut()
             }.onFailure {

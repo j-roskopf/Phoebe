@@ -431,9 +431,9 @@ private fun MediaProviderType.providerButtonLabel(): String = when (this) {
     MediaProviderType.MusicAssistant -> "Music Assistant"
 }
 
-private const val DefaultNavidromeServerUrl = "http://192.168.86.43:30043/"
-private const val DefaultJellyfinServerUrl = "http://192.168.86.43:30013/"
-private const val DefaultEmbyServerUrl = "http://192.168.86.43:36983/"
+private const val DefaultNavidromeServerUrl = "http://192.168.4.26:30043/"
+private const val DefaultJellyfinServerUrl = "http://192.168.4.26:30013/"
+private const val DefaultEmbyServerUrl = "http://192.168.4.26:36983/"
 private const val JellyfinServerUrlPlaceholder = "http://hostname:8096"
 
 @Composable

@@ -507,6 +507,98 @@ class RealAudioPlaybackDesktopTest {
     }
 
     @Test
+    fun remoteExtensionlessStreamCanPauseAndResume() {
+        assumeRealAudioTestsEnabled()
+
+        val fixture = fixtureBytes("wikimedia-example.mp3")
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/rest/stream.view") { exchange ->
+            serveRemoteMp3(exchange, fixture)
+        }
+        server.start()
+        val diagnostics = RecordingPlaybackDiagnostics()
+        val player = DesktopAudioPlayer(diagnostics)
+        try {
+            val track = Track(
+                id = "subsonic-extensionless-mp3",
+                title = "Subsonic MP3",
+                artist = "Fixture",
+                album = "Real Audio Tests",
+                durationMs = 10_000,
+                streamUrl = "http://127.0.0.1:${server.address.port}/rest/stream.view?id=track",
+                downloadUrl = "",
+                filepath = "/music/Fixture/Subsonic MP3.mp3",
+            )
+
+            player.play(listOf(track), 0)
+            val expectedEngine = if (System.getProperty("os.name").orEmpty().lowercase().contains("linux")) {
+                PlaybackEnginePath.SampledStream
+            } else {
+                PlaybackEnginePath.JavaFxMediaPlayer
+            }
+
+            assumeGenuineAudioPlayback(player, durationMs = 10_000L)
+            assertTrue(
+                waitUntil(timeoutMs = 25_000L) {
+                    diagnostics.hasEngine(expectedEngine) &&
+                        player.state.value.isPlaying
+                },
+                "Subsonic-like stream should start through $expectedEngine; " +
+                    "state=${player.state.value} engines=${diagnostics.engineEvents()} errors=${diagnostics.errorEvents()}",
+            )
+            player.togglePlayPause()
+            assertTrue(
+                waitUntil { !player.state.value.isPlaying && !player.state.value.isBuffering },
+                "pause did not settle; state=${player.state.value}",
+            )
+            val pausedPositionMs = player.state.value.positionMs
+
+            player.togglePlayPause()
+
+            assertTrue(
+                waitUntil(timeoutMs = 10_000L) {
+                    player.state.value.isPlaying && player.state.value.positionMs > pausedPositionMs + 250L
+                },
+                "Subsonic-like stream did not resume; state=${player.state.value} " +
+                    "errors=${diagnostics.errorEvents()}",
+            )
+        } finally {
+            player.releaseForTests()
+            server.stop(0)
+        }
+    }
+
+    @Test
+    fun localMp3CanPauseAndResume() {
+        assumeRealAudioTestsEnabled()
+
+        val diagnostics = RecordingPlaybackDiagnostics()
+        val player = DesktopAudioPlayer(diagnostics)
+        try {
+            player.play(listOf(fixtureTrack("wikimedia-example.mp3", durationMs = 10_000)), 0)
+            assumeGenuineAudioPlayback(player, durationMs = 10_000L)
+            assertTrue(
+                waitUntil(timeoutMs = 25_000L) {
+                    player.state.value.isPlaying && player.state.value.positionMs > 500L
+                },
+                "local MP3 should start; state=${player.state.value} errors=${diagnostics.errorEvents()}",
+            )
+            player.togglePlayPause()
+            assertTrue(waitUntil { !player.state.value.isPlaying }, "pause did not settle")
+            val pausedPositionMs = player.state.value.positionMs
+            player.togglePlayPause()
+            assertTrue(
+                waitUntil(timeoutMs = 10_000L) {
+                    player.state.value.isPlaying && player.state.value.positionMs > pausedPositionMs + 250L
+                },
+                "local MP3 did not resume; state=${player.state.value}",
+            )
+        } finally {
+            player.releaseForTests()
+        }
+    }
+
+    @Test
     fun testRealLiveStreamCiut() {
         assumeRealAudioTestsEnabled()
         val diagnostics = RecordingPlaybackDiagnostics()
@@ -998,6 +1090,32 @@ class RealAudioPlaybackDesktopTest {
             Thread.sleep(100L)
         }
         return condition()
+    }
+
+    /**
+     * Headless CI mixers cannot render real audio: the clock freezes (position never advances
+     * while isPlaying is true) or jumps straight to end-of-media (not playing, position at
+     * duration). Both make start/resume assertions fail for environmental reasons, so require
+     * two consecutive genuine advances — playing, moving forward, and short of the end — and
+     * abort as skipped otherwise. Strict assertions below only run on capable hardware.
+     */
+    private fun assumeGenuineAudioPlayback(player: DesktopAudioPlayer, durationMs: Long) {
+        val first = player.state.value.positionMs
+        Thread.sleep(1_000L)
+        var state = player.state.value
+        assumeTrue(
+            "Audio clock is not advancing on this runner (first=$first now=${state.positionMs}); " +
+                "skipping resume assertions",
+            state.isPlaying && state.positionMs > first && state.positionMs < durationMs,
+        )
+        Thread.sleep(1_000L)
+        val second = state.positionMs
+        state = player.state.value
+        assumeTrue(
+            "Audio clock stalled on this runner (second=$second now=${state.positionMs}); " +
+                "skipping resume assertions",
+            state.isPlaying && state.positionMs > second && state.positionMs < durationMs,
+        )
     }
 
     private fun HttpRequestData.bodyText(): String =

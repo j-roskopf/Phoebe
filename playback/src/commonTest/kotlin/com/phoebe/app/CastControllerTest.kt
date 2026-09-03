@@ -5,15 +5,14 @@ import com.phoebe.app.data.ArtworkOriginHolder
 import com.phoebe.app.domain.PlayerState
 import com.phoebe.app.domain.Track
 import com.phoebe.app.player.CastState
+import com.phoebe.app.player.EmptyChromecastQueueMessage
 import com.phoebe.app.player.asPlayerState
 import com.phoebe.app.player.isChromecastPlayable
 import com.phoebe.app.player.isChromecastPlayableQueue
 import com.phoebe.app.player.matchesCastMedia
-import com.phoebe.app.player.plexChromecastQueueSupport
 import com.phoebe.app.player.castTrackFromMediaFields
+import com.phoebe.app.player.chromecastQueueSupport
 import com.phoebe.app.player.isCastReceiverLoadableUrl
-import com.phoebe.app.player.isRemoteChromecastPlayable
-import com.phoebe.app.player.remoteChromecastQueueSupport
 import com.phoebe.app.player.shouldClearEmptyCastState
 import com.phoebe.app.player.toCastMediaDescriptor
 import kotlin.test.Test
@@ -83,9 +82,9 @@ class CastControllerTest {
     }
 
     @Test
-    fun localOrNonPlexTracksAreNotChromecastPlayable() {
+    fun tracksWithoutARemoteStreamAreNotChromecastPlayable() {
         val localFolderTrack = Track(
-            id = "local:track:1",
+            id = "local_1:track:1",
             title = "Two",
             artist = "Artist",
             album = "Album",
@@ -111,25 +110,7 @@ class CastControllerTest {
     }
 
     @Test
-    fun plexQueueSupportRejectsNonPlexRemoteStreams() {
-        val jellyfin = Track(
-            id = "jellyfin:track:1",
-            title = "Two",
-            artist = "Artist",
-            album = "Album",
-            durationMs = 60_000,
-            streamUrl = "https://jellyfin.example/Audio/1/stream",
-            downloadUrl = "",
-        )
-
-        val support = listOf(jellyfin).plexChromecastQueueSupport()
-
-        assertFalse(support.isSupported)
-        assertEquals("Chromecast can play Plex streaming songs only.", support.message)
-    }
-
-    @Test
-    fun remoteChromecastQueueSupportAcceptsRemoteHttpStreams() {
+    fun queueSupportAcceptsEveryProvidersHttpStreams() {
         val plex = Track(
             id = "plex:track:1",
             title = "One",
@@ -148,21 +129,52 @@ class CastControllerTest {
             streamUrl = "http://jellyfin.example/Audio/1/stream",
             downloadUrl = "",
         )
+        val navidrome = Track(
+            id = "navidrome:track:1",
+            title = "Three",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 60_000,
+            streamUrl = "http://navidrome.example/rest/stream.view?u=user&t=token&s=salt&id=1",
+            downloadUrl = "",
+            audioCodec = "MP3",
+        )
 
-        assertTrue(plex.isRemoteChromecastPlayable())
-        assertTrue(jellyfin.isRemoteChromecastPlayable())
-        assertTrue(listOf(plex, jellyfin).remoteChromecastQueueSupport().isSupported)
+        assertTrue(plex.isChromecastPlayable())
+        assertTrue(jellyfin.isChromecastPlayable())
+        assertTrue(navidrome.isChromecastPlayable())
+        assertTrue(listOf(plex, jellyfin, navidrome).chromecastQueueSupport().isSupported)
     }
 
     @Test
-    fun remoteChromecastQueueSupportRejectsLocalAndNonReceiverUrls() {
-        val local = Track(
-            id = "local:track:1",
+    fun queueSupportAcceptsRadioStreamsAsLiveMedia() {
+        val radio = Track(
+            id = "radio:station-1",
+            title = "Some Station",
+            artist = "Radio",
+            album = "Radio",
+            durationMs = 0L,
+            streamUrl = "https://stream.example/zc1201/hls.m3u8",
+            downloadUrl = "https://stream.example/zc1201/hls.m3u8",
+        )
+
+        val descriptor = radio.toCastMediaDescriptor()
+
+        assertTrue(listOf(radio).chromecastQueueSupport().isSupported)
+        assertEquals("https://stream.example/zc1201/hls.m3u8", descriptor.castUrl)
+        assertEquals("application/x-mpegurl", descriptor.contentType)
+        assertTrue(descriptor.isLiveStream)
+    }
+
+    @Test
+    fun queueSupportRejectsLocalAndNonReceiverUrls() {
+        val localOnly = Track(
+            id = "local_1:track:1",
             title = "Local",
             artist = "Artist",
             album = "Album",
             durationMs = 60_000,
-            streamUrl = "https://example.test/local.mp3",
+            streamUrl = "",
             downloadUrl = "",
             localUri = "file:///music/local.mp3",
         )
@@ -199,11 +211,43 @@ class CastControllerTest {
             localUri = "file:///music/downloaded.mp3",
         )
 
-        assertFalse(local.isRemoteChromecastPlayable())
-        assertTrue(downloadedRemote.isRemoteChromecastPlayable())
-        assertFalse(listOf(fileUrl).remoteChromecastQueueSupport().isSupported)
-        assertFalse(listOf(local, webBlob).remoteChromecastQueueSupport().isSupported)
-        assertTrue(listOf(downloadedRemote).remoteChromecastQueueSupport().isSupported)
+        assertFalse(localOnly.isChromecastPlayable())
+        assertTrue(downloadedRemote.isChromecastPlayable())
+        assertFalse(listOf(fileUrl).chromecastQueueSupport().isSupported)
+        assertFalse(listOf(localOnly, webBlob).chromecastQueueSupport().isSupported)
+        assertTrue(listOf(downloadedRemote).chromecastQueueSupport().isSupported)
+    }
+
+    @Test
+    fun queueSupportNamesTheSongBlockingTheCast() {
+        val streamable = Track(
+            id = "navidrome:track:1",
+            title = "Streamable",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 60_000,
+            streamUrl = "http://navidrome.example/rest/stream.view?id=1",
+            downloadUrl = "",
+        )
+        val localOnly = Track(
+            id = "local_1:track:1",
+            title = "On This Laptop",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 60_000,
+            streamUrl = "",
+            downloadUrl = "",
+            localUri = "file:///music/local.mp3",
+        )
+
+        val support = listOf(streamable, localOnly).chromecastQueueSupport()
+
+        assertFalse(support.isSupported)
+        assertEquals("“On This Laptop” plays from this device, so it can't be cast.", support.message)
+        assertEquals(
+            EmptyChromecastQueueMessage,
+            emptyList<Track>().chromecastQueueSupport().message,
+        )
     }
 
     @Test

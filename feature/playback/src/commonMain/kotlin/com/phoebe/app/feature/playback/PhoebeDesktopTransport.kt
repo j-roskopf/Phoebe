@@ -2,7 +2,6 @@ package com.phoebe.app.feature.playback
 
 import com.phoebe.app.ui.*
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -33,7 +32,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -899,19 +897,7 @@ fun UpNextToggleIcon(visible: Boolean, enabled: Boolean, onClick: () -> Unit) {
             .semantics { contentDescription = if (visible) "Hide Up Next" else "Show Up Next" },
         contentAlignment = Alignment.Center,
     ) {
-        Canvas(Modifier.size(20.dp)) {
-            val w = size.width
-            val h = size.height
-            val stroke = h * 0.10f
-            val barHeight = stroke
-            val y1 = h * 0.28f
-            val y2 = h * 0.50f
-            val y3 = h * 0.72f
-            val barColor = tint
-            drawRect(color = barColor, topLeft = Offset(0f, y1), size = androidx.compose.ui.geometry.Size(w, barHeight))
-            drawRect(color = barColor, topLeft = Offset(0f, y2), size = androidx.compose.ui.geometry.Size(w * 0.78f, barHeight))
-            drawRect(color = barColor, topLeft = Offset(0f, y3), size = androidx.compose.ui.geometry.Size(w * 0.55f, barHeight))
-        }
+        PhoebeIconView(PhoebeIcon.Queue, tint = tint, modifier = Modifier.size(20.dp))
     }
 }
 

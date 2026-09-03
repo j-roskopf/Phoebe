@@ -54,7 +54,7 @@ class PlexConnectionResolverTest {
     }
 
     @Test
-    fun hydrateFromDiskIgnoresRelayOrigins() = runBlocking {
+    fun hydrateFromDiskLoadsRelayAsRaceHintOnly() = runBlocking {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d
         val relay = "https://45-79-222-231.abc.plex.direct:8443"
@@ -67,7 +67,10 @@ class PlexConnectionResolverTest {
         )
         val resolver = resolver(db)
         resolver.hydrateFromDisk(server)
+        // Unprobed relay must not bind artwork / play paths.
         assertNull(resolver.cached(server))
+        assertNull(resolver.liveProbedOrigin(server))
+        assertNull(resolver.probedOrigin.value)
     }
 
     @Test
@@ -167,7 +170,7 @@ class PlexConnectionResolverTest {
     }
 
     @Test
-    fun rememberDoesNotPersistRelayToDisk() = runBlocking {
+    fun rememberPersistsRelayAsHintAndCachesWhenProbed() = runBlocking {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d
         val relay = "https://45-79-202-250.abc.plex.direct:8443"
@@ -175,11 +178,119 @@ class PlexConnectionResolverTest {
         val resolver = resolver(db)
         resolver.hydrateFromDisk(server)
         resolver.remember(server.id, relay)
+        // Give the async persist a beat.
+        delay(100)
         val row = db.plexResolvedOriginQueries
             .selectOrigin(server.id, wifiOnLan.fingerprint)
             .awaitAsOneOrNull()
-        assertNull(row)
+        assertEquals(relay, row)
         assertEquals(relay, resolver.cached(server))
+        assertEquals(relay, resolver.liveProbedOrigin(server))
+    }
+
+    @Test
+    fun hydratedRelayHintWinsRaceFirstWhenDemoted() = runBlocking {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val lan = "http://192.168.1.9:32400"
+        val wan = "https://72-58-82-53.abc.plex.direct:32400"
+        val preferredRelay = "https://45-79-202-250.abc.plex.direct:8443"
+        val otherRelay = "https://23-92-30-53.abc.plex.direct:8443"
+        val server = sampleServer(
+            lan = lan,
+            relayUris = listOf(otherRelay, preferredRelay),
+            extraAdvertised = listOf(wan),
+        )
+        db.plexResolvedOriginQueries.upsertOrigin(
+            serverId = server.id,
+            networkFingerprint = "test-off-lan",
+            origin = preferredRelay,
+            updatedAtMs = currentTimeMs(),
+        )
+        val identityBody = """{"MediaContainer":{"machineIdentifier":"${server.id}"}}"""
+        val attempted = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            attempted += request.url.host
+            if (request.url.host.startsWith("45-79-202-250")) {
+                respond(
+                    content = identityBody,
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            } else {
+                delay(5_000)
+                respond(content = "", status = HttpStatusCode.ServiceUnavailable)
+            }
+        }
+        val resolver = resolver(db, engine)
+        resolver.useNetworkIdentityForTest(
+            NetworkIdentity(
+                transport = NetworkTransport.Wifi,
+                fingerprint = "test-off-lan",
+                // Device is on 192.168.4.0; server LAN is 192.168.1.0 → demote.
+                localIpv4Prefixes = listOf("192.168.4.0"),
+            ),
+        )
+        val started = TimeSource.Monotonic.markNow()
+        val winner = resolver.resolveFresh(server, token = "token", deadlineMs = 8_000L)
+        val elapsedMs = started.elapsedNow().inWholeMilliseconds
+        assertEquals(preferredRelay, winner)
+        assertTrue(
+            attempted.any { it.startsWith("45-79-202-250") },
+            "hydrated relay hint must be probed, got $attempted",
+        )
+        // Without the hint pinned to rank 0, the race waits out the dead :32400 / other relay
+        // budgets. Concurrent MockEngine dispatch can reorder near-simultaneous starts, so assert
+        // wall time rather than strict first-host order.
+        assertTrue(
+            elapsedMs < 2_000,
+            "hinted relay race waited ${elapsedMs}ms behind dead peers",
+        )
+    }
+
+    @Test
+    fun demotedRaceDoesNotStaggerBehindDeadDirectRemote() = runBlocking {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val lan = "http://192.168.1.9:32400"
+        val wan = "https://72-58-82-53.abc.plex.direct:32400"
+        val relay = "https://45-79-202-250.abc.plex.direct:8443"
+        val server = sampleServer(
+            lan = lan,
+            relayUris = listOf(relay),
+            extraAdvertised = listOf(wan),
+        )
+        val identityBody = """{"MediaContainer":{"machineIdentifier":"${server.id}"}}"""
+        val engine = MockEngine { request ->
+            if (request.url.host.startsWith("45-79-202-250")) {
+                // Slight delay so we can observe parallel start vs stagger.
+                delay(50)
+                respond(
+                    content = identityBody,
+                    status = HttpStatusCode.OK,
+                    headers = headersOf(HttpHeaders.ContentType, "application/json"),
+                )
+            } else {
+                delay(5_000)
+                respond(content = "", status = HttpStatusCode.ServiceUnavailable)
+            }
+        }
+        val resolver = resolver(db, engine)
+        resolver.useNetworkIdentityForTest(
+            NetworkIdentity(
+                transport = NetworkTransport.Wifi,
+                fingerprint = "test-off-lan-parallel",
+                localIpv4Prefixes = listOf("192.168.4.0"),
+            ),
+        )
+        val started = TimeSource.Monotonic.markNow()
+        val winner = resolver.resolveFresh(server, token = "token", deadlineMs = 8_000L)
+        val elapsedMs = started.elapsedNow().inWholeMilliseconds
+        assertEquals(relay, winner)
+        assertTrue(
+            elapsedMs < 1_500,
+            "demoted race waited ${elapsedMs}ms; relays must start without stagger",
+        )
     }
 
     @Test

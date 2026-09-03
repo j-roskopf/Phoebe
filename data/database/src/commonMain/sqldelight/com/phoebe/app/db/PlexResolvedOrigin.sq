@@ -1,5 +1,6 @@
--- Working Plex API/media base per physical network. Survives process death so cellular
--- cold starts immediately target the relay instead of a dead LAN address from last home session.
+-- Working Plex API/media base per physical network. Survives process death so off-LAN /
+-- cellular cold starts can prefer the last-good relay (as a race hint) instead of burning
+-- the first race on a dead LAN or closed public :32400 hop from the previous session.
 
 CREATE TABLE PlexResolvedOriginRow (
     serverId TEXT NOT NULL,

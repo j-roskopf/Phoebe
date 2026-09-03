@@ -1695,6 +1695,59 @@ class PlayerStateTest {
             ArtworkAuthHolder.clear()
         }
     }
+
+    /**
+     * Simulated plex.direct outage: `/identity` (via [resolveOrigin]) misses for several seconds,
+     * then recovers. Relative `/library/parts/...` must stay closed during the outage and open a
+     * bound URL within one cold-retry cadence after recovery — the local stand-in for "block
+     * relays, then unblock" without depending on real TLS weather.
+     */
+    @Test
+    fun coldOriginOutageThenRecoverOpensBoundStreamWithinRetryBudget() = runTest {
+        val live = "https://45-79-202-250.abc.plex.direct:8443"
+        var outage = true
+        var resolveCalls = 0
+        PlaybackOriginResolverHolder.resolver = object : PlaybackOriginResolver {
+            override fun cachedOrigin(): String? = live.takeUnless { outage }
+            override suspend fun resolveOrigin(deadlineMs: Long): String? {
+                resolveCalls++
+                return live.takeUnless { outage }
+            }
+            override fun demoteLocalOrigins(): Boolean = true
+        }
+        try {
+            ArtworkAuthHolder.update("token")
+            val player = OpenedUriTestPlayer(this)
+            player.play(
+                listOf(Track("plex:1", "One", "Artist", "Album", 60_000, "/library/parts/1/file.mp3", "")),
+                0,
+            )
+            // Outage window: several sustained retries, nothing may open unbound.
+            repeat(6) {
+                advanceTimeBy(ColdOriginResolveSustainedDelayMs)
+                runCurrent()
+            }
+            assertEquals(0, player.openedUris.size, "outage must not open a relative path")
+            assertTrue(resolveCalls >= 6, "cold loop should keep racing during outage")
+
+            outage = false
+            ArtworkOriginHolder.update(live)
+            // One more retry cadence after recovery — must bind and open.
+            advanceTimeBy(ColdOriginResolveSustainedDelayMs)
+            runCurrent()
+
+            assertEquals(1, player.openedUris.size)
+            assertTrue(
+                player.openedUris.single().startsWith("$live/library/parts/"),
+                "expected bound stream after recovery, got ${player.openedUris}",
+            )
+            assertNull(player.state.value.playbackErrorMessage)
+        } finally {
+            PlaybackOriginResolverHolder.resolver = null
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
+    }
 }
 
 /** Resolver whose only useful answer is the refetched connection list. */

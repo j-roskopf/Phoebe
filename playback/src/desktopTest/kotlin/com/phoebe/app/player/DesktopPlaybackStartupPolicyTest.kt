@@ -66,8 +66,8 @@ class DesktopPlaybackStartupPolicyTest {
                 "https://music.example.test/library/track.mp3?token=abc",
             ),
         )
-        // Remote MP3 prefers ffmpeg PCM on every desktop OS (JavaFX TLS is unreliable on
-        // Windows plex.direct relays). Local Linux still uses PCM; covered below separately.
+        // Remote Plex MP3 prefers ffmpeg PCM on every desktop OS (JavaFX TLS is unreliable on
+        // Windows plex.direct relays). Subsonic's extensionless endpoint is the exception.
         assertTrue(
             DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
                 uri = "https://music.example.test/library/track.mp3?token=abc",
@@ -87,7 +87,10 @@ class DesktopPlaybackStartupPolicyTest {
                 uri = "https://music.example.test/rest/stream.view?id=abc",
             ),
         )
-        assertTrue(
+        // Subsonic's extensionless endpoint is the exception on macOS/Windows (JavaFX
+        // resumes reliably there); Linux still prefers ffmpeg PCM.
+        assertEquals(
+            DesktopPlaybackStartupPolicy.isLinuxDesktop(),
             DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
                 uri = "https://music.example.test/rest/stream.view?id=abc",
                 isKnownLiveStream = false,
@@ -177,7 +180,11 @@ class DesktopPlaybackStartupPolicyTest {
                 uri = "https://music.example.test/rest/stream.view?id=abc",
                 audioCodec = "mp3",
                 filepath = "/music/Artist/Album/Track.mp3",
-                expectedPath = linuxJavaFxOrFfmpeg(),
+                expectedPath = if (DesktopPlaybackStartupPolicy.isLinuxDesktop()) {
+                    DesktopPlaybackStartupPath.FfmpegPcmStream
+                } else {
+                    DesktopPlaybackStartupPath.JavaFxMediaPlayer
+                },
             ),
             RemoteStartupCase(
                 label = "remote aac",

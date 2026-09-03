@@ -1,6 +1,7 @@
 package com.phoebe.app
 
 import app.cash.sqldelight.async.coroutines.awaitAsOne
+import com.phoebe.app.data.db.DatabaseWriteGate
 import com.phoebe.app.data.db.createPhoebeDatabase
 import com.phoebe.app.db.PhoebeDatabase
 import kotlinx.coroutines.test.runTest
@@ -37,7 +38,7 @@ class RevisionMigrationDesktopTest {
         createVersion21Database(dbFile)
         revFile.writeText("18")
 
-        val database = createPhoebeDatabase()
+        val database = createPhoebeDatabase(DatabaseWriteGate()).database
 
         val session = database.sessionQueries.selectCurrent().awaitAsOne()
         assertEquals("fixture-token", session.token)

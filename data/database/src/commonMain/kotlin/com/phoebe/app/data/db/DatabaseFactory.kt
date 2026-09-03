@@ -13,10 +13,30 @@ import com.phoebe.app.db.PhoebeDatabase
  */
 expect suspend fun createSqlDriver(schema: SqlSchema<QueryResult.AsyncValue<Unit>>): SqlDriver
 
-suspend fun createPhoebeDatabase(): PhoebeDatabase {
+/**
+ * The app's two views onto one SQLite connection.
+ *
+ * [database] is what everything is injected with; its writes stop when [DatabaseWriteGate.seal]
+ * is in effect. [privileged] bypasses the seal and exists for exactly one caller — the sign-out
+ * wipe, which has to be able to delete while every other writer is locked out. Handing the wipe a
+ * separate ungated handle keeps that exemption impossible to obtain by accident: there is no flag
+ * a background job could observe at the wrong moment and slip through.
+ *
+ * Both wrap the same driver, so transactions serialize and query listeners still fire across the
+ * pair — the UI observes the wipe normally.
+ */
+class PhoebeDatabaseHandle(
+    val database: PhoebeDatabase,
+    val privileged: PhoebeDatabase,
+)
+
+suspend fun createPhoebeDatabase(writeGate: DatabaseWriteGate): PhoebeDatabaseHandle {
     val driver = createSqlDriver(PhoebeDatabase.Schema)
     repairPhoebeSchema(driver)
-    return PhoebeDatabase(driver)
+    return PhoebeDatabaseHandle(
+        database = PhoebeDatabase(GatedSqlDriver(driver, writeGate)),
+        privileged = PhoebeDatabase(driver),
+    )
 }
 
 /** PRAGMA statements may return a result row; native drivers reject them via [SqlDriver.execute]. */
@@ -34,3 +54,12 @@ internal fun SqlDriver.execPragma(sql: String) {
 
 /** Opens [PhoebeDatabase] with an existing driver (in-memory JDBC, Android test context, etc.). */
 fun phoebeDatabaseFromDriver(driver: SqlDriver): PhoebeDatabase = PhoebeDatabase(driver)
+
+/** [PhoebeDatabaseHandle] over an existing driver, for tests that supply their own connection. */
+fun phoebeDatabaseHandleFromDriver(
+    driver: SqlDriver,
+    writeGate: DatabaseWriteGate,
+): PhoebeDatabaseHandle = PhoebeDatabaseHandle(
+    database = PhoebeDatabase(GatedSqlDriver(driver, writeGate)),
+    privileged = PhoebeDatabase(driver),
+)

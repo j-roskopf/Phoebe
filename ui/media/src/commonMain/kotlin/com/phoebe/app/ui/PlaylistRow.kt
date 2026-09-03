@@ -1,8 +1,6 @@
 package com.phoebe.app.ui
 
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -42,7 +40,6 @@ fun PlaylistRow(
     val artworkRadius = if (contentCellStyle) 8.dp else 6.dp
     val rowBackground = when {
         active -> PhoebeUi.accent.copy(alpha = 0.09f)
-        contentCellStyle -> PhoebeUi.elevatedFill
         else -> Color.Transparent
     }
     Row(
@@ -50,13 +47,6 @@ fun PlaylistRow(
             .fillMaxWidth()
             .clip(shape)
             .background(rowBackground)
-            .then(
-                if (contentCellStyle) {
-                    Modifier.border(BorderStroke(1.dp, PhoebeUi.border), shape)
-                } else {
-                    Modifier
-                },
-            )
             .phoebeCombinedClickable(onClick = onClick, onLongClick = onLongClick)
             .padding(
                 horizontal = if (contentCellStyle) 12.dp else 2.dp,
