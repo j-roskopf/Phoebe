@@ -9,7 +9,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.layout.ContentScale
-import coil3.ImageLoader
 import coil3.compose.LocalPlatformContext
 import coil3.compose.rememberAsyncImagePainter
 import coil3.request.CachePolicy
@@ -30,7 +29,9 @@ fun PhoebeIconView(
     val resourcePath = icon.svgResourcePath(filled) ?: return
     val bytes = rememberIconSvgBytes(resourcePath) ?: return
     val context = LocalPlatformContext.current
-    val imageLoader = rememberIconImageLoader()
+    // The SvgDecoder comes from the request below, so the platform singleton loader is enough.
+    // A per-icon loader used to mean every icon owned its own memory cache and the
+    // memoryCacheKey never shared a decoded SVG across instances.
     val request = remember(context, resourcePath, bytes) {
         ImageRequest.Builder(context)
             .data(bytes)
@@ -39,7 +40,7 @@ fun PhoebeIconView(
             .decoderFactory(SvgDecoder.Factory())
             .build()
     }
-    val painter = rememberAsyncImagePainter(model = request, imageLoader = imageLoader)
+    val painter = rememberAsyncImagePainter(model = request)
     Image(
         painter = painter,
         contentDescription = null,
@@ -47,16 +48,6 @@ fun PhoebeIconView(
         colorFilter = ColorFilter.tint(tint),
         contentScale = ContentScale.Fit,
     )
-}
-
-@Composable
-private fun rememberIconImageLoader(): ImageLoader {
-    val context = LocalPlatformContext.current
-    return remember(context) {
-        ImageLoader.Builder(context)
-            .components { add(SvgDecoder.Factory()) }
-            .build()
-    }
 }
 
 @OptIn(ExperimentalResourceApi::class)

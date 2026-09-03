@@ -496,7 +496,10 @@ fun MobilePlayer(
         val artworkLayerScaleY = (currentArtworkHeight.value / fullArtworkDisplayHeight.value.coerceAtLeast(1f))
             .coerceIn(0.01f, 1f)
         val targetArtworkX = artworkEdgeInset
-        val targetArtworkY = artworkEdgeInset
+        // X insets the square artwork to center it in the full-width row. Y must stay 0: the
+        // box is already exactly fullArtworkHeight tall and siblings are laid out relative to
+        // that height, so any downward shift overlaps the metadata below on compact screens.
+        val targetArtworkY = 0.dp
         val currentArtworkX = lerp(12.dp, targetArtworkX, clampedExpansionFraction)
         val currentArtworkY = lerp(14.dp, targetArtworkY, clampedExpansionFraction)
 
