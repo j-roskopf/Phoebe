@@ -3,8 +3,6 @@ package com.phoebe.app.player
 import com.phoebe.app.domain.PlayerState
 import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.isLocalMediaPlayback
-import com.phoebe.app.domain.isPlexLibraryTrack
-import com.phoebe.app.domain.isRemoteLibraryTrack
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -75,29 +73,36 @@ open class UnavailableCastController(
     override fun seekTo(positionMs: Long) = Unit
 }
 
+/**
+ * True when a receiver can fetch this track on its own.
+ *
+ * The test is the URL, not which library the row came from: an absolute http(s) stream is
+ * loadable whether it was built by Plex, Jellyfin, Emby, Subsonic/Navidrome, or an internet
+ * radio station. Gating on the catalog prefix instead is what refused Navidrome queues on
+ * mobile and radio everywhere, even though those URLs cast fine.
+ */
 fun Track.isChromecastPlayable(): Boolean =
-    isPlexLibraryTrack() && toCastMediaDescriptor().castUrl.isCastReceiverLoadableUrl()
+    toCastMediaDescriptor().castUrl.isCastReceiverLoadableUrl()
 
 fun List<Track>.isChromecastPlayableQueue(): Boolean = isNotEmpty() && all { it.isChromecastPlayable() }
 
-fun List<Track>.plexChromecastQueueSupport(): CastQueueSupport =
-    if (isChromecastPlayableQueue()) {
-        CastQueueSupport.supported()
-    } else {
-        CastQueueSupport.unsupported("Chromecast can play Plex streaming songs only.")
-    }
+fun List<Track>.chromecastQueueSupport(): CastQueueSupport {
+    if (isEmpty()) return CastQueueSupport.unsupported(EmptyChromecastQueueMessage)
+    val blocked = firstOrNull { !it.isChromecastPlayable() } ?: return CastQueueSupport.supported()
+    return CastQueueSupport.unsupported(blocked.chromecastQueueBlockedMessage())
+}
 
-fun Track.isRemoteChromecastPlayable(): Boolean =
-    isRemoteLibraryTrack() && toCastMediaDescriptor().castUrl.isCastReceiverLoadableUrl()
-
-fun List<Track>.remoteChromecastQueueSupport(): CastQueueSupport {
-    if (isEmpty()) {
-        return CastQueueSupport.unsupported("Choose songs before casting to Chromecast.")
-    }
-    return if (all { it.isRemoteChromecastPlayable() }) {
-        CastQueueSupport.supported()
+/**
+ * Name the song holding the queue back. The receiver loads the whole queue, so one song with no
+ * remote URL stops the cast — a blanket "this queue can't cast" reads as a bug when the other
+ * ninety-nine songs are ordinary streams.
+ */
+private fun Track.chromecastQueueBlockedMessage(): String {
+    val name = title.takeIf { it.isNotBlank() } ?: "This song"
+    return if (isLocalMediaPlayback()) {
+        "“$name” plays from this device, so it can't be cast."
     } else {
-        CastQueueSupport.unsupported(RemoteChromecastQueueMessage)
+        "“$name” has no streaming address to cast."
     }
 }
 
@@ -108,7 +113,7 @@ fun String.isCastReceiverLoadableUrl(): Boolean {
     return value.startsWith("https://", ignoreCase = true) || value.startsWith("http://", ignoreCase = true)
 }
 
-const val RemoteChromecastQueueMessage = "Chromecast can play remote streaming songs only."
+const val EmptyChromecastQueueMessage = "Choose songs before casting to Chromecast."
 
 fun CastState.asPlayerState(fallback: PlayerState): PlayerState =
     fallback.copy(

@@ -145,7 +145,7 @@ internal class DesktopCastController(
     }
 
     override fun canLoadQueue(queue: List<Track>): CastQueueSupport =
-        queue.remoteChromecastQueueSupport()
+        queue.chromecastQueueSupport()
 
     override fun showDevicePicker() {
         val connection = currentConnection
@@ -358,7 +358,7 @@ internal class DesktopCastController(
         val positionMs = if (castState.queue.isNotEmpty()) castState.positionMs else audioPlayer.state.value.positionMs
         if (queue.isEmpty() || index !in queue.indices) {
             mutableState.update {
-                it.copy(message = "Start a remote streaming song before casting to Chromecast.")
+                it.copy(message = "Start a song before casting to Chromecast.")
             }
             return
         }
@@ -843,6 +843,7 @@ internal data class DesktopCastMedia(
     val thumbUrl: String?,
     val filepath: String?,
     val audioCodec: String?,
+    val isLiveStream: Boolean = false,
 )
 
 internal data class DesktopCastRemoteMedia(
@@ -1672,6 +1673,7 @@ private fun Track.toDesktopCastMedia(): DesktopCastMedia {
         thumbUrl = descriptor.thumbUrl,
         filepath = descriptor.filepath,
         audioCodec = descriptor.audioCodec,
+        isLiveStream = descriptor.isLiveStream,
     )
 }
 
@@ -1679,8 +1681,8 @@ private fun DesktopCastMedia.toCastV2Media(): CastV2Media =
     CastV2Media(
         castUrl,
         contentType,
-        durationMs.takeIf { it > 0L }?.toDouble()?.div(1000.0),
-        CastV2Media.StreamType.BUFFERED,
+        durationMs.takeIf { it > 0L && !isLiveStream }?.toDouble()?.div(1000.0),
+        if (isLiveStream) CastV2Media.StreamType.LIVE else CastV2Media.StreamType.BUFFERED,
         toCustomData(),
         toMetadata(),
         null,

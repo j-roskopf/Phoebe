@@ -474,7 +474,7 @@ fun MobilePlayer(
 
         val collapsedArtworkSize = 44.dp
         val artworkIsImage = visualizerPreset == NowPlayingVisualizerPreset.Artwork
-        val artworkHorizontalInset = if (artworkIsImage) {
+        val artworkEdgeInset = if (artworkIsImage) {
             ((fullArtworkWidth - fullArtworkHeight) / 2f).coerceAtLeast(0.dp)
         } else {
             0.dp
@@ -495,8 +495,8 @@ fun MobilePlayer(
             .coerceIn(0.01f, 1f)
         val artworkLayerScaleY = (currentArtworkHeight.value / fullArtworkDisplayHeight.value.coerceAtLeast(1f))
             .coerceIn(0.01f, 1f)
-        val targetArtworkX = artworkHorizontalInset
-        val targetArtworkY = 0.dp
+        val targetArtworkX = artworkEdgeInset
+        val targetArtworkY = artworkEdgeInset
         val currentArtworkX = lerp(12.dp, targetArtworkX, clampedExpansionFraction)
         val currentArtworkY = lerp(14.dp, targetArtworkY, clampedExpansionFraction)
 

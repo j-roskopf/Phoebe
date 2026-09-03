@@ -4125,12 +4125,18 @@ internal object DesktopPlaybackStartupPolicy {
         preferredJavaFxExtension: String?,
     ): Boolean {
         if (isKnownLiveStream) return isRemoteUri(uri) || isLinuxDesktop()
+        // Subsonic/Navidrome exposes authenticated audio through an extensionless endpoint. On
+        // macOS/Windows the Java Sound PCM line can be stopped but not reliably resumed after a
+        // pause; JavaFX handles this endpoint's audio/mpeg response and preserves resume state.
+        if (!isLinuxDesktop() && uri.substringBefore('?').endsWith("/rest/stream.view", ignoreCase = true)) {
+            return false
+        }
         if (isRemoteUri(uri)) {
             // Remote plex.direct / HTTPS / live radio: prefer ffmpeg PCM on every desktop OS.
             // JavaFX's own HTTP/TLS stack has repeatedly failed relay handshakes on Windows
             // while OkHttp/ffmpeg could still reach the same host — the cellular/remote path
-            // Android handles fine. Extensionless remotes (icy/AAC radio, Subsonic stream.view)
-            // are unknown to JavaFX until open time, so probe them with ffmpeg first too.
+            // Android handles fine. Other extensionless remotes (icy/AAC radio) are unknown to
+            // JavaFX until open time, so probe them with ffmpeg first too.
             val extension = preferredJavaFxExtension ?: return true
             val javaFxFriendly = javaFxPlaybackExtensionFromSuffix(extension) != null &&
                 sampledPlaybackExtensionFromSuffix(extension) == null

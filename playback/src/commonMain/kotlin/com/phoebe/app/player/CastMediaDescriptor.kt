@@ -16,6 +16,8 @@ data class CastMediaDescriptor(
     val thumbUrl: String?,
     val filepath: String?,
     val audioCodec: String?,
+    /** Radio and other endless streams: the receiver must not be told to buffer a fixed duration. */
+    val isLiveStream: Boolean = false,
 ) {
     val transcodesOriginal: Boolean get() = castUrl != streamUrl
 }
@@ -53,8 +55,17 @@ fun Track.toCastMediaDescriptor(): CastMediaDescriptor {
         thumbUrl = thumbUrl,
         filepath = filepath,
         audioCodec = audioCodec,
+        isLiveStream = isLiveCastStream(castUrl),
     )
 }
+
+/** Radio stations have no duration to seek within, and HLS playlists are live by construction. */
+private fun Track.isLiveCastStream(castUrl: String): Boolean =
+    id.startsWith("radio:") || castUrl.isHlsPlaylistUrl()
+
+private fun String.isHlsPlaylistUrl(): Boolean =
+    substringBefore('?').substringBefore('#').endsWith(".m3u8", ignoreCase = true) ||
+        substringBefore('?').substringBefore('#').endsWith(".m3u", ignoreCase = true)
 
 fun castTrackFromMediaFields(
     trackId: String?,
@@ -123,6 +134,8 @@ private fun Track.chromecastDirectContentType(): String =
                 "flac" -> "audio/flac"
                 "ogg", "oga", "opus" -> "audio/ogg"
                 "wav" -> "audio/wav"
+                // An HLS playlist announced as audio/mpeg is loaded as a single MP3 and fails.
+                "m3u8", "m3u" -> "application/x-mpegurl"
                 else -> "audio/mpeg"
             }
         }

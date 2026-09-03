@@ -58,6 +58,8 @@ import com.phoebe.app.updates.AppUpdateService
 class AppDependencies(
     val appGraph: AppGraph,
     override val database: PhoebeDatabase,
+    /** Ungated handle used only by [deleteDatabaseDataForSignOut] to delete under the seal. */
+    private val privilegedDatabase: PhoebeDatabase,
     val databaseWriteGate: DatabaseWriteGate,
     override val sessionRepository: SessionRepository,
     val mediaSourcesRepository: MediaSourcesRepository,
@@ -127,24 +129,45 @@ class AppDependencies(
         )
     }
 
+    /**
+     * Wipe the previous account's data, with writes sealed for the whole drain.
+     *
+     * The seal goes up before anything else so that a sync coroutine cancelled moments ago cannot
+     * land a write between the delete and the end of sign-out. That actually happened: a cancelled
+     * but un-joined Plex play-count refresh re-inserted 23 `plex-stats` rows into
+     * `PlayCountAggregateRow` seconds after the tables were cleared, and the home screen then
+     * rendered them as unplayable placeholder rows against a Navidrome library.
+     */
     suspend fun deleteDatabaseDataForSignOut() {
-        catalogRepository.awaitDatabaseIdle()
-        listenBrainzAccountRepository.disconnect()
-        lastFmAccountRepository.disconnect()
-        databaseWriteGate.withWrite {
-            database.clearAllAppData(clearPlayHistory = true)
+        databaseWriteGate.seal()
+        try {
+            catalogRepository.awaitDatabaseIdle()
+            // These persist "disconnected" back into AppSettingsRow, so the seal drops that write.
+            // Harmless — clearAllAppData deletes the row outright. The credential-store deletes
+            // they also perform do not go through SQLite and still take effect.
+            listenBrainzAccountRepository.disconnect()
+            lastFmAccountRepository.disconnect()
+            // withWrite still orders this against the repositories that do take the lock; the
+            // privileged handle is what lets it write at all while sealed.
+            databaseWriteGate.withWrite {
+                privilegedDatabase.clearAllAppData(clearPlayHistory = true)
+            }
+            listOf("session.json", "catalog.json", "media_sources.json", "library_ui_prefs.json").forEach {
+                platformStorage.delete(it)
+            }
+            catalogRepository.clearInMemoryCatalog()
+            mediaSourcesRepository.clearInMemoryState()
+            libraryUiRepository.resetInMemoryState()
+            radioRepository.resetInMemoryState()
+            appSettingsRepository.resetInMemoryState()
+            userArtifactsRepository.resetInMemoryState()
+            searchHistoryRepository.clear()
+            lyricsRepository.clearMemoryCache()
+        } finally {
+            // The welcome screen can add local folders and save radio stations, so the app has to
+            // be writable again once the drain finishes.
+            databaseWriteGate.unseal()
         }
-        listOf("session.json", "catalog.json", "media_sources.json", "library_ui_prefs.json").forEach {
-            platformStorage.delete(it)
-        }
-        catalogRepository.clearInMemoryCatalog()
-        mediaSourcesRepository.clearInMemoryState()
-        libraryUiRepository.resetInMemoryState()
-        radioRepository.resetInMemoryState()
-        appSettingsRepository.resetInMemoryState()
-        userArtifactsRepository.resetInMemoryState()
-        searchHistoryRepository.clear()
-        lyricsRepository.clearMemoryCache()
     }
 
     fun close() {
@@ -156,8 +179,11 @@ class AppDependencies(
 
     companion object {
         suspend fun create(): AppDependencies {
-            val database = createPhoebeDatabase()
+            // The gate is built first: the driver has to be wrapped with it at creation, so the
+            // seal sits underneath every repository the graph is about to construct.
             val databaseWriteGate = DatabaseWriteGate()
+            val databaseHandle = createPhoebeDatabase(databaseWriteGate)
+            val database = databaseHandle.database
             val appGraph = createPhoebeAppGraph(
                 database = database,
                 databaseWriteGate = databaseWriteGate,
@@ -172,6 +198,7 @@ class AppDependencies(
             val dependencies = AppDependencies(
                 appGraph = appGraph,
                 database = services.database,
+                privilegedDatabase = databaseHandle.privileged,
                 databaseWriteGate = services.databaseWriteGate,
                 sessionRepository = sessionRepository,
                 mediaSourcesRepository = mediaSourcesRepository,

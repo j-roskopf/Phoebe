@@ -7,6 +7,7 @@ kotlin = "2.4.0"
 coroutines = "1.10.2"
 ktor = "3.3.2"
 coil = "3.5.0"
+skiko = "0.150.1"
 serialization = "1.9.0"
 activityCompose = "1.11.0"
 androidxCore = "1.18.0"
@@ -106,6 +107,7 @@ ktor-network = { module = "io.ktor:ktor-network", version.ref = "ktor" }
 slf4j-simple = { module = "org.slf4j:slf4j-simple", version.ref = "slf4j" }
 coil-compose = { module = "io.coil-kt.coil3:coil-compose", version.ref = "coil" }
 coil-network-ktor3 = { module = "io.coil-kt.coil3:coil-network-ktor3", version.ref = "coil" }
+coil-svg = { module = "io.coil-kt.coil3:coil-svg", version.ref = "coil" }
 serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "serialization" }
 junit = { module = "junit:junit", version.ref = "junit" }
 jaudiotagger = { module = "net.jthink:jaudiotagger", version.ref = "jaudiotagger" }

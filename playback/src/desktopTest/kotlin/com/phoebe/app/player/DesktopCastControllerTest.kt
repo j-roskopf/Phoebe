@@ -49,6 +49,68 @@ class DesktopCastControllerTest {
     }
 
     @Test
+    fun selectingDeviceCastsSubsonicAndRadioQueues() = runTest {
+        val queue = listOf(
+            testTrack("navidrome:1", streamUrl = "http://navidrome.example/rest/stream.view?id=1"),
+            radioTrack(),
+        )
+        val player = FakeAudioPlayer().also { it.play(queue, 0) }
+        val connection = FakeDesktopCastConnection()
+        val controller = newController(player, connection)
+
+        controller.showDevicePicker()
+        runCurrent()
+
+        assertEquals("navidrome:1", connection.loadRequests.single().media.trackId)
+        assertTrue(controller.state.value.isConnected)
+        assertEquals(null, controller.state.value.message)
+    }
+
+    @Test
+    fun radioStreamsCastAsLiveMediaWithHlsContentType() = runTest {
+        val player = FakeAudioPlayer()
+        val connection = FakeDesktopCastConnection()
+        val controller = newController(player, connection)
+        controller.showDevicePicker()
+        runCurrent()
+
+        controller.loadQueue(listOf(radioTrack()), 0)
+        runCurrent()
+
+        val media = connection.loadRequests.single().media
+        assertEquals("application/x-mpegurl", media.contentType)
+        assertTrue(media.isLiveStream)
+    }
+
+    @Test
+    fun localOnlySongNamesItselfWhenItBlocksTheQueue() = runTest {
+        val localOnly = Track(
+            id = "local_1:track:1",
+            title = "On This Laptop",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 60_000L,
+            streamUrl = "",
+            downloadUrl = "",
+            localUri = "file:///music/local.mp3",
+        )
+        val player = FakeAudioPlayer()
+        val connection = FakeDesktopCastConnection()
+        val controller = newController(player, connection)
+        controller.showDevicePicker()
+        runCurrent()
+
+        controller.loadQueue(listOf(testTrack("navidrome:1"), localOnly), 0)
+        runCurrent()
+
+        assertTrue(connection.loadRequests.isEmpty())
+        assertEquals(
+            "“On This Laptop” plays from this device, so it can't be cast.",
+            controller.state.value.message,
+        )
+    }
+
+    @Test
     fun loadFailureRestoresLocalPlayback() = runTest {
         val queue = listOf(testTrack("jellyfin:1"))
         val player = FakeAudioPlayer()
@@ -415,16 +477,27 @@ class DesktopCastControllerTest {
             loadTimeoutMs = loadTimeoutMs,
         )
 
-    private fun testTrack(id: String): Track =
+    private fun testTrack(id: String, streamUrl: String = "https://music.example/$id.mp3"): Track =
         Track(
             id = id,
             title = id,
             artist = "Artist",
             album = "Album",
             durationMs = 60_000L,
-            streamUrl = "https://music.example/$id.mp3",
+            streamUrl = streamUrl,
             downloadUrl = "",
             audioCodec = "mp3",
+        )
+
+    private fun radioTrack(): Track =
+        Track(
+            id = "radio:station-1",
+            title = "Some Station",
+            artist = "Radio",
+            album = "Radio",
+            durationMs = 0L,
+            streamUrl = "https://stream.example/zc1201/hls.m3u8",
+            downloadUrl = "https://stream.example/zc1201/hls.m3u8",
         )
 }
 

@@ -364,7 +364,7 @@ private class WebCastController(private val audioPlayer: AudioPlayer) : CastCont
             mutableState.update {
                 it.copy(
                     isBuffering = false,
-                    message = "Start a remote streaming song before casting to Chromecast.",
+                    message = "Start a song before casting to Chromecast.",
                 )
             }
             return
@@ -500,6 +500,7 @@ internal data class WebCastMedia(
     val downloadUrl: String,
     val filepath: String?,
     val audioCodec: String?,
+    val isLiveStream: Boolean = false,
 )
 
 @Serializable
@@ -518,7 +519,7 @@ private data class WebCastStatus(
 )
 
 internal fun webCastQueueSupport(queue: List<Track>): CastQueueSupport {
-    return queue.remoteChromecastQueueSupport()
+    return queue.chromecastQueueSupport()
 }
 
 internal fun webCastLoadRequest(
@@ -554,6 +555,7 @@ private fun CastMediaDescriptor.toWebCastMedia(): WebCastMedia =
         downloadUrl = downloadUrl,
         filepath = filepath,
         audioCodec = audioCodec,
+        isLiveStream = isLiveStream,
     )
 
 private val WebCastJson = Json {
@@ -562,7 +564,7 @@ private val WebCastJson = Json {
 }
 
 private const val WebCastUnavailableMessage = "Chromecast requires Chrome with Cast support."
-private const val WebCastRemoteQueueMessage = RemoteChromecastQueueMessage
+private const val WebCastRemoteQueueMessage = "This queue can't be cast to Chromecast."
 
 @JsFun(
 	    """(callback) => {
@@ -823,14 +825,16 @@ private external fun webCastConnected(): Boolean
             const startIndex = Math.min(Math.max(Number(requestPayload.startIndex || 0), 0), Math.max(items.length - 1, 0));
             const startTime = Math.max(0, Number(requestPayload.startPositionMs || 0) / 1000);
             if (!items.length) {
-                failure("Chromecast can play remote streaming songs only.");
+                failure("Choose songs before casting to Chromecast.");
                 return;
             }
 	            const toMediaInfo = (item) => {
 	                const mediaInfo = new mediaApi.MediaInfo(item.url, item.contentType || "audio/mpeg");
 	                mediaInfo.contentUrl = item.url;
-	                mediaInfo.streamType = mediaApi.StreamType?.BUFFERED || "BUFFERED";
-	                mediaInfo.duration = Math.max(0, Number(item.durationMs || 0)) / 1000;
+	                mediaInfo.streamType = item.isLiveStream
+	                    ? (mediaApi.StreamType?.LIVE || "LIVE")
+	                    : (mediaApi.StreamType?.BUFFERED || "BUFFERED");
+	                mediaInfo.duration = item.isLiveStream ? null : Math.max(0, Number(item.durationMs || 0)) / 1000;
 	                mediaInfo.customData = {
                     phoebeTrackId: item.trackId,
                     provider: item.provider,

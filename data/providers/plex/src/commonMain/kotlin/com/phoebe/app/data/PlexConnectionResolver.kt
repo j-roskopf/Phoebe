@@ -51,8 +51,9 @@ import kotlin.concurrent.Volatile
 
 /**
  * Network-aware Plex origin cache: races candidate bases in parallel, picks the
- * best-ranked success (local → direct remote → relay), persists non-relay winners
- * per (serverId, networkFingerprint), and invalidates when the physical network changes.
+ * best-ranked success (local → direct remote → relay), persists winners per
+ * (serverId, networkFingerprint) — relays as race preference hints only until
+ * re-probed — and invalidates when the physical network changes.
  */
 @SingleIn(AppScope::class)
 @Inject
@@ -76,7 +77,12 @@ class PlexConnectionResolver(
     private val probedOk = mutableSetOf<ProbedOrigin>()
     /** Last origin that worked for a server on a given network. */
     private val lastGoodByServer = mutableMapOf<CacheKey, String>()
-    /** Session-only relay winners — never written to disk. */
+    /**
+     * Last relay that answered on this network. Used only as a race preference hint —
+     * never as a warm [liveProbedOrigin] without a fresh `/identity` on this process.
+     */
+    private val relayHintByServer = mutableMapOf<CacheKey, String>()
+    /** Session relay winners that already passed `/identity` this process. */
     private val sessionRelayByServer = mutableMapOf<String, String>()
     /** Dropped until [remember] / a race adopts them again, so hydrate cannot reload a dead row. */
     private val forgottenOrigins = mutableSetOf<ForgottenOrigin>()
@@ -164,6 +170,7 @@ class PlexConnectionResolver(
         }
         probedOk.removeAll { it.fingerprint == previousFingerprint }
         lastGoodByServer.keys.removeAll { it.fingerprint == previousFingerprint }
+        relayHintByServer.keys.removeAll { it.fingerprint == previousFingerprint }
         memoryCache.keys.removeAll { it.fingerprint == previousFingerprint }
         // A relay reachable from the old network is not evidence about this one.
         sessionRelayByServer.clear()
@@ -250,10 +257,8 @@ class PlexConnectionResolver(
                 .awaitAsOneOrNull()
         }?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return
         if (ForgottenOrigin(server.id, origin) in forgottenOrigins) return
-        // Never hydrate a relay IP from disk — plex.tv rotates those between launches.
-        // Also drop hosts that are no longer in the current advertised set (stale 8443
-        // IPs used to sneak through when relayConnectionUris listed a *different* relay).
-        if (isPlexRelayOrigin(origin, server) || !server.containsConnectionOrigin(origin)) {
+        // Stale hosts that plex.tv no longer advertises must not steer the next race.
+        if (!server.containsConnectionOrigin(origin)) {
             PhoebeLog.d("PlexConnectionResolver") {
                 "skip hydrate origin=$origin server=${server.id}"
             }
@@ -265,6 +270,15 @@ class PlexConnectionResolver(
                         origin = origin,
                     )
                 }
+            }
+            return
+        }
+        // Relays survive as preference hints only — plex.tv rotates 8443 IPs, and binding
+        // artwork/playback to an unprobed relay is what left cold starts on a dead host.
+        if (isPlexRelayOrigin(origin, server)) {
+            relayHintByServer[key] = origin
+            PhoebeLog.d("PlexConnectionResolver") {
+                "hydrated relay hint=$origin server=${server.id} fingerprint=$fingerprint"
             }
             return
         }
@@ -329,9 +343,14 @@ class PlexConnectionResolver(
         markProbed(serverId, fingerprint, trimmed)
         if (isPlexRelayOrigin(trimmed, server)) {
             sessionRelayByServer[serverId] = trimmed
+            relayHintByServer[CacheKey(serverId, fingerprint)] = trimmed
+            scope.launch {
+                persist(serverId, fingerprint, trimmed)
+            }
             return
         }
         sessionRelayByServer.remove(serverId)
+        relayHintByServer.remove(CacheKey(serverId, fingerprint))
         scope.launch {
             persist(serverId, fingerprint, trimmed)
         }
@@ -345,6 +364,7 @@ class PlexConnectionResolver(
             forgottenOrigins.removeAll { it.serverId == serverId }
             memoryCache.remove(key)
             lastGoodByServer.keys.removeAll { it.serverId == serverId }
+            relayHintByServer.keys.removeAll { it.serverId == serverId }
             sessionRelayByServer.remove(serverId)
             probedOk.removeAll { it.serverId == serverId }
             if (mutableProbedOrigin.value != null) {
@@ -366,6 +386,7 @@ class PlexConnectionResolver(
             }
             if (memoryCache[key] == trimmed) memoryCache.remove(key)
             if (lastGoodByServer[key] == trimmed) lastGoodByServer.remove(key)
+            if (relayHintByServer[key] == trimmed) relayHintByServer.remove(key)
             if (sessionRelayByServer[serverId] == trimmed) sessionRelayByServer.remove(serverId)
             scope.launch {
                 databaseWriteGate.withWrite {
@@ -429,7 +450,7 @@ class PlexConnectionResolver(
         deadlineMs: Long,
         identity: NetworkIdentity,
     ): String? = coroutineScope {
-        val preferred = cached(server, identity)
+        val preferred = cached(server, identity) ?: relayHint(server, identity)
         val demote = demoteLocalOrigins(identity)
         val ranked = server.reachableBaseUris(
             preferredFirst = preferred,
@@ -447,6 +468,11 @@ class PlexConnectionResolver(
             return@coroutineScope null
         }
         val preference = compareBy<String>(
+            // preferredFirst from reachableBaseUris is only a soft hint after this re-sort;
+            // pin it to rank 0 so a hydrated relay hint actually starts first when demoted.
+            { origin ->
+                if (preferred != null && origin.equals(preferred, ignoreCase = true)) 0 else 1
+            },
             { locationRank(it, server, demote) },
             { connectionPriority(it, demote, server) },
             { candidates.indexOf(it).takeIf { i -> i >= 0 } ?: Int.MAX_VALUE },
@@ -458,7 +484,7 @@ class PlexConnectionResolver(
                 isPlexRelayOrigin(origin, server) -> "relay"
                 else -> "remote"
             }
-            "$kind/${probeTimeoutMs(origin, deadlineMs, server)}ms=$origin"
+            "$kind/${probeTimeoutMs(origin, deadlineMs, server, demote)}ms=$origin"
         }
         PhoebeLog.d("PlexConnectionResolver") {
             "identity race start demote=$demote deadline=${deadlineMs}ms candidates=${ordered.size} $classified"
@@ -470,10 +496,13 @@ class PlexConnectionResolver(
                 base = base,
                 rank = rank,
                 job = async {
-                    // Stagger by rank so the preferred hop gets a head start. The delay is
-                    // inside the probe's own budget window, not added to the overall deadline.
-                    if (rank > 0) delay(minOf(rank * ProbeStaggerMs, deadlineMs / 2))
-                    val budget = probeTimeoutMs(base, deadlineMs, server)
+                    // Stagger by rank so the preferred hop gets a head start. Skip stagger when
+                    // LAN is demoted: the closed public :32400 would otherwise delay relays that
+                    // are the only hop that can answer from the wrong Wi-Fi / cellular.
+                    if (rank > 0 && !demote) {
+                        delay(minOf(rank * ProbeStaggerMs, deadlineMs / 2))
+                    }
+                    val budget = probeTimeoutMs(base, deadlineMs, server, demote)
                     val ok = withNetworkTimeoutOrNull(budget) {
                         probeIdentity(base, token, budgetMs = budget, expectedMachineId = server.id)
                     } == true
@@ -613,12 +642,15 @@ class PlexConnectionResolver(
         markProbed(server.id, fingerprint, origin)
         if (isPlexRelayOrigin(origin, server)) {
             sessionRelayByServer[server.id] = origin
+            relayHintByServer[CacheKey(server.id, fingerprint)] = origin
+            persist(server.id, fingerprint, origin)
             PhoebeLog.d("PlexConnectionResolver") {
-                "resolved relay origin=$origin server=${server.id} fingerprint=$fingerprint (session only)"
+                "resolved relay origin=$origin server=${server.id} fingerprint=$fingerprint"
             }
             return origin
         }
         sessionRelayByServer.remove(server.id)
+        relayHintByServer.remove(CacheKey(server.id, fingerprint))
         persist(server.id, fingerprint, origin)
         PhoebeLog.d("PlexConnectionResolver") {
             "resolved origin=$origin server=${server.id} fingerprint=$fingerprint"
@@ -660,6 +692,27 @@ class PlexConnectionResolver(
     private fun noteWorkingOrigin(serverId: String, fingerprint: String, origin: String) {
         probedOk.add(ProbedOrigin(serverId, fingerprint, origin))
         lastGoodByServer[CacheKey(serverId, fingerprint)] = origin
+        if (isPlexRelayOrigin(origin, lastServer?.takeIf { it.id == serverId })) {
+            relayHintByServer[CacheKey(serverId, fingerprint)] = origin
+        }
+    }
+
+    /**
+     * Disk/session preference for the next race. Never returned from [cached] / [liveProbedOrigin]
+     * until `/identity` confirms it on this network.
+     */
+    private fun relayHint(
+        server: PlexServer,
+        identity: NetworkIdentity = mutableIdentity.value,
+    ): String? {
+        val trimmed = relayHintByServer[CacheKey(server.id, identity.fingerprint)]
+            ?.trimEnd('/')
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        if (!server.containsConnectionOrigin(trimmed)) return null
+        if (ForgottenOrigin(server.id, trimmed) in forgottenOrigins) return null
+        if (demoteLocalOrigins(identity) && isLocalOnlyServerOrigin(trimmed)) return null
+        return trimmed
     }
 
     private fun markProbed(serverId: String, fingerprint: String, origin: String) {
@@ -691,6 +744,7 @@ class PlexConnectionResolver(
         base: String,
         remoteTimeoutMs: Long,
         server: PlexServer? = lastServer,
+        demote: Boolean = demoteLocalOrigins(),
     ): Long {
         if (isLocalOnlyServerOrigin(base)) {
             return minOf(LocalProbeTimeoutMs, remoteTimeoutMs.coerceAtLeast(MinProbeTimeoutMs))
@@ -701,7 +755,8 @@ class PlexConnectionResolver(
             // every `deadlineMs` argument a lie and stalled play-time resolution.
             return minOf(RelayProbeTimeoutMs, remoteTimeoutMs.coerceAtLeast(MinProbeTimeoutMs))
         }
-        return minOf(DirectRemoteProbeTimeoutMs, remoteTimeoutMs.coerceAtLeast(MinProbeTimeoutMs))
+        val directCap = if (demote) DemotedDirectRemoteProbeTimeoutMs else DirectRemoteProbeTimeoutMs
+        return minOf(directCap, remoteTimeoutMs.coerceAtLeast(MinProbeTimeoutMs))
     }
 
     private data class CacheKey(
@@ -724,6 +779,11 @@ class PlexConnectionResolver(
         const val LocalProbeTimeoutMs = 700L
         /** Closed public `:32400` plex.direct hosts. Do not use the relay TLS budget. */
         const val DirectRemoteProbeTimeoutMs = 2_000L
+        /**
+         * When LAN is demoted the public `:32400` hop is almost always closed; fail it faster
+         * so a flaky relay race can miss-and-retry sooner.
+         */
+        const val DemotedDirectRemoteProbeTimeoutMs = 1_000L
         /** TLS to a rotating plex.direct relay — the slowest hop worth waiting for. */
         const val RelayProbeTimeoutMs = 5_000L
         /** Overall budget for a background resolve. */

@@ -4062,7 +4062,7 @@ private fun HomePlayedTrackRow(
             .clip(RoundedCornerShape(PhoebeUi.shapes.controlRadius))
             .combinedClickable(onClick = onPlay, onLongClick = { menuExpanded = true })
             .background(
-                if (isNowPlaying) PhoebeUi.librarySelectedRow else PhoebeUi.subtleFill,
+                if (isNowPlaying) PhoebeUi.librarySelectedRow else Color.Transparent,
             )
             .padding(horizontal = 12.dp, vertical = verticalPadding),
         verticalAlignment = Alignment.CenterVertically,

@@ -23,7 +23,7 @@ internal const val PlaybackReadyBufferedAheadMs = 500L
 internal const val PlaybackStartupTimeoutMs = 9_000L
 internal const val PlaybackStartupTimeoutLocalMs = 4_000L
 internal const val PlaybackStartupTimeoutRemoteMs = 9_000L
-/** Initial back-to-back races before slowing into sustained reconnect. */
+/** Initial back-to-back races; sustained reconnect keeps the same short gap. */
 internal const val ColdOriginResolveAttempts = 3
 internal const val ColdOriginResolveRetryDelayMs = 500L
 /**
@@ -31,7 +31,8 @@ internal const val ColdOriginResolveRetryDelayMs = 500L
  * Windows/cellular clients stuck until a manual tap, even after AppState later found a relay.
  */
 internal const val ColdOriginResolveMaxAttempts = 40
-internal const val ColdOriginResolveSustainedDelayMs = 2_000L
+/** Same cadence as the initial retries — a 2s sleep on top of a ~5s miss stretched cold play to ~60s. */
+internal const val ColdOriginResolveSustainedDelayMs = 500L
 internal const val ColdOriginRediscoverEveryAttempts = 3
 
 internal fun hasPlaybackReadyBuffer(

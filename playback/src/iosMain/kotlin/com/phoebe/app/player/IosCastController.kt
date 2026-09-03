@@ -45,7 +45,7 @@ class IosCastController : CastController {
     }
 
     override fun canLoadQueue(queue: List<Track>): CastQueueSupport =
-        queue.plexChromecastQueueSupport()
+        queue.chromecastQueueSupport()
 
     override fun showDevicePicker() {
         if (!IosCastBridge.showDevicePicker()) {
