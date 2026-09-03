@@ -537,6 +537,7 @@ class RealAudioPlaybackDesktopTest {
                 PlaybackEnginePath.JavaFxMediaPlayer
             }
 
+            assumeGenuineAudioPlayback(player, durationMs = 10_000L)
             assertTrue(
                 waitUntil(timeoutMs = 25_000L) {
                     diagnostics.hasEngine(expectedEngine) &&
@@ -545,7 +546,6 @@ class RealAudioPlaybackDesktopTest {
                 "Subsonic-like stream should start through $expectedEngine; " +
                     "state=${player.state.value} engines=${diagnostics.engineEvents()} errors=${diagnostics.errorEvents()}",
             )
-            assumeAdvancingAudioClock(player)
             player.togglePlayPause()
             assertTrue(
                 waitUntil { !player.state.value.isPlaying && !player.state.value.isBuffering },
@@ -576,13 +576,13 @@ class RealAudioPlaybackDesktopTest {
         val player = DesktopAudioPlayer(diagnostics)
         try {
             player.play(listOf(fixtureTrack("wikimedia-example.mp3", durationMs = 10_000)), 0)
+            assumeGenuineAudioPlayback(player, durationMs = 10_000L)
             assertTrue(
                 waitUntil(timeoutMs = 25_000L) {
                     player.state.value.isPlaying && player.state.value.positionMs > 500L
                 },
                 "local MP3 should start; state=${player.state.value} errors=${diagnostics.errorEvents()}",
             )
-            assumeAdvancingAudioClock(player)
             player.togglePlayPause()
             assertTrue(waitUntil { !player.state.value.isPlaying }, "pause did not settle")
             val pausedPositionMs = player.state.value.positionMs
@@ -1093,16 +1093,28 @@ class RealAudioPlaybackDesktopTest {
     }
 
     /**
-     * Headless CI mixers stall or jump the audio clock (frozen position, instant end-of-media),
-     * which makes resume assertions fail for environmental reasons. Require a genuinely
-     * advancing clock before asserting pause/resume semantics; abort as skipped otherwise.
+     * Headless CI mixers cannot render real audio: the clock freezes (position never advances
+     * while isPlaying is true) or jumps straight to end-of-media (not playing, position at
+     * duration). Both make start/resume assertions fail for environmental reasons, so require
+     * two consecutive genuine advances — playing, moving forward, and short of the end — and
+     * abort as skipped otherwise. Strict assertions below only run on capable hardware.
      */
-    private fun assumeAdvancingAudioClock(player: DesktopAudioPlayer) {
+    private fun assumeGenuineAudioPlayback(player: DesktopAudioPlayer, durationMs: Long) {
         val first = player.state.value.positionMs
+        Thread.sleep(1_000L)
+        var state = player.state.value
         assumeTrue(
-            "Audio clock is not advancing on this runner (first=$first now=${player.state.value.positionMs}); " +
+            "Audio clock is not advancing on this runner (first=$first now=${state.positionMs}); " +
                 "skipping resume assertions",
-            waitUntil(timeoutMs = 5_000L) { player.state.value.positionMs > first },
+            state.isPlaying && state.positionMs > first && state.positionMs < durationMs,
+        )
+        Thread.sleep(1_000L)
+        val second = state.positionMs
+        state = player.state.value
+        assumeTrue(
+            "Audio clock stalled on this runner (second=$second now=${state.positionMs}); " +
+                "skipping resume assertions",
+            state.isPlaying && state.positionMs > second && state.positionMs < durationMs,
         )
     }
 
