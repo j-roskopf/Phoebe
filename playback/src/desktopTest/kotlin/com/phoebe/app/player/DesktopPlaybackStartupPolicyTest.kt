@@ -87,7 +87,10 @@ class DesktopPlaybackStartupPolicyTest {
                 uri = "https://music.example.test/rest/stream.view?id=abc",
             ),
         )
-        assertFalse(
+        // Subsonic's extensionless endpoint is the exception on macOS/Windows (JavaFX
+        // resumes reliably there); Linux still prefers ffmpeg PCM.
+        assertEquals(
+            DesktopPlaybackStartupPolicy.isLinuxDesktop(),
             DesktopPlaybackStartupPolicy.shouldUsePcmStreamBeforeJavaFx(
                 uri = "https://music.example.test/rest/stream.view?id=abc",
                 isKnownLiveStream = false,
