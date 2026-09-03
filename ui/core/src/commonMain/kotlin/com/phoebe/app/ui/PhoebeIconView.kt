@@ -19,6 +19,25 @@ import phoebe.ui.core.generated.resources.Res
 
 private val iconSvgBytesCache = mutableMapOf<String, ByteArray>()
 
+/**
+ * Eagerly fill [iconSvgBytesCache] so the first composition resolves every icon synchronously.
+ *
+ * Icon bytes otherwise load via [produceState] on first use, and Coil's async decode is not
+ * tracked by compose-test idling — on a loaded CI runner the screenshot can capture before an
+ * icon resolves, leaving a blank glyph behind. Screenshot harnesses call this before composing.
+ */
+@OptIn(ExperimentalResourceApi::class)
+suspend fun preloadPhoebeIconSvgs() {
+    for (icon in PhoebeIcon.entries) {
+        for (filled in booleanArrayOf(false, true)) {
+            val path = icon.svgResourcePath(filled) ?: continue
+            if (iconSvgBytesCache[path] == null) {
+                iconSvgBytesCache[path] = Res.readBytes(path)
+            }
+        }
+    }
+}
+
 @Composable
 fun PhoebeIconView(
     icon: PhoebeIcon,
