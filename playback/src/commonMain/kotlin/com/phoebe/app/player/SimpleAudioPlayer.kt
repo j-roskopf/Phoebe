@@ -100,6 +100,14 @@ abstract class SimpleAudioPlayer(
 
     protected fun isPlayRequestCurrent(generation: Int): Boolean = generation == playGeneration
 
+    protected fun invalidatePreparedPlayback() {
+        preparedPlayGeneration = -1
+        openPlaybackOrigin = null
+    }
+
+    protected open fun hasActivePlatformPlayback(): Boolean =
+        preparedPlayGeneration == playGeneration && mutableState.value.playbackErrorMessage == null
+
     override fun play(queue: List<Track>, startIndex: Int) {
         if (queue.isEmpty()) return
         val previous = mutableState.value
@@ -121,9 +129,9 @@ abstract class SimpleAudioPlayer(
         // buffers with nothing open yet, and sticky-binding alone must not resume into silence.
         val canResumeSameTrack = sameCurrentTrack &&
             !currentTrackEnded &&
-            track != null &&
+            previous.playbackErrorMessage == null &&
             !trackNeedsLiveOriginBind(track) &&
-            preparedPlayGeneration == playGeneration
+            hasActivePlatformPlayback()
         if (canResumeSameTrack) {
             if (previous.isPlaying && !previous.isBuffering && playWhenReady) {
                 return
@@ -148,16 +156,30 @@ abstract class SimpleAudioPlayer(
         playWhenReady = true
         val generation = playGeneration
         stopProgressTicker()
-        if (!sameQueue) {
-            stopCurrentPlaybackImmediately()
+        // Always silence current output before opening the next item. Skipping this for
+        // same-queue next/prev left ffmpeg/Java Sound playing until async dispose caught up.
+        stopCurrentPlaybackImmediately()
+        // Same unfinished track (reload after stall/failure/resume) must keep the playhead.
+        // Resetting to 0 made pause→play and mid-track recoveries restart the song.
+        val keepPositionMs = if (sameCurrentTrack && !currentTrackEnded) {
+            previous.positionMs.coerceAtLeast(0L).let { position ->
+                val duration = track?.durationMs ?: previous.durationMs
+                if (duration > 0L) position.coerceAtMost(duration) else position
+            }
+        } else {
+            0L
         }
         mutableState.value = previous.copy(
             queue = playbackQueue,
             currentIndex = if (track == null) -1 else index,
             isPlaying = false,
             isBuffering = track != null,
-            positionMs = 0L,
-            bufferedPositionMs = 0L,
+            positionMs = keepPositionMs,
+            bufferedPositionMs = if (keepPositionMs > 0L) {
+                maxOf(previous.bufferedPositionMs, keepPositionMs)
+            } else {
+                0L
+            },
             durationMs = track?.durationMs ?: 0L,
             playbackErrorMessage = null,
         )
@@ -344,10 +366,12 @@ abstract class SimpleAudioPlayer(
         openPlaybackOrigin = playbackOriginOf(initialUri)
         preparedPlayGeneration = generation
         startPlaybackStartupWatchdog(generation)
-        if (sameQueue) {
+        val startPositionMs = mutableState.value.positionMs.coerceAtLeast(0L)
+        // Same-queue skips start at 0; mid-track reloads must open with the preserved playhead.
+        if (sameQueue && startPositionMs <= 0L) {
             skipToInQueueOnPlatform(queue, index, track, generation)
         } else {
-            playQueueOnPlatform(queue, index, track, generation)
+            playQueueOnPlatform(queue, index, track, generation, startPositionMs = startPositionMs)
         }
     }
 
@@ -442,9 +466,13 @@ abstract class SimpleAudioPlayer(
         )
         setOutputVolume(effectiveOutputVolume())
         if (track != null) {
-            if (resolvedInitialPlaybackUriOrNull(track) == null) {
+            val initialUri = resolvedInitialPlaybackUriOrNull(track)
+            if (initialUri == null) {
                 failNoPlayableSource(track, generation)
             } else {
+                notePlaybackUri(initialUri, generation)
+                openPlaybackOrigin = playbackOriginOf(initialUri)
+                preparedPlayGeneration = generation
                 playQueueOnPlatform(queue, index, track, generation)
                 if (boundedPositionMs > 0L) {
                     seek(boundedPositionMs)
@@ -464,6 +492,7 @@ abstract class SimpleAudioPlayer(
         playWhenReady = false
         stopProgressTicker()
         stopCurrentPlaybackImmediately()
+        invalidatePreparedPlayback()
         val boundedPositionMs = positionMs.coerceAtLeast(0L).let { position ->
             val duration = track?.durationMs ?: 0L
             if (duration > 0L) position.coerceAtMost(duration) else position
@@ -488,7 +517,14 @@ abstract class SimpleAudioPlayer(
             mutableState.value = state.copy(isPlaying = false, isBuffering = false)
             cancelGaplessPrepare()
             pause()
-            stopCurrentPlaybackImmediately()
+            // Cold loads with nothing open should cancel; mid-track stalls must keep the
+            // platform player so resume continues from the same playhead.
+            if (!hasActivePlatformPlayback()) {
+                stopCurrentPlaybackImmediately()
+                invalidatePreparedPlayback()
+            } else {
+                stopProgressTicker()
+            }
             return
         }
         if (state.isPlaying) {
@@ -500,17 +536,17 @@ abstract class SimpleAudioPlayer(
             return
         }
         val track = state.currentTrack
-        // After an unreachable cold start the queue still holds relative Plex paths. Resume
-        // (and desktop reloadOnResume → playTrack) would open those unbound; re-play instead.
-        if (track != null &&
-            trackNeedsLiveOriginBind(track) &&
-            state.currentIndex in state.queue.indices
-        ) {
+        // If playback previously failed, or the platform player has not been prepared yet,
+        // or the track still needs origin binding, re-enter full playback instead of resuming into void.
+        val shouldRestartPlayback = track != null &&
+            state.currentIndex in state.queue.indices &&
+            (!hasActivePlatformPlayback() || trackNeedsLiveOriginBind(track))
+        if (shouldRestartPlayback) {
             play(state.queue, state.currentIndex)
             return
         }
         playWhenReady = true
-        mutableState.value = state.copy(isPlaying = true)
+        mutableState.value = state.copy(isPlaying = true, playbackErrorMessage = null)
         resume()
         startProgressTicker()
     }
@@ -539,6 +575,7 @@ abstract class SimpleAudioPlayer(
 
     override fun stopPlayback() {
         playGeneration++
+        invalidatePreparedPlayback()
         playWhenReady = false
         stickyPlaybackOrigin = null
         clearCrossfadeRequestState()
@@ -778,21 +815,22 @@ abstract class SimpleAudioPlayer(
         val current = mutableState.value
         val effectivePlaying = isPlaying && playWhenReady
         val effectiveDurationMs = if (durationMs > 0L) durationMs else current.durationMs
+        val effectivePositionMs = positionMs
         val effectiveBufferedPositionMs = bufferedPositionMs
-            .coerceAtLeast(positionMs)
-            .coerceAtLeast(current.bufferedPositionMs)
+            .coerceAtLeast(effectivePositionMs)
             .let { buffered ->
+                // Allow the buffer bar to move backward across seeks; only floor to playhead.
                 if (effectiveDurationMs > 0L) buffered.coerceAtMost(effectiveDurationMs) else buffered
             }
         val effectiveBuffering = isBuffering &&
             playWhenReady &&
             (forceBuffering ||
                 !hasPlaybackReadyBuffer(
-                    positionMs = positionMs,
+                    positionMs = effectivePositionMs,
                     bufferedPositionMs = effectiveBufferedPositionMs,
                     durationMs = effectiveDurationMs,
                 ))
-        if (current.positionMs == positionMs &&
+        if (current.positionMs == effectivePositionMs &&
             current.bufferedPositionMs == effectiveBufferedPositionMs &&
             current.durationMs == effectiveDurationMs &&
             current.isPlaying == effectivePlaying &&
@@ -801,7 +839,7 @@ abstract class SimpleAudioPlayer(
             return
         }
         mutableState.value = current.copy(
-            positionMs = positionMs,
+            positionMs = effectivePositionMs,
             bufferedPositionMs = effectiveBufferedPositionMs,
             durationMs = effectiveDurationMs,
             isPlaying = effectivePlaying,
@@ -812,8 +850,8 @@ abstract class SimpleAudioPlayer(
         } else {
             stopProgressTicker()
         }
-        maybeStartCrossfadeAtPosition(generation, positionMs)
-        maybeStartGaplessAtPosition(generation, positionMs)
+        maybeStartCrossfadeAtPosition(generation, effectivePositionMs)
+        maybeStartGaplessAtPosition(generation, effectivePositionMs)
     }
 
     protected fun publishAudioAnalysis(frame: AudioAnalysisFrame) {
@@ -915,6 +953,7 @@ abstract class SimpleAudioPlayer(
         if (cancelPlayIntent) {
             playWhenReady = false
         }
+        invalidatePreparedPlayback()
         stopPlaybackStartupWatchdog()
         val current = mutableState.value
         mutableState.value = current.copy(
@@ -929,6 +968,7 @@ abstract class SimpleAudioPlayer(
 
     protected fun markPlaybackWaitingForUserGesture(generation: Int = playGeneration) {
         if (!isPlayRequestCurrent(generation)) return
+        invalidatePreparedPlayback()
         stopPlaybackStartupWatchdog()
         val current = mutableState.value
         mutableState.value = current.copy(

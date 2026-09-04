@@ -40,6 +40,8 @@ import com.phoebe.app.di.RouteViewModelFactory
 import com.phoebe.app.di.createPhoebeAppGraph
 import com.phoebe.app.data.ArtworkAuthHolder
 import com.phoebe.app.data.ArtworkOriginHolder
+import com.phoebe.app.domain.isPlex
+import com.phoebe.app.domain.serverAuthToken
 import com.phoebe.app.platform.PhoebeAppDataRevision
 import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.PlatformStorage
@@ -110,6 +112,23 @@ class AppDependencies(
     val remoteDiscoveryClient: com.phoebe.app.remote.RemoteDiscoveryClient,
     val remoteControlClient: com.phoebe.app.remote.RemoteControlClient,
 ) : PlaybackRuntimeDependencies {
+    /**
+     * Bind an origin for a process that came up without Compose — Android Auto binds
+     * `PlaybackService` directly, so `AppState.wirePlaybackOriginResolver` never runs and
+     * [ArtworkOriginHolder] stays empty. `resolveFresh` publishes the holders itself once
+     * `/identity` answers (`PlexConnectionResolver.markProbed`).
+     */
+    override suspend fun ensureLivePlaybackOrigin(): String? {
+        ArtworkOriginHolder.liveOrigin?.let { return it }
+        val current = sessionRepository.session.value.takeIf { it.isPlex() } ?: return null
+        val server = current.selectedServer ?: return null
+        val token = current.serverAuthToken() ?: return null
+        // Artwork binding needs the token even if the origin race ends up missing.
+        ArtworkAuthHolder.update(token)
+        val resolver = runCatching { appGraph.plexConnectionResolver }.getOrNull() ?: return null
+        return runCatching { resolver.resolveFresh(server, token) }.getOrNull()
+    }
+
     /**
      * Sign out and wipe once when the stored-data revision moves.
      *

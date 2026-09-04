@@ -12,6 +12,7 @@ import com.phoebe.app.player.ColdOriginResolveSustainedDelayMs
 import com.phoebe.app.player.MaxTriedPlaybackUris
 import com.phoebe.app.player.PlaybackFailure
 import com.phoebe.app.player.PlaybackFailureClassifier
+import com.phoebe.app.player.PlaybackFailureKind
 import com.phoebe.app.player.PlaybackOriginResolver
 import com.phoebe.app.player.PlaybackOriginResolverHolder
 import com.phoebe.app.player.SimpleAudioPlayer
@@ -670,6 +671,28 @@ class PlayerStateTest {
         assertEquals(1, player.queueSkips)
     }
 
+    /**
+     * play() silences platform output before every load, including same-queue skips, so a
+     * half-disposed engine cannot keep playing under the next track. A platform that reacts to
+     * that hook by discarding its loaded playlist synchronously loses the skip path entirely and
+     * full-reloads on every next/previous — so the stop must land before, not instead of, the skip.
+     */
+    @Test
+    fun sameQueueSkipSilencesOutputBeforeReusingThePlatformQueue() {
+        val player = QueueAwareTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+            Track("t2", "Two", "Artist", "Album", 90_000, "http://b", ""),
+        )
+
+        player.play(tracks, 0)
+        player.finishPendingLoad()
+        player.play(tracks, 1)
+        player.finishPendingLoad()
+
+        assertEquals(listOf("stop", "load", "stop", "skip"), player.platformCalls)
+    }
+
     @Test
     fun endOfQueueStopsPlayback() {
         val player = TestPlayer()
@@ -796,7 +819,7 @@ class PlayerStateTest {
     }
 
     @Test
-    fun bufferedPositionDoesNotMoveBackwardForCurrentTrack() {
+    fun bufferedPositionFollowsPlatformAndStaysAtLeastPlayhead() {
         val player = PlatformStateTestPlayer()
         val tracks = listOf(
             Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
@@ -804,9 +827,13 @@ class PlayerStateTest {
 
         player.play(tracks, 0)
         player.platformPlayback(positionMs = 10_000, durationMs = 60_000, bufferedPositionMs = 50_000)
+        // After a seek-like jump, trust the platform buffer instead of keeping a stale high-water mark.
         player.platformPlayback(positionMs = 20_000, durationMs = 60_000, bufferedPositionMs = 30_000)
 
-        assertEquals(50_000, player.state.value.bufferedPositionMs)
+        assertEquals(30_000, player.state.value.bufferedPositionMs)
+
+        player.platformPlayback(positionMs = 25_000, durationMs = 60_000, bufferedPositionMs = 10_000)
+        assertEquals(25_000, player.state.value.bufferedPositionMs)
     }
 
     @Test
@@ -1618,6 +1645,165 @@ class PlayerStateTest {
     }
 
     @Test
+    fun togglePlayPauseAfterPlaybackFailureRestartsPlaybackInsteadOfEnteringZombiePlayingState() = runTest {
+        val player = OpenedUriTestPlayer(this)
+        val track = Track(
+            id = "navidrome:1",
+            title = "Song",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 240_000,
+            streamUrl = "http://192.168.4.26:30043/rest/stream.view?id=1",
+            downloadUrl = "",
+        )
+        player.play(listOf(track), 0)
+        runCurrent()
+        assertEquals(1, player.openedUris.size)
+        assertTrue(player.state.value.isBuffering)
+
+        // Simulate startup failure (e.g. timeout / unreachable origin)
+        player.failPendingLoad(
+            PlaybackFailure(
+                kind = PlaybackFailureKind.Unreachable,
+                message = "failed to connect to playback origin",
+                streamUri = track.streamUrl,
+            ),
+        )
+        runCurrent()
+
+        assertEquals(
+            "Can't reach the music server. Check your connection and try again.",
+            player.state.value.playbackErrorMessage,
+        )
+        assertFalse(player.state.value.isPlaying)
+        assertFalse(player.state.value.isBuffering)
+
+        // When the user taps play/pause after failure:
+        player.togglePlayPause()
+        runCurrent()
+
+        // It must NOT set isPlaying = true while doing nothing; it must restart playback (buffering, clearing error)
+        assertFalse(player.state.value.isPlaying, "Must not flip to isPlaying=true before platform connects")
+        assertTrue(player.state.value.isBuffering, "Must transition to buffering while reconnecting")
+        assertNull(player.state.value.playbackErrorMessage, "Error message must be cleared on retry")
+        assertEquals(2, player.openedUris.size, "Must re-request stream from platform player")
+
+        // Once platform is ready, now it is playing
+        player.finishPendingLoad()
+        runCurrent()
+        assertTrue(player.state.value.isPlaying)
+        assertFalse(player.state.value.isBuffering)
+    }
+
+    @Test
+    fun togglePlayPauseWhenPausedResumesInstantlyWithoutReOpeningUri() = runTest {
+        val player = OpenedUriTestPlayer(this)
+        val track = Track(
+            id = "navidrome:1",
+            title = "Song",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 240_000,
+            streamUrl = "http://192.168.4.26:30043/rest/stream.view?id=1",
+            downloadUrl = "",
+        )
+        player.play(listOf(track), 0)
+        player.finishPendingLoad()
+        runCurrent()
+        assertTrue(player.state.value.isPlaying)
+        assertEquals(1, player.openedUris.size)
+
+        // User pauses
+        player.togglePlayPause()
+        runCurrent()
+        assertFalse(player.state.value.isPlaying)
+        assertFalse(player.state.value.isBuffering)
+
+        // User resumes - must resume without re-opening
+        player.togglePlayPause()
+        runCurrent()
+        assertTrue(player.state.value.isPlaying)
+        assertFalse(player.state.value.isBuffering)
+        assertEquals(1, player.openedUris.size, "Normal resume must not re-open stream URI")
+    }
+
+    @Test
+    fun replayingSameUnfinishedTrackPreservesPlayhead() = runTest {
+        val player = OpenedUriTestPlayer(this)
+        val track = Track(
+            id = "navidrome:1",
+            title = "Song",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 240_000,
+            streamUrl = "http://192.168.4.26:30043/rest/stream.view?id=1",
+            downloadUrl = "",
+        )
+        player.play(listOf(track), 0)
+        player.finishPendingLoad()
+        runCurrent()
+        player.applyPlatformPosition(45_000L)
+        assertEquals(45_000L, player.state.value.positionMs)
+
+        player.togglePlayPause()
+        runCurrent()
+        assertFalse(player.state.value.isPlaying)
+        assertEquals(45_000L, player.state.value.positionMs)
+
+        player.invalidatePreparedForTest()
+        player.togglePlayPause()
+        runCurrent()
+
+        assertEquals(45_000L, player.state.value.positionMs, "Reload must keep the mid-track playhead")
+        assertEquals(45_000L, player.lastStartPositionMs, "Platform open must seek to preserved playhead")
+        assertEquals(2, player.openedUris.size)
+    }
+
+    @Test
+    fun platformPlayheadIsSourceOfTruthEvenWhenItJumpsBackward() {
+        val player = PlatformStateTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+        )
+        player.play(tracks, 0)
+        player.platformPlayback(positionMs = 45_000, durationMs = 60_000, bufferedPositionMs = 50_000)
+        assertEquals(45_000, player.state.value.positionMs)
+
+        // Seeks restart the decoder at the target; a temporary 0 from a new stream must be
+        // allowed through so the UI can converge on the real playhead.
+        player.platformPlayback(positionMs = 12_000, durationMs = 60_000, bufferedPositionMs = 12_000)
+        assertEquals(12_000, player.state.value.positionMs)
+    }
+
+    @Test
+    fun pauseDuringMidTrackStallKeepsPreparedPlaybackForResume() {
+        val player = PlatformStateTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+        )
+        player.play(tracks, 0)
+        player.platformPlayback(
+            positionMs = 30_000,
+            durationMs = 60_000,
+            bufferedPositionMs = 30_400,
+            isPlaying = false,
+            isBuffering = true,
+            forceBuffering = true,
+        )
+        assertTrue(player.state.value.isBuffering)
+        assertEquals(30_000, player.state.value.positionMs)
+
+        player.togglePlayPause()
+        assertFalse(player.state.value.isBuffering)
+        assertFalse(player.state.value.isPlaying)
+        assertEquals(30_000, player.state.value.positionMs)
+
+        player.togglePlayPause()
+        assertTrue(player.state.value.isPlaying)
+        assertEquals(30_000, player.state.value.positionMs)
+    }
+
+    @Test
     fun coldResolveKeepsTryingUntilOriginAppearsWithoutManualRetry() = runTest {
         var origin: String? = null
         var resolveCalls = 0
@@ -1772,6 +1958,7 @@ private class OpenedUriTestPlayer(
     scope: CoroutineScope = CoroutineScope(Dispatchers.Default),
 ) : SimpleAudioPlayer(scope) {
     val openedUris = mutableListOf<String>()
+    var lastStartPositionMs: Long = -1L
 
     override fun playUri(uri: String) {
         openedUris += uri
@@ -1785,15 +1972,34 @@ private class OpenedUriTestPlayer(
         generation: Int,
         startPositionMs: Long,
     ) {
+        lastStartPositionMs = startPositionMs
         openedUris += StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
     }
 
     override fun skipToInQueueOnPlatform(queue: List<Track>, startIndex: Int, track: Track, generation: Int) {
+        lastStartPositionMs = 0L
         openedUris += StreamingPlaybackPolicyHolder.resolvePlaybackUri(track)
     }
 
     fun finishPendingLoad() {
         markPlaybackReady(generation = activePlayGeneration)
+    }
+
+    fun failPendingLoad(failure: PlaybackFailure) {
+        publishPlaybackFailure(failure, generation = activePlayGeneration)
+    }
+
+    fun applyPlatformPosition(positionMs: Long) {
+        applyPlatformPlayback(
+            positionMs = positionMs,
+            durationMs = state.value.durationMs,
+            isPlaying = true,
+            bufferedPositionMs = positionMs,
+        )
+    }
+
+    fun invalidatePreparedForTest() {
+        invalidatePreparedPlayback()
     }
 }
 
@@ -1875,8 +2081,13 @@ private class QueueAwareTestPlayer(
 ) : SimpleAudioPlayer(scope) {
     var fullLoads = 0
     var queueSkips = 0
+    val platformCalls = mutableListOf<String>()
 
     override fun playUri(uri: String) = Unit
+
+    override fun stopCurrentPlaybackImmediately() {
+        platformCalls += "stop"
+    }
 
     override fun playQueueOnPlatform(
         queue: List<Track>,
@@ -1886,10 +2097,12 @@ private class QueueAwareTestPlayer(
         startPositionMs: Long,
     ) {
         fullLoads++
+        platformCalls += "load"
     }
 
     override fun skipToInQueueOnPlatform(queue: List<Track>, startIndex: Int, track: Track, generation: Int) {
         queueSkips++
+        platformCalls += "skip"
     }
 
     fun finishPendingLoad() {

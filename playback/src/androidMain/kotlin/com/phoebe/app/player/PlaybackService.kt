@@ -23,6 +23,7 @@ import androidx.media3.session.SessionCommand
 import androidx.media3.session.SessionResult
 import com.google.common.collect.ImmutableList
 import com.google.common.util.concurrent.ListenableFuture
+import com.phoebe.app.data.ArtworkOriginHolder
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PhoebeLog
 import kotlinx.coroutines.CoroutineScope
@@ -31,11 +32,16 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 class PlaybackService : MediaLibraryService() {
 
     private var mediaLibrarySession: MediaLibrarySession? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    /** Browse parents served before an origin existed, so their artwork came back empty. */
+    private val unboundBrowseParents: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     private val servicePlayerListener = object : Player.Listener {
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             AndroidPlaybackBridge.updateServicePlayerState()
@@ -102,6 +108,10 @@ class PlaybackService : MediaLibraryService() {
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<MediaItem>> {
             val rootParams = androidAutoRootParams(params)
+            // Android Auto can browse before Compose ever starts, so nothing has published a
+            // live Plex base yet. Warm one off the critical path and re-announce the tree once
+            // it binds, so thumbs stop resolving to host-less paths.
+            AndroidPlaybackRuntime.warmLiveOrigin(onBound = ::notifyBrowseTreeChanged)
             return listenableFuture("onGetLibraryRoot") {
                 val source = AndroidPlaybackRuntime.ensureInstalledNow()
                 runCatching {
@@ -136,6 +146,12 @@ class PlaybackService : MediaLibraryService() {
             pageSize: Int,
             params: LibraryParams?,
         ): ListenableFuture<LibraryResult<ImmutableList<MediaItem>>> {
+            // Browsing must not stall behind an origin probe, so serve what the catalog has and
+            // re-announce this parent once a base binds — until then its thumbs are unusable.
+            if (ArtworkOriginHolder.liveOrigin == null) {
+                unboundBrowseParents += parentId
+                AndroidPlaybackRuntime.warmLiveOrigin(onBound = ::notifyBrowseTreeChanged)
+            }
             return listenableFuture("onGetChildren") {
                 val source = AndroidPlaybackRuntime.ensureInstalledNow()
                 val children = source.getChildren(parentId).paged(page, pageSize)
@@ -210,7 +226,8 @@ class PlaybackService : MediaLibraryService() {
             }
             return listenableFuture("onAddMediaItems") {
                 val source = AndroidPlaybackRuntime.ensureInstalledNow()
-                source.resolveTracks(mediaItems).map { playbackMediaItem(it) }
+                AndroidPlaybackRuntime.ensureLiveOriginNow()
+                source.resolveTracks(mediaItems).map { playbackMediaItem(it) }.requireBoundUris()
             }
         }
 
@@ -226,6 +243,11 @@ class PlaybackService : MediaLibraryService() {
             }
             return listenableFuture("onSetMediaItems") {
                 val source = AndroidPlaybackRuntime.ensureInstalledNow()
+                // Bind an origin *before* any URI is built. The in-app player waits on
+                // PlaybackOriginResolver for exactly this; Android Auto had no equivalent, so a
+                // car-only process handed ExoPlayer `/library/parts/...` and it reported
+                // "Source error".
+                AndroidPlaybackRuntime.ensureLiveOriginNow()
                 PhoebeLog.d(TAG) {
                     "onSetMediaItems package=${controller.packageName} count=${mediaItems.size} item=${mediaItems.firstOrNull()?.debugSummary()}"
                 }
@@ -243,6 +265,9 @@ class PlaybackService : MediaLibraryService() {
                 }
                 val expanded = expandMediaItems(source, mediaItems, startIndex)
                 if (expanded != null) {
+                    // Validate before adopting: a queue the app mirrors but the player cannot
+                    // open would leave the in-app UI showing a track that never starts.
+                    val items = expanded.items.requireBoundUris()
                     val tracks = expanded.tracks
                     if (tracks.isNotEmpty()) {
                         AndroidPlaybackBridge.onAdoptQueue?.invoke(
@@ -251,13 +276,13 @@ class PlaybackService : MediaLibraryService() {
                             true,
                         )
                     }
-                    MediaItemsWithStartPosition(expanded.items, expanded.startIndex, startPositionMs)
+                    MediaItemsWithStartPosition(items, expanded.startIndex, startPositionMs)
                 } else {
                     val tracks = source.resolveTracks(mediaItems)
                     if (tracks.isEmpty()) {
                         throw UnsupportedOperationException("No playable media items resolved for request.")
                     }
-                    val resolved = tracks.map { playbackMediaItem(it) }
+                    val resolved = tracks.map { playbackMediaItem(it) }.requireBoundUris()
                     AndroidPlaybackBridge.onAdoptQueue?.invoke(
                         tracks,
                         startIndex.coerceIn(tracks.indices),
@@ -303,6 +328,7 @@ class PlaybackService : MediaLibraryService() {
 
         mediaLibrarySession = MediaLibrarySession.Builder(this, sessionPlayer, librarySessionCallback)
             .setSessionActivity(openAppIntent)
+            .setBitmapLoader(AndroidPlaybackHttp.sessionBitmapLoader(this))
             .setCustomLayout(likeButtonLayout())
             .setMediaButtonPreferences(likeButtonLayout())
             .build()
@@ -354,7 +380,7 @@ class PlaybackService : MediaLibraryService() {
         val tracks = source.searchTracks(query, extras)
         if (tracks.isEmpty()) return null
 
-        val items = tracks.map { playbackMediaItem(it) }
+        val items = tracks.map { playbackMediaItem(it) }.requireBoundUris()
         val resolvedStartIndex = startIndex.takeIf { it in items.indices } ?: 0
         AndroidPlaybackBridge.onAdoptQueue?.invoke(tracks, resolvedStartIndex, true)
         return MediaItemsWithStartPosition(items, resolvedStartIndex, startPositionMs)
@@ -367,13 +393,18 @@ class PlaybackService : MediaLibraryService() {
             val source = withContext(Dispatchers.Default) {
                 AndroidPlaybackRuntime.ensureInstalledNow()
             }
+            AndroidPlaybackRuntime.ensureLiveOriginNow()
             val tracks = withContext(Dispatchers.IO) {
                 source.searchTracks(query, extras)
             }
             PhoebeLog.d(TAG) { "playFromSearchIntent query=$query count=${tracks.size}" }
             if (tracks.isEmpty()) return@launch
 
-            val items = tracks.map { playbackMediaItem(it) }
+            val items = runCatching { tracks.map { playbackMediaItem(it) }.requireBoundUris() }
+                .getOrElse { error ->
+                    PhoebeLog.d(TAG) { "playFromSearchIntent query=$query unplayable: ${error.message}" }
+                    return@launch
+                }
             AndroidPlaybackBridge.onAdoptQueue?.invoke(tracks, 0, true)
             mediaLibrarySession?.player?.run {
                 setMediaItems(items, 0, C.TIME_UNSET)
@@ -397,6 +428,21 @@ class PlaybackService : MediaLibraryService() {
             val layout = likeButtonLayout(resolved)
             session.setCustomLayout(layout)
             session.setMediaButtonPreferences(layout)
+        }
+    }
+
+    /** Re-announce every parent served while thumbs were still unbindable. */
+    private fun notifyBrowseTreeChanged() {
+        val session = mediaLibrarySession ?: return
+        val parents = unboundBrowseParents.toList() + BrowseMediaIds.ROOT
+        unboundBrowseParents.clear()
+        serviceScope.launch {
+            val source = runCatching { AndroidPlaybackRuntime.ensureInstalledNow() }.getOrNull()
+                ?: return@launch
+            parents.distinct().forEach { parentId ->
+                val count = runCatching { source.getChildren(parentId).size }.getOrNull() ?: return@forEach
+                session.notifyChildrenChanged(parentId, count, null)
+            }
         }
     }
 
@@ -484,6 +530,23 @@ class PlaybackService : MediaLibraryService() {
                 .build()
         }
     }
+}
+
+/**
+ * Fail the session request instead of handing ExoPlayer a URI it cannot open.
+ *
+ * A host-less `/library/parts/...` survives every emptiness check but has no authority, so
+ * ExoPlayer reinterprets it as a local file and surfaces a bare "Source error" in the car with
+ * nothing in the log tying it to a missing origin. A failed future gives the user a real message.
+ */
+internal fun List<MediaItem>.requireBoundUris(): List<MediaItem> {
+    val unbound = firstOrNull { item ->
+        val uri = item.localConfiguration?.uri?.toString().orEmpty()
+        uri.isBlank() || isUnboundServerPath(uri)
+    } ?: return this
+    throw UnsupportedOperationException(
+        "Music server is unreachable; no origin bound for \"${unbound.mediaMetadata.title}\".",
+    )
 }
 
 internal data class ExpandedPlaybackItems(

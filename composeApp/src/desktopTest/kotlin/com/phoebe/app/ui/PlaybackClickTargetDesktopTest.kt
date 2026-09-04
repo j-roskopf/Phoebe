@@ -719,6 +719,118 @@ class PlaybackClickTargetDesktopTest {
 
         assertEquals(45_000L, seekPositionMs)
     }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopProgressLineDragSeeksToReleasedPositionWithoutIntermediateSeeks() = runDesktopComposeUiTest(width = 420, height = 80) {
+        val seekHistory = mutableListOf<Long>()
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(420.dp, 80.dp)) {
+                    ProgressLine(
+                        positionMs = 0L,
+                        bufferedPositionMs = 0L,
+                        durationMs = 60_000L,
+                        waveformSeed = "desktop-progress-drag",
+                        modifier = Modifier.size(width = 400.dp, height = 48.dp),
+                        onSeek = { seekHistory += it },
+                        barHeight = 20.dp,
+                    )
+                }
+            }
+        }
+
+        onNodeWithContentDescription("Playback progress, 0:00 of 1:00").performTouchInput {
+            down(Offset(width * 0.25f, 10f))
+            moveTo(Offset(width * 0.50f, 10f))
+            up()
+        }
+
+        assertEquals(listOf(30_000L), seekHistory)
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopProgressLineDragToEndClampsBeforeDuration() = runDesktopComposeUiTest(width = 420, height = 80) {
+        var seekPositionMs: Long? = null
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(420.dp, 80.dp)) {
+                    ProgressLine(
+                        positionMs = 0L,
+                        bufferedPositionMs = 0L,
+                        durationMs = 60_000L,
+                        waveformSeed = "desktop-progress-drag-end",
+                        modifier = Modifier.size(width = 400.dp, height = 48.dp),
+                        onSeek = { seekPositionMs = it },
+                        barHeight = 20.dp,
+                    )
+                }
+            }
+        }
+
+        onNodeWithContentDescription("Playback progress, 0:00 of 1:00").performTouchInput {
+            down(Offset(width * 0.25f, 10f))
+            moveTo(Offset(width * 1.5f, 10f))
+            up()
+        }
+
+        assertEquals(59_500L, seekPositionMs)
+    }
+
+    /**
+     * A cold origin race can buffer for many seconds. The play button is the control the user
+     * reaches for during a slow start, so it has to keep accepting taps — togglePlayPause()
+     * cancels a load in progress.
+     */
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopPlayButtonStillAcceptsTapsWhileBuffering() = runDesktopComposeUiTest(width = 120, height = 120) {
+        var toggles = 0
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(120.dp)) {
+                    PlayButton(
+                        isPlaying = false,
+                        isBuffering = true,
+                        size = 56.dp,
+                        onClick = { toggles++ },
+                    )
+                }
+            }
+        }
+
+        onNodeWithContentDescription("Stop loading").performClick()
+
+        assertEquals(1, toggles)
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
+    fun desktopPlayButtonStaysInertWhenNoTrackIsLoaded() = runDesktopComposeUiTest(width = 120, height = 120) {
+        var toggles = 0
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(120.dp)) {
+                    PlayButton(
+                        isPlaying = false,
+                        isBuffering = true,
+                        size = 56.dp,
+                        onClick = { toggles++ },
+                        enabled = false,
+                    )
+                }
+            }
+        }
+
+        onNodeWithContentDescription("Stop loading").performClick()
+
+        assertEquals(0, toggles)
+    }
 }
 
 private data class PlaybackRequest(

@@ -367,29 +367,76 @@ class CatalogBrowseTree(
     private fun String.matchesVoiceQuery(query: String): Boolean {
         val value = normalizedForVoiceSearch()
         val target = query.normalizedForVoiceSearch()
-        return target.isNotBlank() && (value == target || value.contains(target))
+        if (target.isBlank()) return false
+        if (value == target || value.contains(target)) return true
+        val tokens = query.voiceSearchTokens()
+        return tokens.isNotEmpty() && tokens.all { value.containsVoiceToken(it) }
     }
 
-    /** Returns matching track ids, best match first. */
+    /**
+     * Rank tracks for a spoken query.
+     *
+     * Voice queries are noisy: filler words, title/artist split across fields, and
+     * spoken forms that disagree with catalog text ("Miss" vs "Ms."). Score by
+     * phrase match first, then by how many query tokens land in any metadata field
+     * (with short abbreviation aliases). Significant tokens (length ≥ 3) should
+     * mostly match; tiny tokens like "ms" may miss without killing the result.
+     */
     private fun List<SelectTrackSearchIndex>.rankedByVoiceQuery(
         query: String,
         fields: (SelectTrackSearchIndex) -> List<VoiceSearchField>,
     ): List<String> {
         val normalizedQuery = query.normalizedForVoiceSearch()
-        val tokens = normalizedQuery.split(' ').filter { it.isNotBlank() }
-        if (normalizedQuery.isBlank()) return emptyList()
+        val tokens = query.voiceSearchTokens()
+        if (normalizedQuery.isBlank() || tokens.isEmpty()) return emptyList()
+        val phrase = tokens.joinToString(" ")
+        val significantTokens = tokens.filter { it.length >= SignificantTokenMinLength }
         return asSequence()
             .mapNotNull { track ->
-                val score = fields(track).maxOfOrNull { field ->
-                    val normalizedField = field.value.normalizedForVoiceSearch()
+                val fieldList = fields(track).map { field ->
+                    field to field.value.normalizedForVoiceSearch()
+                }
+                val phraseScore = fieldList.maxOfOrNull { (field, value) ->
                     when {
-                        normalizedField == normalizedQuery -> 400 + field.weight
-                        normalizedField.startsWith(normalizedQuery) -> 300 + field.weight
-                        normalizedField.contains(normalizedQuery) -> 200 + field.weight
-                        tokens.all { token -> normalizedField.contains(token) } -> 100 + field.weight
+                        value == normalizedQuery || value == phrase -> 400 + field.weight
+                        value.startsWith(phrase) || value.startsWith(normalizedQuery) ->
+                            300 + field.weight
+                        value.contains(phrase) || value.contains(normalizedQuery) ->
+                            200 + field.weight
                         else -> 0
                     }
                 } ?: 0
+
+                val tokenFieldWeights = tokens.map { token ->
+                    fieldList.maxOfOrNull { (field, value) ->
+                        if (value.containsVoiceToken(token)) field.weight else 0
+                    } ?: 0
+                }
+                val matchedTokens = tokenFieldWeights.count { it > 0 }
+                val matchedSignificant = significantTokens.count { token ->
+                    fieldList.any { (_, value) -> value.containsVoiceToken(token) }
+                }
+                val coverage = matchedTokens.toDouble() / tokens.size
+                val significantCoverage =
+                    if (significantTokens.isEmpty()) {
+                        1.0
+                    } else {
+                        matchedSignificant.toDouble() / significantTokens.size
+                    }
+                val tokenScore = when {
+                    matchedTokens == 0 -> 0
+                    // One-shot queries must hit; multi-token voice can drop a short/aliased token.
+                    tokens.size == 1 && matchedTokens != 1 -> 0
+                    significantTokens.isNotEmpty() && significantCoverage < MinSignificantTokenCoverage -> 0
+                    tokens.size >= 2 && matchedTokens < MinMatchedTokensForMultiWord -> 0
+                    coverage < MinTokenCoverage && significantCoverage < 1.0 -> 0
+                    else -> {
+                        val perfectBonus = if (matchedTokens == tokens.size) 40 else 0
+                        50 + tokenFieldWeights.sum() + matchedTokens * 15 + perfectBonus
+                    }
+                }
+
+                val score = maxOf(phraseScore, tokenScore)
                 if (score > 0) track to score else null
             }
             .sortedWith(
@@ -408,6 +455,19 @@ class CatalogBrowseTree(
             .trim()
             .replace(WhitespaceRegex, " ")
 
+    private fun String.voiceSearchTokens(): List<String> =
+        normalizedForVoiceSearch()
+            .split(' ')
+            .filter { it.isNotBlank() && it !in VoiceFillerWords }
+
+    private fun String.containsVoiceToken(token: String): Boolean {
+        if (contains(token)) return true
+        return voiceTokenAliases(token).any { alias -> alias != token && contains(alias) }
+    }
+
+    private fun voiceTokenAliases(token: String): List<String> =
+        VoiceTokenAliasGroups.firstOrNull { token in it }?.toList().orEmpty()
+
     private data class VoiceSearchField(val value: String, val weight: Int)
 
     private companion object {
@@ -415,7 +475,27 @@ class CatalogBrowseTree(
         private const val FieldWeightArtist = 30
         private const val FieldWeightAlbum = 20
         private const val FieldWeightGenre = 10
+        private const val SignificantTokenMinLength = 3
+        private const val MinMatchedTokensForMultiWord = 2
+        private const val MinTokenCoverage = 0.6
+        private const val MinSignificantTokenCoverage = 0.67
         private val NonAlphanumericRegex = Regex("[^a-z0-9]+")
         private val WhitespaceRegex = Regex("\\s+")
+        /** Spoken glue that must not be required to appear inside a single metadata field. */
+        private val VoiceFillerWords = setOf(
+            "a", "an", "and", "album", "artist", "by", "from", "music", "of", "on", "play",
+            "please", "playlist", "some", "song", "songs", "the", "to", "track", "tracks",
+        )
+        /**
+         * Spoken ↔ catalog abbreviation groups. Matching any member counts as matching
+         * the others (e.g. Assistant says "Miss", library stores "Ms.").
+         */
+        private val VoiceTokenAliasGroups = listOf(
+            setOf("ms", "miss"),
+            setOf("mrs", "missus", "missis"),
+            setOf("mr", "mister"),
+            setOf("dr", "doctor"),
+            setOf("st", "saint"),
+        )
     }
 }

@@ -393,6 +393,7 @@ private fun PhoebeRootStateHolder(
     val tracksLoading by state.tracksLoading.collectAsState()
     val supportedCollectionEntries = remember(session) { session.supportedCollectionEntries().toSet() }
     val shellPlayback by state.shellPlayback.collectAsState()
+    val player by state.player.collectAsState()
     val playerTransport by state.playerTransport.collectAsState()
     val playerQueue by state.playerQueue.collectAsState()
     val musicAssistantRemotePlayback by state.musicAssistantRemotePlayback.collectAsState()
@@ -2326,6 +2327,7 @@ private fun PhoebeRootStateHolder(
                     playbackState = PlaybackUiState(
                         shellPlayback = shellPlayback,
                         playerTransport = playerTransport,
+                        player = player,
                         track = currentTrack,
                         radioNowPlaying = radioNowPlaying,
                         upNext = upNext,

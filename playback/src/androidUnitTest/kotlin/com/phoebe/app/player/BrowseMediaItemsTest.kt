@@ -6,6 +6,8 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.session.SessionResult
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
 import com.phoebe.app.domain.Track
 import kotlinx.coroutines.test.runTest
 import org.junit.runner.RunWith
@@ -13,6 +15,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -118,6 +121,65 @@ class BrowseMediaItemsTest {
         assertNull(expanded)
     }
 
+    /**
+     * Android Auto renders artwork in its own process, so a catalog-relative thumb path has to
+     * be bound to the live base and token before it leaves the service.
+     */
+    @Test
+    fun browseArtworkBindsRelativePlexThumbsToTheLiveOrigin() = withPlexOrigin("https://pms.test:32400", "abc123") {
+        val item = browseTrackItem(plexTrack())
+
+        assertEquals(
+            "https://pms.test:32400/library/metadata/42/thumb/1700000000?X-Plex-Token=abc123",
+            item.mediaMetadata.artworkUri.toString(),
+        )
+    }
+
+    @Test
+    fun browseArtworkIsOmittedRatherThanLeftRelativeWhenNoOriginIsBound() =
+        withPlexOrigin(origin = null, token = null) {
+            assertNull(browseTrackItem(plexTrack()).mediaMetadata.artworkUri)
+        }
+
+    @Test
+    fun browseArtworkPassesThroughAbsoluteNonPlexUrls() = withPlexOrigin(origin = null, token = null) {
+        val item = browseTrackItem(
+            plexTrack().copy(thumbUrl = "https://cdn.example.test/art.jpg"),
+        )
+
+        assertEquals("https://cdn.example.test/art.jpg", item.mediaMetadata.artworkUri.toString())
+    }
+
+    @Test
+    fun playbackUriBindsRelativePlexStreamPathToTheLiveOrigin() =
+        withPlexOrigin("https://pms.test:32400", "abc123") {
+            val item = browseTrackItem(plexTrack())
+
+            assertEquals(
+                "https://pms.test:32400/library/parts/99/file.flac?X-Plex-Token=abc123",
+                item.localConfiguration?.uri.toString(),
+            )
+        }
+
+    /**
+     * Without an origin the URI stays host-less; ExoPlayer treats that as a local file and the
+     * car shows a bare "Source error". Fail the session request instead.
+     */
+    @Test
+    fun unboundPlaybackUriFailsTheRequestInsteadOfReachingExoPlayer() =
+        withPlexOrigin(origin = null, token = null) {
+            val items = listOf(browseTrackItem(plexTrack()))
+
+            assertFailsWith<UnsupportedOperationException> { items.requireBoundUris() }
+        }
+
+    @Test
+    fun boundPlaybackUrisPassThroughUnchanged() = withPlexOrigin("https://pms.test:32400", "abc123") {
+        val items = listOf(browseTrackItem(plexTrack()))
+
+        assertEquals(items, items.requireBoundUris())
+    }
+
     @Test
     fun externalNextCommandUsesPhoebeQueueWhenPlatformWindowHasNoNext() {
         var localNextCalls = 0
@@ -179,6 +241,31 @@ class BrowseMediaItemsTest {
         assertEquals(1, castNextCalls)
     }
 
+}
+
+/** A catalog row as Plex stores it: host-less part key and thumb, no token. */
+private fun plexTrack(): Track = Track(
+    id = "plex:1234",
+    title = "Foam",
+    artist = "Divine Sweater",
+    album = "Down Deep",
+    durationMs = 188_000,
+    streamUrl = "/library/parts/99/file.flac",
+    downloadUrl = "/library/parts/99/file.flac",
+    thumbUrl = "/library/metadata/42/thumb/1700000000",
+)
+
+private fun withPlexOrigin(origin: String?, token: String?, body: () -> Unit) {
+    val previousOrigin = ArtworkOriginHolder.liveOrigin
+    val previousToken = ArtworkAuthHolder.plexToken
+    ArtworkOriginHolder.update(origin)
+    ArtworkAuthHolder.update(token)
+    try {
+        body()
+    } finally {
+        ArtworkOriginHolder.update(previousOrigin)
+        ArtworkAuthHolder.update(previousToken)
+    }
 }
 
 private class FakeCatalogBrowseSource(

@@ -146,7 +146,9 @@ final class IosCastCoordinator: NSObject {
         metadata.setString(descriptor.title, forKey: kGCKMetadataKeyTitle)
         metadata.setString(descriptor.artist, forKey: kGCKMetadataKeyArtist)
         metadata.setString(descriptor.album, forKey: kGCKMetadataKeyAlbumTitle)
-        if let thumb = descriptor.thumbUrl, let thumbUrl = URL(string: thumb) {
+        if let thumb = descriptor.thumbUrl,
+           (thumb.hasPrefix("http://") || thumb.hasPrefix("https://")),
+           let thumbUrl = URL(string: thumb) {
             metadata.addImage(GCKImage(url: thumbUrl, width: 600, height: 600))
         }
 

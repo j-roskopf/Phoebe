@@ -78,7 +78,7 @@ internal class AndroidAutoBrowseTree(
             else -> browseFolderItem(
                 mediaId = mediaId,
                 title = title,
-                artworkUri = thumbUrl?.let { Uri.parse(it) },
+                artworkUri = thumbUrl?.toBrowseArtworkUri(),
             )
         }
 

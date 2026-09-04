@@ -46,7 +46,10 @@ class CatalogBrowseTreeSearchTest {
 
         val results = tree.searchTracks(query = "")
 
-        assertEquals(listOf("track-river", "track-moon", "track-sun"), results.map { it.id })
+        assertEquals(
+            listOf("track-ms-jackson", "track-river", "track-moon", "track-sun"),
+            results.map { it.id },
+        )
     }
 
     @Test
@@ -67,6 +70,47 @@ class CatalogBrowseTreeSearchTest {
         val results = tree.searchTracks(query = "moon song by signal garden", title = "Moon Song", artist = "Signal Garden")
 
         assertEquals(listOf("track-moon"), results.map { it.id })
+    }
+
+    @Test
+    fun searchTracksMatchesSongByArtistFreeformQuery() = runTest {
+        val db = populatedDatabase()
+        val tree = CatalogBrowseTree(db)
+
+        val results = tree.searchTracks(query = "Ms Jackson by Outkast")
+
+        assertEquals(listOf("track-ms-jackson"), results.map { it.id })
+    }
+
+    @Test
+    fun searchTracksMatchesSpokenMissVersusCatalogMs() = runTest {
+        val db = populatedDatabase()
+        val tree = CatalogBrowseTree(db)
+
+        val results = tree.searchTracks(query = "Miss Jackson by Outkast")
+
+        assertEquals(listOf("track-ms-jackson"), results.map { it.id })
+    }
+
+    @Test
+    fun searchTracksMatchesWhenShortHonorificTokenIsDropped() = runTest {
+        val db = populatedDatabase()
+        val tree = CatalogBrowseTree(db)
+
+        // Assistant sometimes drops "Ms"/"Miss"; significant tokens should still win.
+        val results = tree.searchTracks(query = "Jackson by Outkast")
+
+        assertEquals(listOf("track-ms-jackson"), results.map { it.id })
+    }
+
+    @Test
+    fun searchTracksMatchesPunctuatedTitleAgainstSpokenQuery() = runTest {
+        val db = populatedDatabase()
+        val tree = CatalogBrowseTree(db)
+
+        val results = tree.searchTracks(query = "ms jackson", title = "Ms Jackson", artist = "Outkast")
+
+        assertEquals(listOf("track-ms-jackson"), results.map { it.id })
     }
 
     @Test
@@ -136,8 +180,10 @@ class CatalogBrowseTreeSearchTest {
 
         db.catalogQueries.upsertArtist("artist-1", "Signal Garden", null, 1, 2, 0, null, null, null, null, null, 0)
         db.catalogQueries.upsertArtist("artist-2", "Solar Choir", null, 1, 1, 1, null, null, null, null, null, 0)
+        db.catalogQueries.upsertArtist("artist-3", "OutKast", null, 1, 1, 2, null, null, null, null, null, 0)
         db.catalogQueries.upsertAlbum("album-quiet", "Quiet Hours", "Signal Garden", 2025, null, 0, null, null, null, null, null, 0)
         db.catalogQueries.upsertAlbum("album-bright", "Moonwink", "Solar Choir", 2024, null, 1, null, null, null, null, null, 0)
+        db.catalogQueries.upsertAlbum("album-stankonia", "Stankonia", "OutKast", 2000, null, 2, null, null, null, null, null, 0)
         db.catalogQueries.upsertPlaylist("playlist-night", "Night Drive", 2, null, null, 0, null, 0)
         upsertTrack(
             db = db,
@@ -166,9 +212,19 @@ class CatalogBrowseTreeSearchTest {
             dateAddedMs = 100,
             parentAlbumId = "album-bright",
         )
+        upsertTrack(
+            db = db,
+            id = "track-ms-jackson",
+            title = "Ms. Jackson",
+            artist = "OutKast",
+            album = "Stankonia",
+            dateAddedMs = 400,
+            parentAlbumId = "album-stankonia",
+        )
         db.catalogQueries.upsertTrackParent("album-quiet", "track-moon", 0, null)
         db.catalogQueries.upsertTrackParent("album-quiet", "track-river", 1, null)
         db.catalogQueries.upsertTrackParent("album-bright", "track-sun", 0, null)
+        db.catalogQueries.upsertTrackParent("album-stankonia", "track-ms-jackson", 0, null)
         db.catalogQueries.upsertTrackParent("playlist-night", "track-river", 0, null)
         db.catalogQueries.upsertTrackParent("playlist-night", "track-moon", 1, null)
         return db

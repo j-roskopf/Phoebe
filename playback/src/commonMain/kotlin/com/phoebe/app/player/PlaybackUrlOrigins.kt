@@ -156,8 +156,14 @@ fun Track.boundToLivePlaybackOrigin(
     } else {
         downloadUrl
     }
-    if (stream == streamUrl && download == downloadUrl) return this
-    return copy(streamUrl = stream, downloadUrl = download)
+    val rawThumb = thumbUrl
+    val thumb = if (!rawThumb.isNullOrBlank() && rawThumb.isPlexMediaPathOrUrl()) {
+        bindPlexUrl(rawThumb, base, token)
+    } else {
+        rawThumb
+    }
+    if (stream == streamUrl && download == downloadUrl && thumb == thumbUrl) return this
+    return copy(streamUrl = stream, downloadUrl = download, thumbUrl = thumb)
 }
 
 /**
@@ -169,10 +175,12 @@ fun Track.withRelativePlexPlaybackPaths(): Track {
     if (!localUri.isNullOrBlank()) return this
     val stream = plexAssetPath(streamUrl) ?: streamUrl
     val download = plexAssetPath(downloadUrl) ?: downloadUrl
-    if (stream == streamUrl && download == downloadUrl && playbackFallbackUrls.isEmpty()) return this
+    val thumb = thumbUrl?.let { plexAssetPath(it) ?: it }
+    if (stream == streamUrl && download == downloadUrl && thumb == thumbUrl && playbackFallbackUrls.isEmpty()) return this
     return copy(
         streamUrl = stream,
         downloadUrl = download,
+        thumbUrl = thumb,
         playbackFallbackUrls = emptyList(),
     )
 }
@@ -344,9 +352,14 @@ fun List<Track>.withFreshPlaybackUrls(
     liveOrigin: String? = null,
 ): List<Track> {
     if (session == null || isEmpty()) return this
+    // The origin ranking is a property of the session and the current network, not of any one
+    // track. Computing it per entry meant tapping "play album" ran a ConnectivityManager probe
+    // and a full connection-list sort once per track on the UI thread before playback state
+    // could even update — the tap felt dead for as long as the queue was long.
+    val origins = freshPlaybackOrigins(session, liveOrigin)
     var changed = false
     val refreshed = map { track ->
-        val next = track.withFreshPlaybackUrls(session, liveOrigin)
+        val next = track.withFreshPlaybackUrls(session, origins)
         if (next !== track) changed = true
         next
     }
@@ -356,17 +369,26 @@ fun List<Track>.withFreshPlaybackUrls(
 fun Track.withFreshPlaybackUrls(
     session: PlexSession,
     liveOrigin: String? = null,
-): Track {
+): Track = withFreshPlaybackUrls(session, freshPlaybackOrigins(session, liveOrigin))
+
+/** Ranked playback origins for [session] on the current network, shared across a whole queue. */
+private fun freshPlaybackOrigins(session: PlexSession, liveOrigin: String?): List<String> {
     val identity = currentNetworkIdentity()
     val demoteLocalOrigins = StreamingPlaybackPolicyHolder.settings.shouldDemoteLocalOrigins(
         identity.demotesLocalOrigins,
     ) || session.selectedServer?.let { identity.shouldSkipAdvertisedLan(it) } == true
     val preferred = liveOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }
-    val origins = playbackOriginCandidates(
+    return playbackOriginCandidates(
         server = session.selectedServer,
         preferredOrigin = preferred,
         demoteLocalOrigins = demoteLocalOrigins,
     )
+}
+
+private fun Track.withFreshPlaybackUrls(
+    session: PlexSession,
+    origins: List<String>,
+): Track {
     if (session.providerType == MediaProviderType.Plex &&
         (streamUrl.isPlexMediaPathOrUrl() || downloadUrl.isPlexMediaPathOrUrl())
     ) {

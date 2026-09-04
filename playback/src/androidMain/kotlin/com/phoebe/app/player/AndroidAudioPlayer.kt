@@ -295,7 +295,6 @@ class AndroidAudioPlayer(
         stopPositionSyncLoop()
         stopBufferingTimeout()
         stopRetry()
-        loadedPlatformQueue = null
         pendingPlatformSeek = null
         pendingPlatformQueueRebase = null
         androidGaplessPrepareGeneration = -1
@@ -312,6 +311,11 @@ class AndroidAudioPlayer(
                     stop()
                     clearMediaItems()
                 }
+                // Forget the playlist only once it is actually gone. play() silences output
+                // before every load, including same-queue skips, and runPlatformLoad cancels
+                // this job before it runs — clearing the record synchronously above made
+                // skipToInQueueOnPlatform miss its own playlist and full-reload every skip.
+                loadedPlatformQueue = null
             }
         }
     }
