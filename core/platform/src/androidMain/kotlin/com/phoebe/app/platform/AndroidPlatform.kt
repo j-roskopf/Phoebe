@@ -215,32 +215,62 @@ private fun androidNetworkIdentity(
         )
     }
     val capabilities = connectivity.getNetworkCapabilities(network)
-    // A VPN hides the underlying transport, and its tunnel does not reach the server's LAN.
-    // Reported as `Other` it used to keep LAN-first ordering on a VPN over cellular.
     val vpn = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+    val hasWifi = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+    val hasCellular = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
+    val hasEthernet = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true
+    // Overlay / split-tunnel VPNs (Tailscale, WireGuard app VPN) report WIFI|VPN on one
+    // Network. Treating every VPN as off-LAN demoted Plex to relays that fail when remote
+    // access is off, even though the underlying Wi-Fi still reaches the server. Prefer the
+    // underlying transport when present; only a VPN with no Wi-Fi/Ethernet stays Other.
     val transport = when {
         capabilities == null -> NetworkTransport.Other
+        hasWifi -> NetworkTransport.Wifi
+        hasEthernet -> NetworkTransport.Ethernet
+        hasCellular -> NetworkTransport.Cellular
         vpn -> NetworkTransport.Other
-        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> NetworkTransport.Wifi
-        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> NetworkTransport.Cellular
-        capabilities.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> NetworkTransport.Ethernet
         else -> NetworkTransport.Other
     }
+    // Full-tunnel / cellular VPN still counts as metered. Split-tunnel over Wi-Fi does not.
+    val vpnForcesMetered = vpn && !hasWifi && !hasEthernet
     val metering = NetworkMeteringStatus(
-        isMetered = connectivity.isActiveNetworkMetered || vpn,
+        isMetered = connectivity.isActiveNetworkMetered || vpnForcesMetered,
         isCellular = transport == NetworkTransport.Cellular,
     )
     val linkProperties = connectivity.getLinkProperties(network)
-    val prefixes = if (transport == NetworkTransport.Cellular || transport == NetworkTransport.None || vpn) {
-        emptyList()
-    } else {
-        androidLocalIpv4Prefixes(linkProperties)
+    val prefixes = when (transport) {
+        NetworkTransport.Cellular,
+        NetworkTransport.None,
+        -> emptyList()
+        else -> {
+            // VPN LinkProperties are the tunnel; LAN prefixes live on the underlying
+            // Wi-Fi/Ethernet Network object.
+            if (vpn) {
+                androidLocalIpv4PrefixesFromNonVpnNetworks(connectivity)
+                    .ifEmpty { androidLocalIpv4Prefixes(linkProperties) }
+            } else {
+                androidLocalIpv4Prefixes(linkProperties)
+            }
+        }
     }
+    val lanMaterial = when (transport) {
+        NetworkTransport.Cellular -> "cellular"
+        NetworkTransport.None -> ""
+        else -> {
+            if (vpn) {
+                androidNetworkMaterialFromNonVpnNetworks(connectivity)
+                    .ifBlank { androidNetworkMaterial(linkProperties) }
+            } else {
+                androidNetworkMaterial(linkProperties)
+            }
+        }
+    }
+    // Keep "vpn" in the fingerprint so connecting/disconnecting Tailscale still counts as a
+    // network change and re-runs the Plex origin race.
     val material = when {
+        vpn && lanMaterial.isNotBlank() -> "$lanMaterial|vpn"
         vpn -> "vpn"
-        transport == NetworkTransport.Cellular -> "cellular"
-        transport == NetworkTransport.None -> ""
-        else -> androidNetworkMaterial(linkProperties)
+        else -> lanMaterial
     }
     // A captive portal or a Wi-Fi that has not finished associating reports INTERNET without
     // being usable. Fold that into the fingerprint so leaving it counts as a network change.
@@ -253,6 +283,33 @@ private fun androidNetworkIdentity(
         localIpv4Prefixes = prefixes,
     )
 }
+
+/**
+ * Underlying Wi-Fi/Ethernet Networks, ignoring the VPN overlay Network that Tailscale-style
+ * apps register with TRANSPORT_VPN (and often WIFI|VPN together on a different object).
+ */
+private fun androidNonVpnNetworks(connectivity: ConnectivityManager): List<Network> =
+    connectivity.allNetworks.filter { candidate ->
+        val caps = connectivity.getNetworkCapabilities(candidate) ?: return@filter false
+        if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return@filter false
+        caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
+
+private fun androidLocalIpv4PrefixesFromNonVpnNetworks(connectivity: ConnectivityManager): List<String> =
+    androidNonVpnNetworks(connectivity)
+        .flatMap { network -> androidLocalIpv4Prefixes(connectivity.getLinkProperties(network)) }
+        .distinct()
+        .sorted()
+
+private fun androidNetworkMaterialFromNonVpnNetworks(connectivity: ConnectivityManager): String =
+    androidNonVpnNetworks(connectivity)
+        .mapNotNull { network ->
+            androidNetworkMaterial(connectivity.getLinkProperties(network)).takeIf { it.isNotBlank() }
+        }
+        .distinct()
+        .sorted()
+        .joinToString("|")
 
 private fun androidLocalIpv4Prefixes(linkProperties: LinkProperties?): List<String> {
     if (linkProperties == null) return emptyList()
