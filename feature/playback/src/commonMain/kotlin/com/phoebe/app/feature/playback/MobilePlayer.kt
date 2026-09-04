@@ -81,6 +81,7 @@ private val MobilePlayerRemoteTargetReserve = 18.dp
 private val MobilePlayerCompactRemoteTargetReserve = 14.dp
 private val MobilePlayerExpandedTopGap = 8.dp
 private val MobilePlayerExpandedArtworkBodyGap = 8.dp
+private val MobilePlayerExpandedMetadataTopGap = 22.dp
 private val MobilePlayerExpandedProgressLineHeight = 72.dp
 private val MobilePlayerExpandedControlsGap = 10.dp
 private val MobilePlayerCompactControlsGap = 4.dp
@@ -469,16 +470,27 @@ fun MobilePlayer(
             .coerceAtLeast(MobilePlayerExtraCompactMinArtworkHeight)
             .coerceAtMost(fullArtworkWidth)
         val maxArtworkHeightTrim = fullArtworkWidth - minArtworkHeight
-        val artworkHeightTrim = (compactPlayerHeight - screenHeight).coerceIn(0.dp, maxArtworkHeightTrim)
-        val fullArtworkHeight = fullArtworkWidth - artworkHeightTrim
-
         val collapsedArtworkSize = 44.dp
         val artworkIsImage = visualizerPreset == NowPlayingVisualizerPreset.Artwork
-        val artworkEdgeInset = if (artworkIsImage) {
-            ((fullArtworkWidth - fullArtworkHeight) / 2f).coerceAtLeast(0.dp)
-        } else {
-            0.dp
-        }
+        val artworkLayout = mobilePlayerArtworkLayout(
+            artworkWidth = fullArtworkWidth,
+            compactPlayerHeight = compactPlayerHeight,
+            availableHeight = screenHeight,
+            maxHeightTrim = maxArtworkHeightTrim,
+            isArtworkImage = artworkIsImage,
+            metadataTopGap = MobilePlayerExpandedMetadataTopGap,
+            minimumMetadataGap = MobilePlayerExpandedArtworkBodyGap,
+        )
+        val artworkHeightTrim = artworkLayout.heightTrim
+        val fullArtworkHeight = artworkLayout.displaySize
+        val artworkSideInset = artworkLayout.sideInset
+        val artworkTopInset = artworkLayout.topInset
+        val artworkLayoutHeight = artworkLayout.layoutHeight
+        // metadataReserve historically included metadataTopGap above the title. Only the
+        // unused portion of that gap may be reclaimed — never the content lines themselves.
+        val artworkMetadataReserve = (
+            metadataReserve - (MobilePlayerExpandedMetadataTopGap - artworkLayout.metadataGap)
+        ).coerceAtLeast(0.dp)
         val fullArtworkDisplayWidth = if (artworkIsImage) {
             fullArtworkHeight.coerceAtLeast(collapsedArtworkSize)
         } else {
@@ -495,11 +507,8 @@ fun MobilePlayer(
             .coerceIn(0.01f, 1f)
         val artworkLayerScaleY = (currentArtworkHeight.value / fullArtworkDisplayHeight.value.coerceAtLeast(1f))
             .coerceIn(0.01f, 1f)
-        val targetArtworkX = artworkEdgeInset
-        // X insets the square artwork to center it in the full-width row. Y must stay 0: the
-        // box is already exactly fullArtworkHeight tall and siblings are laid out relative to
-        // that height, so any downward shift overlaps the metadata below on compact screens.
-        val targetArtworkY = 0.dp
+        val targetArtworkX = artworkSideInset
+        val targetArtworkY = artworkTopInset
         val currentArtworkX = lerp(12.dp, targetArtworkX, clampedExpansionFraction)
         val currentArtworkY = lerp(14.dp, targetArtworkY, clampedExpansionFraction)
 
@@ -662,7 +671,7 @@ fun MobilePlayer(
                     .graphicsLayer { alpha = fullPlayerAlpha }
             ) {
                 if (track != null) {
-                    Spacer(Modifier.height(fullArtworkHeight + metadataReserve + MobilePlayerExpandedArtworkBodyGap))
+                    Spacer(Modifier.height(artworkLayoutHeight + artworkMetadataReserve + MobilePlayerExpandedArtworkBodyGap))
                 } else {
                     Spacer(Modifier.height(28.dp))
                     Box(
@@ -828,7 +837,11 @@ fun MobilePlayer(
             val targetTextX = 20.dp
             val currentTextX = lerp(68.dp, targetTextX, clampedExpansionFraction)
             val collapsedTextY = (MobileMiniPlayerChromeHeight - CollapsedMobilePlayerMetadataHeight) / 2f
-            val currentTextY = lerp(collapsedTextY, fullArtworkHeight + 22.dp, clampedExpansionFraction)
+            val currentTextY = lerp(
+                collapsedTextY,
+                artworkLayoutHeight + artworkLayout.metadataGap,
+                clampedExpansionFraction,
+            )
             val collapsedTextWidth = if (castState.isConnected) {
                 (screenWidth - 176.dp).coerceAtLeast(96.dp)
             } else {
@@ -916,7 +929,10 @@ fun MobilePlayer(
             if (fullPlayerElementsAlpha > 0f) {
                 Box(
                     modifier = Modifier
-                        .offset(x = screenWidth - 64.dp, y = fullArtworkHeight + 20.dp)
+                        .offset(
+                            x = screenWidth - 64.dp,
+                            y = artworkLayoutHeight + (artworkLayout.metadataGap - 2.dp),
+                        )
                         .graphicsLayer { alpha = fullPlayerElementsAlpha },
                 ) {
                     TransportIcon(PhoebeIcon.More, "More options", { onOpenSongDetail(track) })
@@ -939,8 +955,8 @@ fun MobilePlayer(
             val collapsedPlayButtonX = screenWidth - 12.dp - collapsedPlayButtonSize
             val collapsedPlayButtonY = (MobileMiniPlayerChromeHeight - collapsedPlayButtonSize) / 2f
             val expandedPlayButtonX = (screenWidth - expandedPlayButtonSize) / 2f
-            val expandedPlayButtonY = fullArtworkHeight +
-                metadataReserve +
+            val expandedPlayButtonY = artworkLayoutHeight +
+                artworkMetadataReserve +
                 MobilePlayerExpandedArtworkBodyGap +
                 expandedProgressLineHeight +
                 expandedControlsGap

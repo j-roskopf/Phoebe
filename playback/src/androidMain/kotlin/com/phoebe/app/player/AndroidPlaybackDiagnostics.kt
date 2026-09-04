@@ -14,7 +14,6 @@ import androidx.media3.common.audio.BaseAudioProcessor
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.Util
 import androidx.media3.datasource.DefaultDataSource
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
@@ -36,10 +35,9 @@ internal object AndroidPlaybackDiagnostics {
         engine: PlaybackEnginePath,
     ): ExoPlayer.Builder {
         diagnostics.engineSelected(engine)
-        val httpDataSourceFactory = DefaultHttpDataSource.Factory()
-            .setAllowCrossProtocolRedirects(true)
-            .setConnectTimeoutMs(3_000)
-            .setReadTimeoutMs(8_000)
+        // OkHttp + underlying Wi-Fi Network binding — DefaultHttpDataSource fails under
+        // Tailscale/split-tunnel VPN UID routing while artwork/API (also OkHttp) still work.
+        val httpDataSourceFactory = AndroidPlaybackHttp.dataSourceFactory(context)
         return ExoPlayer.Builder(
             context,
             PhoebeRenderersFactory(
