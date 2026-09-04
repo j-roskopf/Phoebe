@@ -483,10 +483,13 @@ fun MobilePlayer(
         )
         val artworkHeightTrim = artworkLayout.heightTrim
         val fullArtworkHeight = artworkLayout.displaySize
-        val artworkEdgeInset = artworkLayout.edgeInset
+        val artworkSideInset = artworkLayout.sideInset
+        val artworkTopInset = artworkLayout.topInset
         val artworkLayoutHeight = artworkLayout.layoutHeight
+        // metadataReserve historically included metadataTopGap above the title. Only the
+        // unused portion of that gap may be reclaimed — never the content lines themselves.
         val artworkMetadataReserve = (
-            metadataReserve - (artworkLayoutHeight - fullArtworkHeight)
+            metadataReserve - (MobilePlayerExpandedMetadataTopGap - artworkLayout.metadataGap)
         ).coerceAtLeast(0.dp)
         val fullArtworkDisplayWidth = if (artworkIsImage) {
             fullArtworkHeight.coerceAtLeast(collapsedArtworkSize)
@@ -504,8 +507,8 @@ fun MobilePlayer(
             .coerceIn(0.01f, 1f)
         val artworkLayerScaleY = (currentArtworkHeight.value / fullArtworkDisplayHeight.value.coerceAtLeast(1f))
             .coerceIn(0.01f, 1f)
-        val targetArtworkX = artworkEdgeInset
-        val targetArtworkY = artworkEdgeInset
+        val targetArtworkX = artworkSideInset
+        val targetArtworkY = artworkTopInset
         val currentArtworkX = lerp(12.dp, targetArtworkX, clampedExpansionFraction)
         val currentArtworkY = lerp(14.dp, targetArtworkY, clampedExpansionFraction)
 
