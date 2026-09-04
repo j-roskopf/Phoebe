@@ -4,6 +4,10 @@ import android.net.Uri
 import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
+import com.phoebe.app.data.bindPlexUrl
+import com.phoebe.app.data.isPlexMediaPathOrUrl
 import com.phoebe.app.domain.Album
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.Playlist
@@ -53,7 +57,7 @@ internal fun browseTrackItem(track: Track): MediaItem {
                 .setIsBrowsable(false)
                 .setIsPlayable(true)
                 .setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
-                .apply { track.thumbUrl?.let { setArtworkUri(it.toAndroidUri()) } }
+                .apply { track.thumbUrl?.toBrowseArtworkUri()?.let { setArtworkUri(it) } }
                 .build(),
         )
         .build()
@@ -89,21 +93,21 @@ internal fun Artist.toBrowseItem(): MediaItem =
     browseFolderItem(
         mediaId = BrowseMediaIds.artist(id),
         title = title,
-        artworkUri = thumbUrl?.toAndroidUri(),
+        artworkUri = thumbUrl?.toBrowseArtworkUri(),
     )
 
 internal fun Album.toBrowseItem(): MediaItem =
     browseFolderItem(
         mediaId = BrowseMediaIds.album(id),
         title = title,
-        artworkUri = thumbUrl?.toAndroidUri(),
+        artworkUri = thumbUrl?.toBrowseArtworkUri(),
     )
 
 internal fun Playlist.toBrowseItem(): MediaItem =
     browseFolderItem(
         mediaId = BrowseMediaIds.playlist(id),
         title = title,
-        artworkUri = thumbUrl?.toAndroidUri(),
+        artworkUri = thumbUrl?.toBrowseArtworkUri(),
     )
 
 internal const val InAppPlaybackExtra: String = "com.phoebe.app.IN_APP_PLAYBACK"
@@ -127,3 +131,21 @@ private fun Track.descriptionForCarDisplay(): String =
         .joinToString(" - ")
 
 private fun String.toAndroidUri(): Uri = Uri.parse(this)
+
+/**
+ * Artwork URI the Android Auto host (a different process) can actually fetch.
+ *
+ * The catalog stores host-less Plex thumb paths — `/library/metadata/123/thumb/456` — that the
+ * in-app image loader binds to the live base at request time. Handing that string straight to
+ * `Uri.parse` yields a relative URI with no scheme or authority, which is why every Android Auto
+ * row (and MediaSession Now Playing bitmap load) rendered blank. Bind it here instead; a browse
+ * item with no artwork beats a broken one.
+ */
+internal fun String.toBrowseArtworkUri(): Uri? {
+    val raw = trim().takeIf { it.isNotBlank() } ?: return null
+    if (!raw.isPlexMediaPathOrUrl()) {
+        return raw.takeIf { Uri.parse(it).scheme != null }?.toAndroidUri()
+    }
+    val base = ArtworkOriginHolder.liveOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return null
+    return bindPlexUrl(raw, base, ArtworkAuthHolder.plexToken.orEmpty()).toAndroidUri()
+}

@@ -156,6 +156,39 @@ class PlaybackUrlRefreshTest {
         assertEquals(track, refreshed)
     }
 
+    /**
+     * The queue overload resolves the origin ranking once and reuses it, instead of probing the
+     * network per entry on the UI thread. Every entry must still come out exactly as the
+     * single-track overload would produce it.
+     */
+    @Test
+    fun queueRefreshMatchesPerTrackRefreshForEveryEntry() {
+        val session = PlexSession(
+            token = "fresh-password",
+            userName = "fresh-user",
+            providerType = MediaProviderType.Navidrome,
+        )
+        val tracks = listOf(
+            playbackTrack(
+                streamUrl = "https://navidrome.example/rest/stream.view?id=1&u=old&p=old",
+                downloadUrl = "https://navidrome.example/rest/download.view?id=1",
+            ),
+            playbackTrack(
+                streamUrl = "https://navidrome.example/rest/stream.view?id=2",
+                downloadUrl = "https://navidrome.example/rest/download.view?id=2&u=old&p=old",
+            ),
+            playbackTrack(
+                streamUrl = "file:///music/local.mp3",
+                downloadUrl = "",
+            ),
+        )
+
+        assertEquals(
+            tracks.map { it.withFreshPlaybackUrls(session) },
+            tracks.withFreshPlaybackUrls(session),
+        )
+    }
+
     private fun playbackTrack(
         streamUrl: String,
         downloadUrl: String,

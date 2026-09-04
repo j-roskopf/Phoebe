@@ -2,14 +2,12 @@ package com.phoebe.app.player
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -41,16 +39,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.awt.ComposePanel
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.PlatformStorage
+import com.phoebe.app.ui.PhoebeIcon
+import com.phoebe.app.ui.PhoebeIconView
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -1617,40 +1614,7 @@ private fun CastDeviceGlyph() {
 
 @Composable
 private fun MiniCastGlyph(tint: Color) {
-    Canvas(modifier = Modifier.size(18.dp)) {
-        val strokeWidth = (size.minDimension * 0.075f).coerceAtLeast(1.25f)
-        val stroke = Stroke(width = strokeWidth)
-        val inset = strokeWidth / 2f
-        drawRoundRect(
-            color = tint,
-            topLeft = Offset(inset, size.height * 0.16f),
-            size = Size(size.width - strokeWidth, size.height * 0.58f),
-            style = stroke,
-        )
-        drawCircle(
-            color = tint,
-            radius = size.minDimension * 0.055f,
-            center = Offset(size.width * 0.22f, size.height * 0.84f),
-        )
-        drawArc(
-            color = tint,
-            startAngle = -90f,
-            sweepAngle = 90f,
-            useCenter = false,
-            topLeft = Offset(size.width * 0.08f, size.height * 0.54f),
-            size = Size(size.width * 0.36f, size.height * 0.36f),
-            style = stroke,
-        )
-        drawArc(
-            color = tint,
-            startAngle = -90f,
-            sweepAngle = 90f,
-            useCenter = false,
-            topLeft = Offset(size.width * -0.02f, size.height * 0.42f),
-            size = Size(size.width * 0.58f, size.height * 0.58f),
-            style = stroke,
-        )
-    }
+    PhoebeIconView(PhoebeIcon.Cast, tint = tint, modifier = Modifier.size(20.dp))
 }
 
 internal fun desktopCastIsFinishedIdleReason(idleReasonName: String?): Boolean =
@@ -1695,7 +1659,7 @@ private fun DesktopCastMedia.toMetadata(): Map<String, Any> =
         put(CastV2Media.METADATA_TITLE, title)
         put(CastV2Media.METADATA_ARTIST, artist)
         put(CastV2Media.METADATA_ALBUM_NAME, album)
-        thumbUrl?.let { url ->
+        thumbUrl?.takeIf { it.isCastReceiverLoadableUrl() }?.let { url ->
             put(CastV2Media.METADATA_IMAGES, listOf(mapOf("url" to url)))
         }
     }

@@ -549,7 +549,7 @@ private fun CastMediaDescriptor.toWebCastMedia(): WebCastMedia =
         title = title,
         artist = artist,
         album = album,
-        imageUrl = thumbUrl,
+        imageUrl = thumbUrl?.takeIf { it.isCastReceiverLoadableUrl() },
         durationMs = durationMs,
         streamUrl = streamUrl,
         downloadUrl = downloadUrl,
@@ -853,7 +853,7 @@ private external fun webCastConnected(): Boolean
 	                metadata.title = item.title || "Chromecast audio";
 	                metadata.artist = item.artist || "";
 	                metadata.albumName = item.album || "";
-	                if (item.imageUrl) {
+	                if (item.imageUrl && (item.imageUrl.startsWith("http://") || item.imageUrl.startsWith("https://"))) {
 	                    metadata.images = typeof globalThis.chrome?.cast?.Image === "function"
 	                        ? [new globalThis.chrome.cast.Image(item.imageUrl)]
 	                        : [{ url: item.imageUrl }];

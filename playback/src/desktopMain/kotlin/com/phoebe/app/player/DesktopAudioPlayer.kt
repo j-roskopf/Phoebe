@@ -83,7 +83,7 @@ class DesktopAudioPlayer(
         }
     }
 
-    private var player: MediaPlayer? = null
+    @Volatile private var player: MediaPlayer? = null
     private var lastPlaybackUiSyncAtMs = 0L
     private var javaFxProgressProbeStop: AtomicBoolean? = null
     private var javaFxVisualizerTap: JavaFxVisualizerPcmTap? = null
@@ -115,6 +115,9 @@ class DesktopAudioPlayer(
     private var pendingManualSeekGeneration = -1
     private var pendingManualSeekPositionMs = 0L
     private var pendingManualSeekUntilMs = 0L
+    @Volatile private var javaFxProgressLastRawPositionMs = 0L
+    @Volatile private var javaFxProgressFallbackBasePositionMs = 0L
+    @Volatile private var javaFxProgressFallbackBaseAtNs = 0L
     private var javaFxStartupWatchdogStop: AtomicBoolean? = null
     private var pendingPlaybackFailure: PlaybackFailure? = null
     private var reloadOnResume = false
@@ -167,7 +170,10 @@ class DesktopAudioPlayer(
         val closeLineOnStop: Boolean = true,
     ) {
         val stopped = AtomicBoolean(false)
-        val pendingWrites = LinkedBlockingQueue<ByteArray>()
+        // Bound the queue so ffmpeg (which can decode at 1000x) cannot dump the whole
+        // track into RAM and EOF the pump within a second — that used to stop playback
+        // immediately via finally { stop() } while audio was still queued.
+        val pendingWrites = LinkedBlockingQueue<ByteArray>(SampledStreamPendingWriteChunks)
         @Volatile
         var writtenPcmBytes: Long = stream.format.pcmBytesForDurationMs(startPositionMs)
         @Volatile
@@ -194,8 +200,14 @@ class DesktopAudioPlayer(
             if (writeWorker != null) return
             writeWorker = Thread(
                 {
-                    while (!stopped.get() || pendingWrites.isNotEmpty()) {
+                    // Exit as soon as stop is requested — never drain the queue after skip/pause-teardown.
+                    while (!stopped.get()) {
+                        if (paused) {
+                            Thread.sleep(25L)
+                            continue
+                        }
                         val chunk = pendingWrites.poll(50L, TimeUnit.MILLISECONDS) ?: continue
+                        if (stopped.get()) break
                         val written = runCatching { line.write(chunk, 0, chunk.size) }.getOrDefault(0)
                         if (written > 0) {
                             writtenPcmBytes += written.toLong()
@@ -207,6 +219,12 @@ class DesktopAudioPlayer(
             ).apply {
                 isDaemon = true
                 start()
+            }
+        }
+
+        fun enqueuePcm(chunk: ByteArray) {
+            while (!stopped.get()) {
+                if (pendingWrites.offer(chunk, 50L, TimeUnit.MILLISECONDS)) return
             }
         }
 
@@ -226,15 +244,16 @@ class DesktopAudioPlayer(
             lineTransferred = true
             stopped.set(true)
             paused = false
+            pendingWrites.clear()
             runCatching { stream.close() }
             runCatching { onStop?.invoke() }
         }
 
         fun stop() {
+            // Silence first, then clean up. Joining the writer before stopping the line used to
+            // keep playing ~2s of queued PCM after next/previous.
             stopped.set(true)
             paused = false
-            writeWorker?.join(2_000L)
-            writeWorker = null
             pendingWrites.clear()
             if (closeLineOnStop && !lineTransferred) {
                 runCatching { line.stop() }
@@ -243,6 +262,8 @@ class DesktopAudioPlayer(
             }
             runCatching { stream.close() }
             runCatching { onStop?.invoke() }
+            writeWorker?.join(200L)
+            writeWorker = null
         }
 
         fun pause() {
@@ -250,7 +271,10 @@ class DesktopAudioPlayer(
                 pausedAtNs = System.nanoTime()
                 paused = true
             }
-            runCatching { line.stop() }
+            // Do not call SourceDataLine.stop() here. On macOS (and often Windows) a stopped
+            // Java Sound line cannot be restarted reliably — resume becomes silence and the
+            // next play tap reloads the track from 0. The pump already stops feeding while
+            // paused, so the line underruns into silence without tearing it down.
         }
 
         fun resume() {
@@ -262,7 +286,11 @@ class DesktopAudioPlayer(
                 pausedAtNs = null
                 paused = false
             }
-            runCatching { line.start() }
+            runCatching {
+                if (!line.isRunning) {
+                    line.start()
+                }
+            }
         }
     }
 
@@ -335,8 +363,16 @@ class DesktopAudioPlayer(
     override fun stopCurrentPlaybackImmediately() {
         stopJavaFxProgressProbe()
         stopJavaFxVisualizerTap()
-        runCatching { sampledClip?.stop() }
-        runCatching { sampledStream?.stop() }
+        val stream = sampledStream
+        sampledStream = null
+        sampledStreamSource = null
+        // Capture and close the clip so native mixer lines/buffers are released; dropping the
+        // reference without close() leaked them across repeated Clip-backed playback.
+        val clip = sampledClip
+        sampledClip = null
+        runCatching { clip?.stop() }
+        runCatching { clip?.close() }
+        runCatching { stream?.stop() }
         JavaFxRuntime.runLater {
             runCatching { player?.pause() }
             runCatching { fadingOutPlayer?.pause() }
@@ -669,23 +705,51 @@ class DesktopAudioPlayer(
                 runCatching { clip.start() }
                 return@execute
             }
-            if (reloadOnResume) {
+            if (reloadOnResume || pendingPlaybackFailure != null || state.value.playbackErrorMessage != null) {
                 reloadCurrentTrack()
                 return@execute
             }
             JavaFxRuntime.runLater {
                 val mediaPlayer = player
-                if (mediaPlayer == null || mediaPlayer.error != null) {
+                val isDisposedOrBroken = mediaPlayer == null ||
+                    mediaPlayer.error != null ||
+                    mediaPlayer.status == MediaPlayer.Status.HALTED ||
+                    mediaPlayer.status == MediaPlayer.Status.DISPOSED
+                if (isDisposedOrBroken) {
                     playbackExecutor.execute { reloadCurrentTrack() }
-                } else {
-                    mediaPlayer.play()
+                    return@runLater
                 }
+                // STOPPED often follows a spurious end-of-media or a stalled pause. Prefer
+                // seeking back to the remembered playhead over reloading from 0.
+                if (mediaPlayer.status == MediaPlayer.Status.STOPPED) {
+                    val resumeMs = state.value.positionMs.coerceAtLeast(0L).toDouble()
+                    runCatching {
+                        if (resumeMs > 0.0) {
+                            mediaPlayer.seek(javafx.util.Duration.millis(resumeMs))
+                        }
+                        mediaPlayer.play()
+                    }.onFailure {
+                        playbackExecutor.execute { reloadCurrentTrack() }
+                    }
+                    return@runLater
+                }
+                mediaPlayer.play()
             }
         }
     }
 
+    override fun hasActivePlatformPlayback(): Boolean {
+        if (!super.hasActivePlatformPlayback()) return false
+        if (reloadOnResume || pendingPlaybackFailure != null) return false
+        val fxPlayer = player
+        val fxActive = fxPlayer != null && fxPlayer.error == null
+        return fxActive || sampledStream != null || sampledClip != null
+    }
+
     private fun reloadCurrentTrack() {
         reloadOnResume = false
+        pendingPlaybackFailure = null
+        disposeJavaFxBlocking(DesktopPlaybackStartupPolicy.JavaFxStartupDisposeTimeoutMs)
         val current = state.value
         val index = current.currentIndex
         // Go through SimpleAudioPlayer.play so unbound `/library/parts/...` paths re-enter
@@ -700,15 +764,29 @@ class DesktopAudioPlayer(
 
     override fun seek(positionMs: Long) {
         val generation = activePlayGeneration
+        val boundedPositionMs = positionMs.coerceAtLeast(0L)
+        // Arm settle on the caller thread before async work so progress probes cannot
+        // overwrite seekTo()'s UI position with a stale 0:00 clock.
+        pendingManualSeekGeneration = generation
+        pendingManualSeekPositionMs = boundedPositionMs
+        pendingManualSeekUntilMs = System.currentTimeMillis() + ManualSeekPlatformSettleMs
+        javaFxProgressLastRawPositionMs = boundedPositionMs
+        javaFxProgressFallbackBasePositionMs = boundedPositionMs
+        javaFxProgressFallbackBaseAtNs = System.nanoTime()
+        javaFxVisualizerPositionMs = boundedPositionMs
+        javaFxVisualizerPositionAtNs = System.nanoTime()
         playbackExecutor.execute {
             if (!isPlayRequestCurrent(generation)) return@execute
             pendingManualSeekGeneration = generation
-            pendingManualSeekPositionMs = positionMs.coerceAtLeast(0L)
+            pendingManualSeekPositionMs = boundedPositionMs
             pendingManualSeekUntilMs = System.currentTimeMillis() + ManualSeekPlatformSettleMs
+            cancelGaplessPrepareOnPlatform(generation)
             val stream = sampledStream
             if (stream != null) {
                 val source = sampledStreamSource
-                if (source != null && restartSampledStreamAt(source, pendingManualSeekPositionMs, generation)) {
+                if (source != null && restartSampledStreamAt(source, boundedPositionMs, generation)) {
+                    // Keep settle armed until the *new* stream (startPositionMs ≈ target) syncs.
+                    // Clearing here let the dying stream push the old playhead back into UI.
                     return@execute
                 }
                 runCatching { stream.line.flush() }
@@ -719,16 +797,14 @@ class DesktopAudioPlayer(
                 runCatching {
                     val wasPlaying = clip.isActive
                     clip.stop()
-                    clip.microsecondPosition = positionMs.coerceAtLeast(0L) * 1000L
+                    clip.microsecondPosition = boundedPositionMs * 1000L
                     if (wasPlaying) clip.start()
                 }
             } else {
                 JavaFxRuntime.runLater {
                     if (!isPlayRequestCurrent(generation)) return@runLater
-                    player?.seek(javafx.util.Duration.millis(positionMs.toDouble()))
+                    player?.seek(javafx.util.Duration.millis(boundedPositionMs.toDouble()))
                 }
-                javaFxVisualizerPositionMs = positionMs.coerceAtLeast(0L)
-                javaFxVisualizerPositionAtNs = System.nanoTime()
                 javaFxVisualizerTap?.restart()
             }
         }
@@ -1057,9 +1133,7 @@ class DesktopAudioPlayer(
                     incoming.setMute(false)
                     incoming.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
                     incoming.setOnEndOfMedia {
-                        if (isPlayRequestCurrent(generation) && player === incoming) {
-                            advanceAfterPlatformTrackEnded(generation)
-                        }
+                        handleJavaFxEndOfMedia(incoming, generation)
                     }
                     attachJavaFxSpectrumListener(incoming)
                     attachJavaFxPlaybackListeners(incoming, generation) { player === incoming }
@@ -1418,9 +1492,7 @@ class DesktopAudioPlayer(
                     }
                     incoming.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
                     incoming.setOnEndOfMedia {
-                        if (isPlayRequestCurrent(generation) && player === incoming) {
-                            advanceAfterPlatformTrackEnded(generation)
-                        }
+                        handleJavaFxEndOfMedia(incoming, generation)
                     }
                     attachJavaFxSpectrumListener(incoming)
                     attachJavaFxPlaybackListeners(incoming, generation) { player === incoming }
@@ -1706,6 +1778,7 @@ class DesktopAudioPlayer(
     ) {
         PhoebeLog.d("DesktopAudioPlayer") { failure.logLine() }
         diagnostics.playbackError(PlaybackEnginePath.JavaFxMediaPlayer, failure.logLine())
+        disposeJavaFxBlocking(DesktopPlaybackStartupPolicy.JavaFxStartupDisposeTimeoutMs)
         if (failure.isInfrastructureFailure && !failure.shouldTryAlternateEngine) {
             pendingPlaybackFailure = failure
             finishPlaybackFailed(failure, generation)
@@ -1715,11 +1788,9 @@ class DesktopAudioPlayer(
             PhoebeLog.d("DesktopAudioPlayer") {
                 "skipping alternate engine after JavaFX timeout on local-only origin"
             }
-            disposeJavaFxBlocking(DesktopPlaybackStartupPolicy.JavaFxStartupDisposeTimeoutMs)
             finishPlaybackFailed(failure, generation)
             return
         }
-        disposeJavaFxBlocking(DesktopPlaybackStartupPolicy.JavaFxStartupDisposeTimeoutMs)
         if (failure.shouldTryAlternateEngine) {
             PhoebeLog.d("DesktopAudioPlayer") {
                 "trying alternate engine after JavaFX startup failure"
@@ -1927,9 +1998,7 @@ class DesktopAudioPlayer(
                         failStartup(javaFxErrorFailure(mediaPlayer.error, uri))
                     }
                     mediaPlayer.setOnEndOfMedia {
-                        if (isPlayRequestCurrent(generation) && player === mediaPlayer) {
-                            advanceAfterPlatformTrackEnded(generation)
-                        }
+                        handleJavaFxEndOfMedia(mediaPlayer, generation)
                     }
                     media.setOnError {
                         failStartup(javaFxErrorFailure(media.error, uri))
@@ -1960,6 +2029,11 @@ class DesktopAudioPlayer(
                         mediaReady.set(true)
                         cancelJavaFxStartupWatchdog()
                         schedulePlayingWatchdog()
+                        if (pendingManualSeekGeneration == generation && pendingManualSeekPositionMs > 0L) {
+                            mediaPlayer.seek(
+                                javafx.util.Duration.millis(pendingManualSeekPositionMs.toDouble()),
+                            )
+                        }
                         syncJavaFxPlayback(mediaPlayer, generation, isBuffering = false)
                         attachJavaFxPlaybackListeners(mediaPlayer, generation) { player === mediaPlayer }
                         if (playWhenReady && isPlayRequestCurrent(generation)) {
@@ -2344,7 +2418,23 @@ class DesktopAudioPlayer(
         }
         syncSampledStreamPlayback(playback, generation)
         startSampledStreamPump(playback, bufferSize, generation)
+        startSampledStreamProgressProbe(playback, generation)
         return true
+    }
+
+    private fun startSampledStreamProgressProbe(
+        playback: StreamingSampledPlayback,
+        generation: Int,
+    ) {
+        Thread({
+            while (isPlayRequestCurrent(generation) && sampledStream === playback && !playback.stopped.get()) {
+                syncSampledStreamPlayback(playback, generation)
+                Thread.sleep(250L)
+            }
+        }, "Phoebe-sampled-stream-progress").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     private fun prepareGaplessSampledStream(
@@ -2711,16 +2801,31 @@ class DesktopAudioPlayer(
     ) {
         Thread({
             val buffer = ByteArray(VisualizerStreamChunkBytes)
+            var decoderEnded = false
             try {
                 while (isPlayRequestCurrent(generation) && sampledStream === playback && !playback.stopped.get()) {
                     waitIfSampledStreamPaused(playback)
                     val read = playback.stream.read(buffer, 0, buffer.size)
-                    if (read < 0) break
+                    if (read < 0) {
+                        decoderEnded = true
+                        break
+                    }
                     if (read == 0) continue
                     writeSampledStreamBuffer(playback, buffer, read, generation)
                     syncSampledStreamPlayback(playback, generation)
                 }
-                if (isPlayRequestCurrent(generation) && sampledStream === playback && !playback.stopped.get()) {
+                if (decoderEnded &&
+                    isPlayRequestCurrent(generation) &&
+                    sampledStream === playback &&
+                    !playback.stopped.get()
+                ) {
+                    waitForSampledStreamAudibleDrain(playback, generation)
+                    if (!isPlayRequestCurrent(generation) ||
+                        sampledStream !== playback ||
+                        playback.stopped.get()
+                    ) {
+                        return@Thread
+                    }
                     if (!commitPreparedGapless(generation)) {
                         runCatching { playback.line.drain() }
                         advanceAfterPlatformTrackEnded(generation)
@@ -2741,6 +2846,39 @@ class DesktopAudioPlayer(
         }, "Phoebe-sampled-stream-playback").apply {
             isDaemon = true
             start()
+        }
+    }
+
+    /**
+     * ffmpeg often finishes decoding far ahead of realtime. After stdout EOF, keep the
+     * write worker alive until the audible playhead catches the queued PCM (or the known
+     * duration), instead of tearing the line down immediately.
+     */
+    private fun waitForSampledStreamAudibleDrain(
+        playback: StreamingSampledPlayback,
+        generation: Int,
+    ) {
+        val durationMs = state.value.durationMs
+        var idleMs = 0L
+        while (isPlayRequestCurrent(generation) && sampledStream === playback && !playback.stopped.get()) {
+            if (playback.paused) {
+                Thread.sleep(50L)
+                continue
+            }
+            syncSampledStreamPlayback(playback, generation)
+            val queued = playback.pendingWrites.isNotEmpty()
+            val positionMs = playback.playbackPositionMs()
+            val nearEnd = durationMs <= 0L ||
+                positionMs >= (durationMs - SampledStreamEndAdvanceToleranceMs).coerceAtLeast(0L)
+            val lineIdle = !playback.line.isActive && !playback.line.isRunning
+            if (!queued && (nearEnd || (lineIdle && idleMs >= 500L))) {
+                PhoebeLog.d("DesktopAudioPlayer") {
+                    "sampled-stream drain complete at ${positionMs}ms (duration ${durationMs}ms, nearEnd=$nearEnd)"
+                }
+                return
+            }
+            idleMs = if (!queued && lineIdle) idleMs + 50L else 0L
+            Thread.sleep(50L)
         }
     }
 
@@ -2775,7 +2913,7 @@ class DesktopAudioPlayer(
             )
         }
         playback.decodedPcmBytes += length.coerceAtLeast(0)
-        playback.pendingWrites.offer(buffer.copyOf(length))
+        playback.enqueuePcm(buffer.copyOf(length))
         if (!playback.reportedEnergy) {
             val rms = pcmRms(buffer.copyOf(length), playback.stream.format)
             if (rms > 0.0 && rms.isFinite()) {
@@ -2826,32 +2964,39 @@ class DesktopAudioPlayer(
 
     private fun syncSampledStreamPlayback(playback: StreamingSampledPlayback, generation: Int) {
         if (!isPlayRequestCurrent(generation) || sampledStream !== playback) return
-        val decodedPositionMs = playback.stream.format.durationMsForPcmBytes(playback.writtenPcmBytes)
-        val durationMs = state.value.durationMs
-        val lastWriteElapsedMs = (System.nanoTime() - playback.lastWriteAtNs) / 1_000_000L
-        val linePlaying = playback.line.isActive || playback.line.isRunning || (lastWriteElapsedMs < 1200L)
-        val audiblePositionMs = if (!playback.paused && linePlaying) {
-            playback.playbackPositionMs()
-        } else {
-            (playback.line.microsecondPosition / 1_000L).coerceAtLeast(0L)
-        }
-        val manualSeekSettling = isManualSeekSettling(generation)
-        val stabilizedPositionMs = stabilizedPlatformPositionMs(audiblePositionMs, generation)
-        val positionMs = stabilizedPositionMs
-            .let { position ->
-                if (manualSeekSettling) {
-                    position
-                } else {
-                    position.coerceAtMost(decodedPositionMs.takeIf { it > 0L } ?: audiblePositionMs)
-                }
+        val durationMs = state.value.durationMs.takeIf { it > 0L } ?: playback.fullyBufferedDurationMs ?: 0L
+        val seekTargetMs = pendingManualSeekPositionMs
+        val settling = pendingManualSeekGeneration == generation
+        // While a seek is in flight, only the restarted stream (same startPosition) may
+        // drive the playhead. The previous stream must not yank UI back to the old time.
+        if (settling) {
+            val streamIsSeekTarget =
+                kotlin.math.abs(playback.startPositionMs - seekTargetMs) <= ManualSeekPlatformSettleToleranceMs
+            if (!streamIsSeekTarget) {
+                applyPlatformPlayback(
+                    positionMs = seekTargetMs,
+                    durationMs = durationMs,
+                    isPlaying = playWhenReady && !playback.paused,
+                    isBuffering = true,
+                    bufferedPositionMs = seekTargetMs,
+                    generation = generation,
+                    forceBuffering = true,
+                )
+                return
             }
-            .let { position -> if (durationMs > 0L) position.coerceAtMost(durationMs) else position }
-        val decodedBufferedMs = maxOf(positionMs, decodedPositionMs)
+            pendingManualSeekGeneration = -1
+        }
+        val positionMs = playback.playbackPositionMs().let { position ->
+            if (durationMs > 0L) position.coerceIn(0L, durationMs) else position.coerceAtLeast(0L)
+        }
+        val decodedPositionMs = playback.stream.format.durationMsForPcmBytes(playback.writtenPcmBytes)
+        val lastWriteElapsedMs = (System.nanoTime() - playback.lastWriteAtNs) / 1_000_000L
+        val linePlaying = playback.line.isActive || playback.line.isRunning || (lastWriteElapsedMs < 1_200L)
         val bufferedPositionMs = playback.fullyBufferedDurationMs
             ?.takeIf { it > 0L }
-            ?: decodedBufferedMs
+            ?: maxOf(positionMs, decodedPositionMs)
         diagnostics.playbackProgress(PlaybackEnginePath.SampledStream, positionMs, durationMs)
-        if (linePlaying) {
+        if (linePlaying && !playback.paused) {
             diagnostics.platformPlaying(PlaybackEnginePath.SampledStream, positionMs, durationMs)
         }
         if (!playback.reportedOutput && linePlaying && playback.writtenPcmBytes > 0L) {
@@ -2864,11 +3009,11 @@ class DesktopAudioPlayer(
         applyPlatformPlayback(
             positionMs = positionMs,
             durationMs = durationMs,
-            isPlaying = !playback.paused && linePlaying && !isStarting,
+            isPlaying = !playback.paused && (linePlaying || isStarting) && !isStarved,
             isBuffering = isBuffering,
             bufferedPositionMs = bufferedPositionMs,
             generation = generation,
-            forceBuffering = isBuffering,
+            forceBuffering = isStarved,
         )
     }
 
@@ -3384,10 +3529,16 @@ class DesktopAudioPlayer(
         stopJavaFxProgressProbe()
         val stop = AtomicBoolean(false)
         javaFxProgressProbeStop = stop
+        if (isManualSeekSettling(generation)) {
+            javaFxProgressLastRawPositionMs = pendingManualSeekPositionMs
+            javaFxProgressFallbackBasePositionMs = pendingManualSeekPositionMs
+            javaFxProgressFallbackBaseAtNs = System.nanoTime()
+        } else {
+            javaFxProgressLastRawPositionMs = 0L
+            javaFxProgressFallbackBasePositionMs = 0L
+            javaFxProgressFallbackBaseAtNs = System.nanoTime()
+        }
         Thread({
-            var lastRawPositionMs = 0L
-            var fallbackBasePositionMs = 0L
-            var fallbackBaseAtNs = System.nanoTime()
             while (!stop.get() && isPlayRequestCurrent(generation)) {
                 val latch = CountDownLatch(1)
                 JavaFxRuntime.runLater {
@@ -3400,15 +3551,25 @@ class DesktopAudioPlayer(
                         val playing = mediaPlayer.status == MediaPlayer.Status.PLAYING
                         updateJavaFxVisualizerPlayhead(mediaPlayer)
                         val nowNs = System.nanoTime()
-                        if (rawPositionMs > lastRawPositionMs || !playing) {
-                            lastRawPositionMs = rawPositionMs
-                            fallbackBasePositionMs = rawPositionMs
-                            fallbackBaseAtNs = nowNs
+                        val settling = isManualSeekSettling(generation)
+                        if (settling) {
+                            javaFxProgressLastRawPositionMs = pendingManualSeekPositionMs
+                            javaFxProgressFallbackBasePositionMs = pendingManualSeekPositionMs
+                            javaFxProgressFallbackBaseAtNs = nowNs
+                        } else if (rawPositionMs > javaFxProgressLastRawPositionMs ||
+                            rawPositionMs < javaFxProgressLastRawPositionMs - 1_000L ||
+                            !playing
+                        ) {
+                            javaFxProgressLastRawPositionMs = rawPositionMs
+                            javaFxProgressFallbackBasePositionMs = rawPositionMs
+                            javaFxProgressFallbackBaseAtNs = nowNs
                         }
-                        val fallbackPositionMs = if (playing) {
-                            val elapsedMs = (nowNs - fallbackBaseAtNs).coerceAtLeast(0L) / 1_000_000L
+                        val fallbackPositionMs = if (settling) {
+                            pendingManualSeekPositionMs
+                        } else if (playing) {
+                            val elapsedMs = (nowNs - javaFxProgressFallbackBaseAtNs).coerceAtLeast(0L) / 1_000_000L
                             val durationMs = javafxDurationMs(mediaPlayer.media.duration)
-                            maxOf(rawPositionMs, fallbackBasePositionMs + elapsedMs).let { position ->
+                            maxOf(rawPositionMs, javaFxProgressFallbackBasePositionMs + elapsedMs).let { position ->
                                 if (durationMs > 0L) position.coerceAtMost(durationMs) else position
                             }
                         } else {
@@ -3444,13 +3605,30 @@ class DesktopAudioPlayer(
         fallbackPositionMs: Long? = null,
     ) {
         if (!isPlayRequestCurrent(generation)) return
-        val platformPositionMs = stabilizedPlatformPositionMs(javafxDurationMs(mediaPlayer.currentTime), generation)
-        val positionMs = maxOf(platformPositionMs, fallbackPositionMs ?: platformPositionMs)
+        val rawPlatformPositionMs = javafxDurationMs(mediaPlayer.currentTime)
+        val settling = isManualSeekSettling(generation)
+        val platformPositionMs = if (settling) {
+            pendingManualSeekPositionMs
+        } else {
+            stabilizedPlatformPositionMs(rawPlatformPositionMs, generation)
+        }
+        val positionMs = if (settling) {
+            pendingManualSeekPositionMs
+        } else {
+            maxOf(platformPositionMs, fallbackPositionMs ?: platformPositionMs)
+        }
+        if (settling &&
+            kotlin.math.abs(rawPlatformPositionMs - pendingManualSeekPositionMs) <= ManualSeekPlatformSettleToleranceMs
+        ) {
+            pendingManualSeekGeneration = -1
+        }
         val durationMs = javafxDurationMs(mediaPlayer.media.duration)
         val platformBufferedMs = javafxDurationMs(mediaPlayer.bufferProgressTime).coerceAtLeast(positionMs)
         val bufferedMs = if (fullyBufferedPlayback && durationMs > 0L) durationMs else platformBufferedMs
         val playing = mediaPlayer.status == MediaPlayer.Status.PLAYING
-        maybeHotStartGaplessJavaFx(mediaPlayer, generation, positionMs, durationMs)
+        if (!settling) {
+            maybeHotStartGaplessJavaFx(mediaPlayer, generation, positionMs, durationMs)
+        }
         val current = state.value
         val nowMs = System.currentTimeMillis()
         val playbackFlagsChanged = playing != current.isPlaying || isBuffering != current.isBuffering
@@ -3580,13 +3758,21 @@ class DesktopAudioPlayer(
 
     private fun stabilizedPlatformPositionMs(platformPositionMs: Long, generation: Int): Long {
         if (pendingManualSeekGeneration != generation) return platformPositionMs
-        val nowMs = System.currentTimeMillis()
-        if (nowMs > pendingManualSeekUntilMs) {
+        val targetPositionMs = pendingManualSeekPositionMs
+        if (kotlin.math.abs(platformPositionMs - targetPositionMs) <= ManualSeekPlatformSettleToleranceMs) {
             pendingManualSeekGeneration = -1
             return platformPositionMs
         }
-        val targetPositionMs = pendingManualSeekPositionMs
-        if (kotlin.math.abs(platformPositionMs - targetPositionMs) <= ManualSeekPlatformSettleToleranceMs) {
+        val nowMs = System.currentTimeMillis()
+        if (nowMs > pendingManualSeekUntilMs) {
+            // JavaFX often keeps reporting 0:00 for seconds after a seek. Snapping the UI back
+            // to that stale clock made the timeline look stuck and undid scrubbing.
+            val platformStillStale = targetPositionMs >= ManualSeekPlatformSettleToleranceMs &&
+                platformPositionMs + ManualSeekPlatformSettleToleranceMs < targetPositionMs
+            if (platformStillStale) {
+                pendingManualSeekUntilMs = nowMs + ManualSeekPlatformSettleMs
+                return targetPositionMs
+            }
             pendingManualSeekGeneration = -1
             return platformPositionMs
         }
@@ -3594,7 +3780,25 @@ class DesktopAudioPlayer(
     }
 
     private fun isManualSeekSettling(generation: Int): Boolean =
-        pendingManualSeekGeneration == generation && System.currentTimeMillis() <= pendingManualSeekUntilMs
+        pendingManualSeekGeneration == generation
+
+    private fun handleJavaFxEndOfMedia(mediaPlayer: MediaPlayer, generation: Int) {
+        if (!isPlayRequestCurrent(generation) || player !== mediaPlayer) return
+        val currentMs = javafxDurationMs(mediaPlayer.currentTime)
+        val durationMs = javafxDurationMs(mediaPlayer.media.duration).takeIf { it > 0L }
+            ?: state.value.durationMs.takeIf { it > 0L }
+        val settling = isManualSeekSettling(generation)
+        if (DesktopPlaybackStartupPolicy.shouldIgnoreJavaFxEndOfMedia(currentMs, durationMs, settling)) {
+            PhoebeLog.d("DesktopAudioPlayer") {
+                "ignoring spurious onEndOfMedia at ${currentMs}ms (duration ${durationMs}ms, settling=$settling)"
+            }
+            if (playWhenReady && mediaPlayer.status != MediaPlayer.Status.PLAYING) {
+                mediaPlayer.play()
+            }
+            return
+        }
+        advanceAfterPlatformTrackEnded(generation)
+    }
 
     private fun trackDurationOrClipDuration(generation: Int, clip: Clip): Long {
         val stateDuration = state.value.durationMs.takeIf { it > 0L }
@@ -3725,9 +3929,13 @@ class DesktopAudioPlayer(
         const val JavaFxDisposeSettleMs = 250L
         const val PlaybackUiSyncIntervalMs = 250L
         const val SampledClipEndToleranceMs = 20L
+        /** Ignore premature ffmpeg EOF unless the playhead is this close to known duration. */
+        const val SampledStreamEndAdvanceToleranceMs = 2_500L
         const val RemoteAudioProbeBufferBytes = 128 * 1024
         const val StreamingPcmBufferBytes = 16 * 1024
         const val VisualizerStreamChunkBytes = 4 * 1024
+        /** ~2s of 4KB chunks at 44.1kHz stereo — enough for smooth writes, small enough to backpressure ffmpeg. */
+        const val SampledStreamPendingWriteChunks = 88
         const val StreamingLineBufferSeconds = 0.06f
         const val LinuxStreamingLineBufferSeconds = 0.35f
         const val MaxStreamingLineBufferBytes = 1024 * 1024
@@ -4024,12 +4232,26 @@ private fun normalizedPcmSample(bytes: ByteArray, offset: Int, sampleBytes: Int,
 internal object DesktopPlaybackStartupPolicy {
     const val JavaFxFailureFallbackDelayMs = 3_000L
     const val JavaFxRemoteReadyTimeoutMs = 10_000L
-    const val JavaFxLocalPreflightTimeoutMs = 400L
+    const val JavaFxLocalPreflightTimeoutMs = 2_000L
     const val JavaFxStartupDisposeTimeoutMs = 1_500L
+    const val JavaFxLocalStreamingReadyTimeoutMs = 8_000L
+    const val JavaFxSpuriousEndOfMediaToleranceMs = 2_500L
+
+    fun shouldIgnoreJavaFxEndOfMedia(
+        currentMs: Long,
+        durationMs: Long?,
+        isManualSeekSettling: Boolean,
+    ): Boolean {
+        if (isManualSeekSettling) return true
+        if (durationMs != null && durationMs > 3_000L && currentMs < durationMs - JavaFxSpuriousEndOfMediaToleranceMs) {
+            return true
+        }
+        return false
+    }
 
     fun javaFxMediaReadyTimeoutMs(uri: String): Long = when {
         !isRemoteUri(uri) -> JavaFxFailureFallbackDelayMs
-        isLocalOnlyPlaybackOrigin(uri) -> JavaFxFailureFallbackDelayMs
+        isLocalOnlyPlaybackOrigin(uri) -> JavaFxLocalStreamingReadyTimeoutMs
         else -> JavaFxRemoteReadyTimeoutMs
     }
 

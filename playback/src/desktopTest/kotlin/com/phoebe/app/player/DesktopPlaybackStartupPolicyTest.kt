@@ -149,7 +149,7 @@ class DesktopPlaybackStartupPolicyTest {
     @Test
     fun javaFxReadyTimeoutStaysShortOnLanAndLocalFiles() {
         assertEquals(
-            DesktopPlaybackStartupPolicy.JavaFxFailureFallbackDelayMs,
+            DesktopPlaybackStartupPolicy.JavaFxLocalStreamingReadyTimeoutMs,
             DesktopPlaybackStartupPolicy.javaFxMediaReadyTimeoutMs(
                 "https://172-16-1-2.abc.plex.direct:32400/library/parts/1/file.mp3",
             ),
@@ -585,6 +585,64 @@ class DesktopPlaybackStartupPolicyTest {
             ?: DesktopPlaybackStartupPolicy.sampledPlaybackExtensionFromSuffix(
                 case.filepath.orEmpty().substringAfterLast('.', missingDelimiterValue = ""),
             )
+
+    @Test
+    fun javaFxSpuriousEndOfMediaIsIgnoredDuringSeekSettling() {
+        assertTrue(
+            DesktopPlaybackStartupPolicy.shouldIgnoreJavaFxEndOfMedia(
+                currentMs = 50_000L,
+                durationMs = 180_000L,
+                isManualSeekSettling = true,
+            ),
+        )
+    }
+
+    @Test
+    fun javaFxSpuriousEndOfMediaIsIgnoredWhenCurrentPositionIsFarFromEnd() {
+        assertTrue(
+            DesktopPlaybackStartupPolicy.shouldIgnoreJavaFxEndOfMedia(
+                currentMs = 60_000L,
+                durationMs = 180_000L,
+                isManualSeekSettling = false,
+            ),
+        )
+    }
+
+    @Test
+    fun javaFxLegitimateEndOfMediaNearDurationIsNotIgnored() {
+        assertFalse(
+            DesktopPlaybackStartupPolicy.shouldIgnoreJavaFxEndOfMedia(
+                currentMs = 179_000L,
+                durationMs = 180_000L,
+                isManualSeekSettling = false,
+            ),
+        )
+        assertFalse(
+            DesktopPlaybackStartupPolicy.shouldIgnoreJavaFxEndOfMedia(
+                currentMs = 180_000L,
+                durationMs = 180_000L,
+                isManualSeekSettling = false,
+            ),
+        )
+    }
+
+    @Test
+    fun javaFxEndOfMediaWithUnknownDurationIsNotIgnored() {
+        assertFalse(
+            DesktopPlaybackStartupPolicy.shouldIgnoreJavaFxEndOfMedia(
+                currentMs = 12_000L,
+                durationMs = null,
+                isManualSeekSettling = false,
+            ),
+        )
+        assertFalse(
+            DesktopPlaybackStartupPolicy.shouldIgnoreJavaFxEndOfMedia(
+                currentMs = 12_000L,
+                durationMs = 0L,
+                isManualSeekSettling = false,
+            ),
+        )
+    }
 
     private fun streamingExtension(case: RemoteStartupCase): String? =
         DesktopPlaybackStartupPolicy.streamingSampledExtensionFromSuffix(case.audioCodec.orEmpty())

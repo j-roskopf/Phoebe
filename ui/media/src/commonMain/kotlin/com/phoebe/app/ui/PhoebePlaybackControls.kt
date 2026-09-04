@@ -120,7 +120,7 @@ fun PlayButton(
     val iconSize = if (size > 52.dp) 24.dp else 21.dp
     val spinnerSize = iconSize + 2.dp
     val contentDescription = when {
-        isBuffering -> "Loading"
+        isBuffering -> "Stop loading"
         isPlaying -> "Pause"
         else -> "Play"
     }
@@ -140,7 +140,10 @@ fun PlayButton(
             )
             .clip(CircleShape)
             .background(gradient)
-            .clickable(enabled = enabled && !isBuffering, onClick = onClick)
+            // Stays tappable while buffering: togglePlayPause() cancels a load in progress, and
+            // a cold origin race can buffer for many seconds. Disabling here left the one control
+            // the user reaches for during a slow start completely inert.
+            .clickable(enabled = enabled, onClick = onClick)
             .semantics { this.contentDescription = contentDescription },
         contentAlignment = Alignment.Center,
     ) {
@@ -344,36 +347,51 @@ fun ProgressLine(
     val safeDuration = max(durationMs, 1L)
     val latestOnSeek = rememberUpdatedState(onSeek)
     var scrubPositionMs by remember { mutableStateOf<Long?>(null) }
+    // Keep showing the tapped time until the player clock catches up — seeks restart the
+    // decoder and can take a beat, but the UI should feel instant.
+    var committedSeekMs by remember { mutableStateOf<Long?>(null) }
     val isScrubbing = scrubPositionMs != null
-    val displayPositionMs = scrubPositionMs ?: positionMs
+    val displayPositionMs = scrubPositionMs
+        ?: committedSeekMs
+        ?: positionMs
     val progressFrac = (displayPositionMs.toFloat() / safeDuration).coerceIn(0f, 1f)
     val bufferedFrac = (bufferedPositionMs.toFloat() / safeDuration).coerceIn(progressFrac, 1f)
 
     LaunchedEffect(waveformSeed, durationMs) {
         scrubPositionMs = null
+        committedSeekMs = null
+    }
+    LaunchedEffect(positionMs, committedSeekMs) {
+        val pending = committedSeekMs ?: return@LaunchedEffect
+        // seekTo() writes the target optimistically, then a dying decoder can briefly push the
+        // old playhead back — keep the scrubbed time until the live clock stays near the target.
+        if (kotlin.math.abs(positionMs - pending) > 750L) return@LaunchedEffect
+        delay(320L)
+        if (committedSeekMs == pending && kotlin.math.abs(positionMs - pending) <= 750L) {
+            committedSeekMs = null
+        }
     }
 
     val seekModifier = if (onSeek != null && durationMs > 0L) {
         Modifier.pointerInput(durationMs) {
             fun offsetToMs(x: Float): Long {
                 val frac = (x / size.width).coerceIn(0f, 1f)
-                return (durationMs * frac).toLong()
+                val rawMs = (durationMs * frac).toLong()
+                val maxSeekMs = (durationMs - 500L).coerceAtLeast(0L)
+                return rawMs.coerceIn(0L, maxSeekMs)
             }
             awaitEachGesture {
                 val down = awaitFirstDown()
                 down.consume()
                 var scrubMs = offsetToMs(down.position.x)
-                val committedMs = scrubMs
                 scrubPositionMs = scrubMs
-                latestOnSeek.value?.invoke(scrubMs)
                 val pointerId = down.id
                 while (true) {
                     val event = awaitPointerEvent()
-                    val change = event.changes.firstOrNull { it.id == pointerId } ?: break
-                    if (!change.pressed) {
-                        if (scrubMs != committedMs) {
-                            latestOnSeek.value?.invoke(scrubMs)
-                        }
+                    val change = event.changes.firstOrNull { it.id == pointerId }
+                    if (change == null || !change.pressed) {
+                        committedSeekMs = scrubMs
+                        latestOnSeek.value?.invoke(scrubMs)
                         scrubPositionMs = null
                         break
                     }

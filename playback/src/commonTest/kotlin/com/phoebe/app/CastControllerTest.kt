@@ -392,4 +392,127 @@ class CastControllerTest {
 
         assertTrue(original.matchesCastMedia(remote, descriptor.castUrl))
     }
+
+    @Test
+    fun relativePlexArtworkIsBoundToReceiverLoadableUrl() {
+        val liveOrigin = "https://plex.example:32400"
+        ArtworkOriginHolder.update(liveOrigin)
+        ArtworkAuthHolder.update("token")
+        try {
+            val track = Track(
+                id = "plex:track:1",
+                title = "One",
+                artist = "Artist",
+                album = "Album",
+                durationMs = 60_000,
+                streamUrl = "/library/parts/1/file.mp3",
+                downloadUrl = "/library/parts/1/file.mp3",
+                thumbUrl = "/library/metadata/1/thumb/2",
+            )
+
+            val descriptor = track.toCastMediaDescriptor()
+            assertEquals(
+                "$liveOrigin/library/metadata/1/thumb/2?X-Plex-Token=token",
+                descriptor.thumbUrl,
+            )
+            assertTrue(descriptor.thumbUrl.orEmpty().isCastReceiverLoadableUrl())
+        } finally {
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
+    }
+
+    @Test
+    fun plexArtworkResolvesOriginAndTokenFromStreamUrlIfArtworkOriginHolderEmpty() {
+        ArtworkOriginHolder.clear()
+        ArtworkAuthHolder.clear()
+        val track = Track(
+            id = "plex:track:1",
+            title = "One",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 60_000,
+            streamUrl = "https://192-168-1-50.abc.plex.direct:32400/library/parts/1/file.mp3?X-Plex-Token=fresh-token",
+            downloadUrl = "",
+            thumbUrl = "/library/metadata/1/thumb/2",
+        )
+        val descriptor = track.toCastMediaDescriptor()
+        assertEquals(
+            "https://192-168-1-50.abc.plex.direct:32400/library/metadata/1/thumb/2?X-Plex-Token=fresh-token",
+            descriptor.thumbUrl,
+        )
+        assertTrue(descriptor.thumbUrl.orEmpty().isCastReceiverLoadableUrl())
+    }
+
+    @Test
+    fun downloadedPlexTrackBindsArtworkForCast() {
+        val liveOrigin = "https://plex.example:32400"
+        ArtworkOriginHolder.update(liveOrigin)
+        ArtworkAuthHolder.update("token")
+        try {
+            val downloadedTrack = Track(
+                id = "plex:track:1",
+                title = "One",
+                artist = "Artist",
+                album = "Album",
+                durationMs = 60_000,
+                streamUrl = "/library/parts/1/file.mp3",
+                downloadUrl = "",
+                localUri = "file:///music/one.mp3",
+                localArtworkUri = "file:///music/one.jpg",
+                thumbUrl = "/library/metadata/1/thumb/2",
+            )
+
+            val descriptor = downloadedTrack.toCastMediaDescriptor()
+            assertEquals(
+                "$liveOrigin/library/metadata/1/thumb/2?X-Plex-Token=token",
+                descriptor.thumbUrl,
+            )
+            assertTrue(descriptor.thumbUrl.orEmpty().isCastReceiverLoadableUrl())
+            assertEquals(
+                "$liveOrigin/library/parts/1/file.mp3?X-Plex-Token=token",
+                descriptor.castUrl,
+            )
+        } finally {
+            ArtworkOriginHolder.clear()
+            ArtworkAuthHolder.clear()
+        }
+    }
+
+    @Test
+    fun localFileArtworkIsNotPassedToCastReceiver() {
+        val track = Track(
+            id = "local:1",
+            title = "One",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 60_000,
+            streamUrl = "https://example.com/audio.mp3",
+            downloadUrl = "",
+            localArtworkUri = "file:///local/cover.jpg",
+            thumbUrl = "file:///local/cover.jpg",
+        )
+        val descriptor = track.toCastMediaDescriptor()
+        assertEquals(null, descriptor.thumbUrl)
+    }
+
+    @Test
+    fun remoteNonPlexArtworkKeepsRemoteUrl() {
+        val track = Track(
+            id = "jellyfin:1",
+            title = "One",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 60_000,
+            streamUrl = "https://jellyfin.example/audio.mp3",
+            downloadUrl = "",
+            thumbUrl = "https://jellyfin.example/Items/1/Images/Primary?api_key=token",
+        )
+        val descriptor = track.toCastMediaDescriptor()
+        assertEquals(
+            "https://jellyfin.example/Items/1/Images/Primary?api_key=token",
+            descriptor.thumbUrl,
+        )
+        assertTrue(descriptor.thumbUrl.orEmpty().isCastReceiverLoadableUrl())
+    }
 }

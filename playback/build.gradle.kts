@@ -89,6 +89,7 @@ kotlin {
         }
         desktopMain {
             dependencies {
+                implementation(project(":ui:core"))
                 implementation("org.jetbrains.compose.desktop:desktop-jvm-$composeDesktopTarget:${libs.versions.compose.get()}")
                 implementation(libs.jnativehook)
                 implementation(libs.jna)

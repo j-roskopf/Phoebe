@@ -1,5 +1,9 @@
 package com.phoebe.app.player
 
+import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.ArtworkOriginHolder
+import com.phoebe.app.data.bindPlexUrl
+import com.phoebe.app.data.isPlexMediaPathOrUrl
 import com.phoebe.app.domain.Track
 import io.ktor.http.Url
 
@@ -40,8 +44,9 @@ fun Track.toCastMediaDescriptor(): CastMediaDescriptor {
     // Plex queues intentionally retain host-free paths so a network change cannot leave stale
     // origins behind. Cast receivers need an absolute URL, so bind the path only for this
     // request using the same live origin and token as local playback.
-    val boundTrack = boundToLivePlaybackOrigin()
+    val boundTrack = copy(localUri = null).boundToLivePlaybackOrigin()
     val castUrl = boundTrack.chromecastMediaUrl()
+    val castThumbUrl = boundTrack.chromecastArtworkUrl(castUrl)
     return CastMediaDescriptor(
         trackId = id,
         title = title.ifBlank { "Chromecast audio" },
@@ -52,11 +57,37 @@ fun Track.toCastMediaDescriptor(): CastMediaDescriptor {
         castUrl = castUrl,
         contentType = boundTrack.chromecastContentType(castUrl),
         downloadUrl = boundTrack.downloadUrl,
-        thumbUrl = thumbUrl,
+        thumbUrl = castThumbUrl,
         filepath = filepath,
         audioCodec = audioCodec,
         isLiveStream = isLiveCastStream(castUrl),
     )
+}
+
+/**
+ * Resolve an absolute, receiver-loadable HTTP(S) artwork URL for Chromecast displays.
+ * Relative Plex paths or token-less URLs are bound using the active stream origin and token.
+ * Non-remote artwork (like local file/content URIs) returns null so the receiver avoids
+ * attempting to load an unresolvable URL that renders an empty square.
+ */
+fun Track.chromecastArtworkUrl(castUrl: String? = null): String? {
+    val raw = thumbUrl?.trim()?.takeIf { it.isNotBlank() }
+        ?: localArtworkUri?.trim()?.takeIf { it.isCastReceiverLoadableUrl() }
+        ?: return null
+    if (!raw.isPlexMediaPathOrUrl()) {
+        return raw.takeIf { it.isCastReceiverLoadableUrl() }
+    }
+    val effectiveCastUrl = castUrl?.takeIf { it.isNotBlank() } ?: streamUrl
+    val origin = playbackOriginOf(effectiveCastUrl)
+        ?: ArtworkOriginHolder.liveOrigin?.trimEnd('/')?.takeIf { it.isNotBlank() }
+        ?: playbackOriginOf(streamUrl)
+        ?: return raw.takeIf { it.isCastReceiverLoadableUrl() }
+    val token = effectiveCastUrl.substringAfter("X-Plex-Token=", "").substringBefore('&').takeIf { it.isNotBlank() }
+        ?: ArtworkAuthHolder.plexToken?.takeIf { it.isNotBlank() }
+        ?: streamUrl.substringAfter("X-Plex-Token=", "").substringBefore('&').takeIf { it.isNotBlank() }
+        .orEmpty()
+    val bound = bindPlexUrl(raw, origin, token)
+    return bound.takeIf { it.isCastReceiverLoadableUrl() }
 }
 
 /** Radio stations have no duration to seek within, and HLS playlists are live by construction. */

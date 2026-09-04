@@ -988,7 +988,9 @@ private class AndroidCastController : CastController {
             putString(MediaMetadata.KEY_TITLE, descriptor.title)
             putString(MediaMetadata.KEY_ARTIST, descriptor.artist)
             putString(MediaMetadata.KEY_ALBUM_TITLE, descriptor.album)
-            descriptor.thumbUrl?.let { addImage(com.google.android.gms.common.images.WebImage(android.net.Uri.parse(it))) }
+            descriptor.thumbUrl?.takeIf { it.isCastReceiverLoadableUrl() }?.let {
+                addImage(com.google.android.gms.common.images.WebImage(android.net.Uri.parse(it)))
+            }
         }
         return MediaInfo.Builder(descriptor.castUrl)
             .setStreamType(
