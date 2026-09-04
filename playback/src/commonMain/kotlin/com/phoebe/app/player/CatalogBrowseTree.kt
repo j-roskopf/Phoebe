@@ -462,7 +462,10 @@ class CatalogBrowseTree(
 
     private fun String.containsVoiceToken(token: String): Boolean {
         if (contains(token)) return true
-        return voiceTokenAliases(token).any { alias -> alias != token && contains(alias) }
+        // Compare aliases against whole normalized tokens, not substrings: a short alias like
+        // "ms" (for "miss") must not match inside an unrelated word such as "Dreams".
+        val fieldTokens = split(' ')
+        return voiceTokenAliases(token).any { alias -> alias != token && fieldTokens.contains(alias) }
     }
 
     private fun voiceTokenAliases(token: String): List<String> =

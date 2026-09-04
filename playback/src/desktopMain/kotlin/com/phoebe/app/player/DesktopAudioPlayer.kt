@@ -366,8 +366,12 @@ class DesktopAudioPlayer(
         val stream = sampledStream
         sampledStream = null
         sampledStreamSource = null
-        runCatching { sampledClip?.stop() }
+        // Capture and close the clip so native mixer lines/buffers are released; dropping the
+        // reference without close() leaked them across repeated Clip-backed playback.
+        val clip = sampledClip
         sampledClip = null
+        runCatching { clip?.stop() }
+        runCatching { clip?.close() }
         runCatching { stream?.stop() }
         JavaFxRuntime.runLater {
             runCatching { player?.pause() }
