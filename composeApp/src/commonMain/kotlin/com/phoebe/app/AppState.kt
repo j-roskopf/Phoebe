@@ -3436,6 +3436,10 @@ class AppState(
         dependencies.libraryPreferencesService.setArtistGridItemSize(sizeDp)
     }
 
+    fun setLibraryViewMode(viewMode: String) = scope.launch {
+        dependencies.libraryPreferencesService.setViewMode(viewMode)
+    }
+
     fun refreshInternetRadio() = scope.launch {
         dependencies.radioRepository.refreshPopular()
     }

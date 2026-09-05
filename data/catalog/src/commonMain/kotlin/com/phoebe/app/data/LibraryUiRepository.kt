@@ -44,7 +44,11 @@ class LibraryUiRepository(
             null
         }
         if (row != null) {
-            mutableState.value = row.toPreferences()
+            val prefs = row.toPreferences()
+            val viewMode = withContext(Dispatchers.Default) {
+                storage.readText(ViewModeFile)
+            }?.takeIf { it in setOf("Grid", "List", "Flow") } ?: prefs.viewMode
+            mutableState.value = prefs.copy(viewMode = viewMode)
             return
         }
         val legacy = storage.readText(LegacyPrefsFile) ?: return
@@ -53,6 +57,7 @@ class LibraryUiRepository(
         }.getOrNull() ?: return
         withContext(Dispatchers.Default) { persist(parsed) }
         mutableState.value = parsed
+        storage.writeText(ViewModeFile, parsed.viewMode)
         storage.delete(LegacyPrefsFile)
     }
 
@@ -89,6 +94,16 @@ class LibraryUiRepository(
 
     suspend fun setArtistGridItemSize(sizeDp: Int) {
         save(mutableState.value.normalized().copy(artistGridItemSizeDp = sizeDp))
+    }
+
+    suspend fun setViewMode(viewMode: String) {
+        val normalized = viewMode.takeIf { it in setOf("Grid", "List", "Flow") } ?: "Grid"
+        val next = mutableState.value.copy(viewMode = normalized)
+        mutableState.value = next
+        withContext(Dispatchers.Default) {
+            persist(next)
+            storage.writeText(ViewModeFile, normalized)
+        }
     }
 
     /** Updates UI state immediately; pair with [persistCurrentToDisk] on a background coroutine. */
@@ -160,6 +175,7 @@ class LibraryUiRepository(
 
     private companion object {
         const val LegacyPrefsFile = "library_ui_prefs.json"
+        const val ViewModeFile = "library_view_mode.txt"
     }
 }
 

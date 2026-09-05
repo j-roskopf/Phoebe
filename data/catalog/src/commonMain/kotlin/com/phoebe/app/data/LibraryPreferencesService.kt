@@ -49,4 +49,8 @@ class LibraryPreferencesService(
     suspend fun setArtistGridItemSize(sizeDp: Int) {
         libraryUiRepository.setArtistGridItemSize(sizeDp)
     }
+
+    suspend fun setViewMode(viewMode: String) {
+        libraryUiRepository.setViewMode(viewMode)
+    }
 }

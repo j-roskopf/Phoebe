@@ -32,10 +32,14 @@ const phoneLightScenarios = [
 ] as const;
 const phoneDarkScenarios = [
   ['LibraryFiveColumnGrid', 'library-five-column-grid'],
+  ['LibraryFlow', 'library-flow'],
   ['Radio', 'radio'],
 ] as const;
 const scrollbarScenarios = [
   ['LibraryScrollbar', 'library-scrollbar'],
+] as const;
+const libraryFlowScenarios = [
+  ['LibraryFlow', 'library-flow'],
 ] as const;
 const appearanceDesigns = ['porcelain', 'nocturne', 'brutalist', 'minimalist'] as const;
 const appearanceThemes = ['dark', 'light'] as const;
@@ -84,6 +88,16 @@ for (const [scenario, slug] of phoneDarkScenarios) {
 for (const [scenario, slug] of scrollbarScenarios) {
   test(`web ${scenario} dark`, async ({ page }) => {
     await openScenario(page, scenario, 'dark', undefined, 1_500);
+    await expect(page).toHaveScreenshot(`web-${slug}-dark.png`, {
+      animations: 'disabled',
+      fullPage: true,
+    });
+  });
+}
+
+for (const [scenario, slug] of libraryFlowScenarios) {
+  test(`web ${scenario} dark`, async ({ page }) => {
+    await openScenario(page, scenario, 'dark', undefined, 1_000);
     await expect(page).toHaveScreenshot(`web-${slug}-dark.png`, {
       animations: 'disabled',
       fullPage: true,

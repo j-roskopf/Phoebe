@@ -1070,6 +1070,8 @@ data class LibraryUiPreferences(
     val albumGridItemSizeDp: Int = DefaultAlbumGridItemSizeDp,
     /** Target artwork size (dp) for artist cards in library grid view. */
     val artistGridItemSizeDp: Int = DefaultArtistGridItemSizeDp,
+    /** Library content layout: Grid, List, or Flow. */
+    val viewMode: String = "Grid",
 ) {
     fun normalized(): LibraryUiPreferences =
         copy(

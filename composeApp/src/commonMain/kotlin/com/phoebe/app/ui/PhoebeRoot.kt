@@ -2045,6 +2045,7 @@ private fun PhoebeRootStateHolder(
                         onLibrarySortBy = state::setLibrarySortBy,
                         onLibraryAscending = state::setLibrarySortAscending,
                         onLibraryColumns = state::setLibraryColumns,
+                        onLibraryViewMode = { mode -> state.setLibraryViewMode(mode.name) },
                         onHomeSections = state::setHomeSections,
                         onMobileBottomTabs = state::setMobileBottomTabs,
                         onPersonalMix = state::setPersonalMixPreferences,
@@ -2518,6 +2519,7 @@ private fun PhoebeRootStateHolder(
                         onLibrarySortBy = state::setLibrarySortBy,
                         onLibraryAscending = state::setLibrarySortAscending,
                         onLibraryColumns = state::setLibraryColumns,
+                        onLibraryViewMode = { mode -> state.setLibraryViewMode(mode.name) },
                         onInstallUpdate = state::installAvailableUpdate,
                     ),
                     authSetupState = AuthSetupState(

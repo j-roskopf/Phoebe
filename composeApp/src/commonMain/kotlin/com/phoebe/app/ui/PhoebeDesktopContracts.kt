@@ -9,6 +9,7 @@ import com.phoebe.app.data.rankedEntries
 import com.phoebe.app.feature.home.HomeUiState
 import com.phoebe.app.feature.home.HomePosterLoadingState
 import com.phoebe.app.feature.library.LibraryFilterTab
+import com.phoebe.app.feature.library.LibraryViewMode
 import com.phoebe.app.feature.radio.RadioRouteMode
 import com.phoebe.app.feature.settings.SettingsCategory
 import com.phoebe.app.feature.settings.DownloadManagerUiSummary
@@ -218,6 +219,7 @@ internal data class BrowseActions(
     val onLibrarySortBy: (LibrarySortBy) -> Unit,
     val onLibraryAscending: (Boolean) -> Unit,
     val onLibraryColumns: (LibraryColumnVisibility) -> Unit,
+    val onLibraryViewMode: (LibraryViewMode) -> Unit = {},
     val onInstallUpdate: () -> Unit = {},
 )
 

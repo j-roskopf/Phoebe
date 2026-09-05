@@ -2430,7 +2430,33 @@ fun ArtistDetailPanel(
                             }
                         }
                     }
-                    if (albumViewMode == LibraryViewMode.Grid) {
+                    when (albumViewMode) {
+                        LibraryViewMode.List -> {
+                            items(visibleAlbums, key = { it.id }, contentType = { "artist-album" }) { album ->
+                                LibraryRow(
+                                    title = album.title,
+                                    subtitle = "${album.artist} • ${album.year ?: "Album"}",
+                                    seed = album.title,
+                                    thumbUrl = album.thumbUrl,
+                                    modifier = contentPaddingModifier,
+                                    elevatedArtwork = useTable,
+                                    sharedKey = "album:${album.id}",
+                                    onClick = { onAlbum(album) },
+                                )
+                            }
+                        }
+                        LibraryViewMode.Flow -> {
+                            item(key = "artist-album-flow") {
+                                AlbumCoverFlow(
+                                    albums = visibleAlbums,
+                                    selectedAlbumId = null,
+                                    onSelect = {},
+                                    onOpen = { onAlbum(it) },
+                                    modifier = contentPaddingModifier.padding(top = 4.dp),
+                                )
+                            }
+                        }
+                        LibraryViewMode.Grid -> {
                         items(
                             albumGridRows.size,
                             key = { rowIndex -> "album-grid-row:${albumGridRows[rowIndex].first().id}" },
@@ -2481,18 +2507,6 @@ fun ArtistDetailPanel(
                                 }
                             }
                         }
-                    } else {
-                        items(visibleAlbums, key = { it.id }, contentType = { "artist-album" }) { album ->
-                            LibraryRow(
-                                title = album.title,
-                                subtitle = "${album.artist} • ${album.year ?: "Album"}",
-                                seed = album.title,
-                                thumbUrl = album.thumbUrl,
-                                modifier = contentPaddingModifier,
-                                elevatedArtwork = useTable,
-                                sharedKey = "album:${album.id}",
-                                onClick = { onAlbum(album) },
-                            )
                         }
                     }
                     item(contentType = "artist-songs-header") {

@@ -38,6 +38,7 @@ import com.phoebe.app.feature.library.LibraryViewMode
 import com.phoebe.app.feature.library.PlaylistsMobileRoute
 import com.phoebe.app.feature.library.PlaylistsRouteActions
 import com.phoebe.app.feature.library.PlaylistsRouteState
+import com.phoebe.app.feature.library.resolvedViewMode
 import com.phoebe.app.feature.library.LibrarySectionIndexMode
 import com.phoebe.app.feature.radio.RadioRoute
 import com.phoebe.app.feature.radio.RadioRouteActions
@@ -342,6 +343,7 @@ internal fun MobileBrowseShell(
     onLibrarySortBy: (LibrarySortBy) -> Unit,
     onLibraryAscending: (Boolean) -> Unit,
     onLibraryColumns: (LibraryColumnVisibility) -> Unit,
+    onLibraryViewMode: (LibraryViewMode) -> Unit = {},
     onHomeSections: (List<HomeSection>) -> Unit,
     onMobileBottomTabs: (List<MobileBottomTab>) -> Unit = {},
     onPersonalMix: (PersonalMixPreferences) -> Unit,
@@ -418,7 +420,7 @@ internal fun MobileBrowseShell(
     showBottomChrome: Boolean = true,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    var mobileLibraryViewMode by rememberSaveable { mutableStateOf(LibraryViewMode.Grid) }
+    val mobileLibraryViewMode = libraryUi.resolvedViewMode()
     val pickLocalFolder = rememberPickLocalFolder(onPicked = onAddLocalFolder)
     val availableUpdate = when (val updateState = appUpdateState) {
         is AppUpdateState.Available -> updateState.update
@@ -498,7 +500,7 @@ internal fun MobileBrowseShell(
                         onSortBy = onLibrarySortBy,
                         onAscending = onLibraryAscending,
                         libraryViewMode = mobileLibraryViewMode,
-                        onLibraryViewMode = { mobileLibraryViewMode = it },
+                        onLibraryViewMode = onLibraryViewMode,
                         onColumns = onLibraryColumns,
                         onDismiss = { menuExpanded = false },
                     )
@@ -826,6 +828,7 @@ internal fun MobileBrowseShell(
                         onLibrarySortBy = onLibrarySortBy,
                         onLibraryAscending = onLibraryAscending,
                         onLibraryColumns = onLibraryColumns,
+                        onLibraryViewMode = onLibraryViewMode,
                         onArtist = onArtist,
                         onAlbum = onAlbum,
                         onPlayTracks = onPlayTracks,
