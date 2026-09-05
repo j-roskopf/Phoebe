@@ -2430,20 +2430,33 @@ fun ArtistDetailPanel(
                             }
                         }
                     }
-                    if (albumViewMode == LibraryViewMode.List) {
-                        items(visibleAlbums, key = { it.id }, contentType = { "artist-album" }) { album ->
-                            LibraryRow(
-                                title = album.title,
-                                subtitle = "${album.artist} • ${album.year ?: "Album"}",
-                                seed = album.title,
-                                thumbUrl = album.thumbUrl,
-                                modifier = contentPaddingModifier,
-                                elevatedArtwork = useTable,
-                                sharedKey = "album:${album.id}",
-                                onClick = { onAlbum(album) },
-                            )
+                    when (albumViewMode) {
+                        LibraryViewMode.List -> {
+                            items(visibleAlbums, key = { it.id }, contentType = { "artist-album" }) { album ->
+                                LibraryRow(
+                                    title = album.title,
+                                    subtitle = "${album.artist} • ${album.year ?: "Album"}",
+                                    seed = album.title,
+                                    thumbUrl = album.thumbUrl,
+                                    modifier = contentPaddingModifier,
+                                    elevatedArtwork = useTable,
+                                    sharedKey = "album:${album.id}",
+                                    onClick = { onAlbum(album) },
+                                )
+                            }
                         }
-                    } else {
+                        LibraryViewMode.Flow -> {
+                            item(key = "artist-album-flow") {
+                                AlbumCoverFlow(
+                                    albums = visibleAlbums,
+                                    selectedAlbumId = null,
+                                    onSelect = {},
+                                    onOpen = { onAlbum(it) },
+                                    modifier = contentPaddingModifier.padding(top = 4.dp),
+                                )
+                            }
+                        }
+                        LibraryViewMode.Grid -> {
                         items(
                             albumGridRows.size,
                             key = { rowIndex -> "album-grid-row:${albumGridRows[rowIndex].first().id}" },
@@ -2493,6 +2506,7 @@ fun ArtistDetailPanel(
                                     Spacer(Modifier.weight(1f))
                                 }
                             }
+                        }
                         }
                     }
                     item(contentType = "artist-songs-header") {

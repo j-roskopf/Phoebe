@@ -1270,22 +1270,24 @@ fun LibraryFilterOptionsMenuItems(
             onDismiss()
         },
     )
-    DropdownMenuItem(
-        text = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (libraryViewMode == LibraryViewMode.Grid) {
-                    PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
-                } else {
-                    Spacer(Modifier.size(14.dp))
+    if (filter != LibraryFilterTab.Songs) {
+        DropdownMenuItem(
+            text = {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (libraryViewMode == LibraryViewMode.Grid) {
+                        PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
+                    } else {
+                        Spacer(Modifier.size(14.dp))
+                    }
+                    Text("View: Grid")
                 }
-                Text("View: Grid")
-            }
-        },
-        onClick = {
-            onLibraryViewMode(LibraryViewMode.Grid)
-            onDismiss()
-        },
-    )
+            },
+            onClick = {
+                onLibraryViewMode(LibraryViewMode.Grid)
+                onDismiss()
+            },
+        )
+    }
     DropdownMenuItem(
         text = {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {

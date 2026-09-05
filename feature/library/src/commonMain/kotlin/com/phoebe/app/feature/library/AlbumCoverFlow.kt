@@ -2,13 +2,16 @@ package com.phoebe.app.feature.library
 
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.gestures.FlingBehavior
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.ScrollableDefaults
+import androidx.compose.foundation.gestures.ScrollScope
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.rememberScrollableState
@@ -47,17 +50,26 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.draw.drawWithCache
+import androidx.compose.foundation.focusable
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.input.pointer.util.addPointerInputChange
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -214,16 +226,64 @@ fun LibraryCoverFlow(
 
     val scrollableState = rememberScrollableState { deltaPx -> applyScrollDelta(deltaPx) }
 
+    // Single shared Animatable so a new settle animation cancels any in-flight one instead of
+    // racing independent Animatable instances over the shared scrollPosition.
+    val coverFlowAnimator = remember(kind) { Animatable(scrollPosition.floatValue) }
+
+    // Wheel/trackpad scrolling goes through the scrollable fling; snap the result to the
+    // nearest cover index so the carousel never settles between covers.
+    val baseFling = ScrollableDefaults.flingBehavior()
+    val snappingFling = remember(scrollPosition) {
+        object : FlingBehavior {
+            override suspend fun ScrollScope.performFling(initialVelocity: Float): Float {
+                val final = with(baseFling) { performFling(initialVelocity) }
+                scrollPosition.floatValue = final
+                val target = scrollPosition.floatValue.roundToInt()
+                    .coerceIn(0, latestItems.lastIndex)
+                    .toFloat()
+                if (target != scrollPosition.floatValue) {
+                    animateCoverFlowTo(coverFlowAnimator, scrollPosition, target)
+                }
+                CoverFlowScrollStore.set(kind, scrollPosition.floatValue)
+                latestItems
+                    .getOrNull(scrollPosition.floatValue.roundToInt().coerceIn(0, latestItems.lastIndex))
+                    ?.let(latestOnSelect)
+                return scrollPosition.floatValue
+            }
+        }
+    }
+
     BoxWithConstraints(
         modifier
             .fillMaxWidth()
             .clipToBounds()
-            .semantics { this.contentDescription = contentDescription },
+            .focusable()
+            .onKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && (event.key == Key.Enter || event.key == Key.Spacebar)) {
+                    centeredItem?.let(latestOnOpen)
+                    true
+                } else {
+                    false
+                }
+            }
+            .semantics {
+                this.contentDescription = contentDescription
+                role = Role.Button
+                onClick(label = "Open ${centeredItem?.title.orEmpty()}") {
+                    if (centeredItem != null) {
+                        latestOnOpen(centeredItem)
+                        true
+                    } else {
+                        false
+                    }
+                }
+            },
     ) {
         // Width-driven cover size; wrap vertically so parents can center this block
         // in the remaining library viewport.
         val coverSize = (maxWidth * 0.42f).coerceIn(120.dp, 220.dp)
-        val stageHeight = coverSize
+        val reflectionHeight = coverSize * 0.42f
+        val stageHeight = coverSize + reflectionHeight
         val coverSizePx = with(LocalDensity.current) { coverSize.toPx() }
         val sideSpacing = coverSizePx * 0.34f
         val centerGap = coverSizePx * 0.72f
@@ -250,7 +310,7 @@ fun LibraryCoverFlow(
                     .scrollable(
                         state = scrollableState,
                         orientation = Orientation.Horizontal,
-                        flingBehavior = ScrollableDefaults.flingBehavior(),
+                        flingBehavior = snappingFling,
                     )
                     .pointerInput(items.size, kind) {
                     awaitEachGesture {
@@ -273,6 +333,7 @@ fun LibraryCoverFlow(
                                         scope.launch {
                                             try {
                                                 flingCoverFlow(
+                                                    animator = coverFlowAnimator,
                                                     scrollPosition = scrollPosition,
                                                     itemCount = latestItems.size,
                                                     spacingPx = spacingPx.floatValue,
@@ -310,7 +371,7 @@ fun LibraryCoverFlow(
                                                 latestOnOpen(targetItem)
                                             } else {
                                                 scope.launch {
-                                                    animateCoverFlowTo(scrollPosition, targetIndex.toFloat())
+                                                    animateCoverFlowTo(coverFlowAnimator, scrollPosition, targetIndex.toFloat())
                                                     CoverFlowScrollStore.set(kind, scrollPosition.floatValue)
                                                     latestOnSelect(targetItem)
                                                 }
@@ -339,7 +400,7 @@ fun LibraryCoverFlow(
                         }
                     }
                     },
-                contentAlignment = Alignment.Center,
+                contentAlignment = Alignment.TopCenter,
             ) {
                 for (index in from..to) {
                     val item = items[index]
@@ -606,6 +667,7 @@ private fun CoverFlowArtItem(
 }
 
 private suspend fun flingCoverFlow(
+    animator: Animatable<Float, AnimationVector1D>,
     scrollPosition: MutableFloatState,
     itemCount: Int,
     spacingPx: Float,
@@ -620,6 +682,7 @@ private suspend fun flingCoverFlow(
         .coerceIn(0, itemCount - 1)
         .toFloat()
     animateCoverFlowTo(
+        animator = animator,
         scrollPosition = scrollPosition,
         target = target,
         initialVelocity = velocityInIndices,
@@ -627,12 +690,15 @@ private suspend fun flingCoverFlow(
 }
 
 private suspend fun animateCoverFlowTo(
+    animator: Animatable<Float, AnimationVector1D>,
     scrollPosition: MutableFloatState,
     target: Float,
     initialVelocity: Float = 0f,
 ) {
-    val animatable = Animatable(scrollPosition.floatValue)
-    animatable.animateTo(
+    // snapTo cancels any in-flight animation on the shared animator and syncs to the current
+    // drag/wheel position before starting the new settle.
+    animator.snapTo(scrollPosition.floatValue)
+    animator.animateTo(
         targetValue = target,
         initialVelocity = initialVelocity,
         animationSpec = spring(
