@@ -607,16 +607,21 @@ class PlexClient private constructor(
         return station
     }
 
+    /**
+     * [maxTracks] trims how much of the station play queue is pulled up front. Callers that keep
+     * filling the queue afterwards (Library Radio) ask for a small seed so playback starts sooner.
+     */
     suspend fun createStationPlayQueue(
         server: PlexServer,
         token: String,
         machineIdentifier: String,
         stationKey: String,
+        maxTracks: Int? = null,
     ): List<Track> {
         var lastError: Throwable? = null
         for (key in plexLibraryStationKeysToTry(stationKey)) {
             val metadata = runCatching {
-                postStationPlayQueue(server, token, machineIdentifier, key)
+                postStationPlayQueue(server, token, machineIdentifier, key, maxTracks)
             }.getOrElse { error ->
                 lastError = error
                 PhoebeLog.d("PlexClient") { "createStationPlayQueue failed for $key: ${error.message}" }
@@ -635,6 +640,7 @@ class PlexClient private constructor(
         token: String,
         machineIdentifier: String,
         stationKey: String,
+        maxTracks: Int?,
     ): List<PlexMetadataDto> {
         val uri = "server://$machineIdentifier/$LibraryIdentifier${stationKey.normalizedStationKey()}"
         var lastError: Throwable? = null
@@ -670,7 +676,7 @@ class PlexClient private constructor(
                 null
             } ?: continue
             rememberApiBase(server.id, base)
-            return expandedPlayQueueMetadata(base, token, response.mediaContainer)
+            return expandedPlayQueueMetadata(base, token, response.mediaContainer, maxTracks)
         }
         throw lastError ?: IllegalStateException("Plex radio returned no playable songs.")
     }
@@ -679,14 +685,16 @@ class PlexClient private constructor(
         base: String,
         token: String,
         initial: PlexMediaContainer,
+        maxTracks: Int?,
     ): List<PlexMetadataDto> {
-        val playQueueId = initial.playQueueId ?: return initial.metadata.cappedPlayQueueMetadata()
+        val cap = (maxTracks ?: PlexPlayQueueMaxWindowSize).coerceIn(1, PlexPlayQueueMaxWindowSize)
+        val playQueueId = initial.playQueueId ?: return initial.metadata.cappedPlayQueueMetadata(cap)
         val totalCount = initial.playQueueTotalCount ?: initial.totalSize
         val requestedWindow = (totalCount ?: PlexPlayQueueDefaultWindowSize)
             .coerceAtLeast(initial.metadata.size)
-            .coerceAtLeast(PlexPlayQueueDefaultWindowSize)
-            .coerceAtMost(PlexPlayQueueMaxWindowSize)
-        if (requestedWindow <= initial.metadata.size) return initial.metadata.cappedPlayQueueMetadata()
+            .coerceAtLeast(minOf(PlexPlayQueueDefaultWindowSize, cap))
+            .coerceAtMost(cap)
+        if (requestedWindow <= initial.metadata.size) return initial.metadata.cappedPlayQueueMetadata(cap)
         val expanded = runCatching {
             fetchPlayQueueWindow(
                 base = base,
@@ -705,14 +713,14 @@ class PlexClient private constructor(
         }.getOrNull()
         val expandedMetadata = expanded?.mediaContainer?.metadata.orEmpty()
         return when {
-            expandedMetadata.size > initial.metadata.size -> expandedMetadata.cappedPlayQueueMetadata()
-            expandedMetadata.isNotEmpty() && initial.metadata.isEmpty() -> expandedMetadata.cappedPlayQueueMetadata()
-            else -> initial.metadata.cappedPlayQueueMetadata()
+            expandedMetadata.size > initial.metadata.size -> expandedMetadata.cappedPlayQueueMetadata(cap)
+            expandedMetadata.isNotEmpty() && initial.metadata.isEmpty() -> expandedMetadata.cappedPlayQueueMetadata(cap)
+            else -> initial.metadata.cappedPlayQueueMetadata(cap)
         }
     }
 
-    private fun List<PlexMetadataDto>.cappedPlayQueueMetadata(): List<PlexMetadataDto> =
-        take(PlexPlayQueueMaxWindowSize)
+    private fun List<PlexMetadataDto>.cappedPlayQueueMetadata(cap: Int): List<PlexMetadataDto> =
+        take(cap)
 
     private suspend fun fetchPlayQueueWindow(
         base: String,

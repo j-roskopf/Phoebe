@@ -60,6 +60,7 @@ import com.phoebe.app.domain.isFromLocalFolder
 import com.phoebe.app.domain.isMusicAssistant
 import com.phoebe.app.domain.isNavidrome
 import com.phoebe.app.domain.isPlex
+import com.phoebe.app.domain.isPlexLibraryTrack
 import com.phoebe.app.domain.playlistEntryKey
 import com.phoebe.app.domain.serverAuthToken
 import com.phoebe.app.domain.supportsCollectionEntry
@@ -82,6 +83,7 @@ import com.phoebe.app.data.PlayHistoryRankedEntries
 import com.phoebe.app.data.PlexPlayHistorySyncResult
 import com.phoebe.app.data.PlexClient
 import com.phoebe.app.data.defaultPlexRadioStations
+import com.phoebe.app.data.plexLibraryStationSlug
 import com.phoebe.app.playlists.PlaylistExportFormat
 import com.phoebe.app.player.MusicAssistantRemotePlayback
 import com.phoebe.app.player.PlaybackOriginResolver
@@ -402,6 +404,7 @@ class AppState(
     private var topTracksMixWarmSignature: String? = null
     private var topTracksMixBuildSignature: String? = null
     private var topTracksMixBuildDeferred: Deferred<List<Track>>? = null
+    private var libraryRadioFillJob: Job? = null
     private val prefetchedArtistIds = mutableSetOf<String>()
     private val prefetchedAlbumIds = mutableSetOf<String>()
     private val prefetchedMixBuilderArtistIds = mutableSetOf<String>()
@@ -426,6 +429,7 @@ class AppState(
     fun dispose() {
         if (disposed) return
         disposed = true
+        cancelLibraryRadioFill()
         listOfNotNull(
             catalogRefreshJob,
             playHistorySyncJob,
@@ -2647,10 +2651,17 @@ class AppState(
     fun playRadioStation(station: PlexRadioStation) = scope.launch {
         val radioId = station.key
         if (radioId in mutableRadioStartingIds.value) return@launch
+        val fillsWholeLibrary = station.isWholeLibraryStation()
+        cancelLibraryRadioFill()
         mutableRadioStartingIds.update { it + radioId }
         try {
             val tracks = runCatching {
-                dependencies.catalogRepository.playRadioStation(session.value, station)
+                dependencies.catalogRepository.playRadioStation(
+                    session = session.value,
+                    station = station,
+                    // Seed small so playback starts fast; the rest of the library is appended below.
+                    maxTracks = if (fillsWholeLibrary) LibraryRadioSeedTrackLimit else null,
+                )
             }.getOrElse { error ->
                 surfaceTransientNotice(error.message ?: "Couldn't start ${station.title}.")
                 return@launch
@@ -2672,10 +2683,38 @@ class AppState(
                 )
             ) {
                 requestNavigation(AppNavigationRequest.Player)
+                if (fillsWholeLibrary) {
+                    scheduleLibraryRadioFill(tracks)
+                }
             }
         } finally {
             mutableRadioStartingIds.update { it - radioId }
         }
+    }
+
+    /**
+     * Library Radio starts from a short Plex station seed, then finishes assembling the full
+     * on-device queue in small background batches. Chromecast projects that full queue itself.
+     */
+    private fun scheduleLibraryRadioFill(seedTracks: List<Track>) {
+        if (seedTracks.isEmpty()) return
+        cancelLibraryRadioFill()
+        libraryRadioFillJob = scope.launch {
+            val catalogTracks = dependencies.catalogRepository.catalog.value
+            val remaining = withContext(Dispatchers.Default) {
+                libraryRadioFillCandidates(catalogTracks, seedTracks)
+            }
+            if (remaining.isEmpty()) return@launch
+            for (chunk in remaining.chunked(LibraryRadioFillChunkSize)) {
+                appendToQueue(chunk)
+                delay(LibraryRadioFillChunkDelayMs)
+            }
+        }
+    }
+
+    private fun cancelLibraryRadioFill() {
+        libraryRadioFillJob?.cancel()
+        libraryRadioFillJob = null
     }
 
     fun playArtistRadio(artist: Artist) = scope.launch {
@@ -3064,6 +3103,7 @@ class AppState(
         clearShuffle: Boolean = false,
         preserveQueueContext: Boolean = false,
     ): Boolean {
+        cancelLibraryRadioFill()
         collectionMixGeneration++
         val playbackTracks = tracks.withFreshPlaybackUrls(session.value, currentPlaybackOrigin())
         if (playbackTracks.isEmpty()) return false
@@ -3085,7 +3125,7 @@ class AppState(
         }
         if (dependencies.castController.state.value.isConnected) {
             mutableMusicAssistantRemotePlayback.value = null
-            val support = dependencies.castController.canLoadQueue(playbackTracks)
+            val support = dependencies.castController.canLoadQueue(playbackTracks, startIndex)
             if (!support.isSupported) {
                 mutableMessage.value = support.message ?: "This queue can't be cast to Chromecast."
                 return false
@@ -4510,6 +4550,27 @@ internal fun mixQueueStillActiveForAppend(
     return true
 }
 
+/** True for the Plex station that draws on the whole music library rather than a slice of it. */
+internal fun PlexRadioStation.isWholeLibraryStation(): Boolean =
+    category == PlexRadioStationCategory.Library &&
+        key.plexLibraryStationSlug().lowercase() in WholeLibraryStationSlugs
+
+/** Every playable Plex song the catalog knows about, minus the seed queue, in shuffled order. */
+internal fun libraryRadioFillCandidates(
+    catalog: CatalogSnapshot,
+    seedTracks: List<Track>,
+    random: Random = Random.Default,
+): List<Track> {
+    val seedIds = seedTracks.mapTo(mutableSetOf()) { it.id }
+    return catalog.tracksByParent.values
+        .asSequence()
+        .flatten()
+        .filter { it.isPlexLibraryTrack() && it.hasPlayableSource() && it.id !in seedIds }
+        .distinctBy { it.id }
+        .toList()
+        .shuffled(random)
+}
+
 internal fun mixAppendCandidates(fullMix: List<Track>, existingQueue: List<Track>): List<Track> {
     val existingIds = existingQueue.mapTo(mutableSetOf()) { it.id }
     return fullMix.filter { existingIds.add(it.id) }
@@ -4585,6 +4646,14 @@ private const val KeepPlayingRecentTrackLimit = 25
 private const val PopularMixSeedTrackLimit = 50
 private const val PopularMixTrackLimit = 500
 private const val PopularMixShuffleChunkSize = 50
+
+/** Plex slugs (named and numeric) for the library-wide station. */
+private val WholeLibraryStationSlugs = setOf("library", "1")
+
+/** Songs pulled from Plex before Library Radio starts playing; the rest is appended in the background. */
+private const val LibraryRadioSeedTrackLimit = 100
+private const val LibraryRadioFillChunkSize = 500
+private const val LibraryRadioFillChunkDelayMs = 100L
 private const val MixProviderLoadTimeoutMs = 20_000L
 private const val ArtistMusicBrainzArtworkTimeoutMs = 35_000L
 

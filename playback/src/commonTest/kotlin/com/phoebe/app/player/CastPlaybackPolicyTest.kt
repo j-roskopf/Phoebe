@@ -1,5 +1,6 @@
 package com.phoebe.app.player
 
+import com.phoebe.app.domain.Track
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -47,6 +48,32 @@ class CastPlaybackPolicyTest {
                 estimatedBytesForCount = { 0 },
             ),
         )
+    }
+
+    @Test
+    fun receiverWindowLeavesTheFullDeviceQueueIntact() {
+        val deviceQueue = List(16_000) { index ->
+            Track(
+                id = "track-$index",
+                title = "Track $index",
+                artist = "Artist",
+                album = "Album",
+                durationMs = 60_000L,
+                streamUrl = "https://example.com/$index.mp3",
+                downloadUrl = "",
+            )
+        }
+
+        val middleWindow = castReceiverQueueWindow(deviceQueue, startIndex = 7_000)
+        val tailWindow = castReceiverQueueWindow(deviceQueue, startIndex = 15_950)
+
+        assertEquals(80, middleWindow.size)
+        assertEquals("track-7000", middleWindow.first().id)
+        assertEquals("track-7079", middleWindow.last().id)
+        assertEquals(50, tailWindow.size)
+        assertEquals("track-15950", tailWindow.first().id)
+        assertEquals("track-15999", tailWindow.last().id)
+        assertEquals(16_000, deviceQueue.size)
     }
 
     @Test
@@ -207,6 +234,52 @@ class CastPlaybackPolicyTest {
         assertEquals(
             CastSkipDecision.None,
             decideCastSkipAction(targetIndex = 157, queueSize = 157, targetAlreadyOnReceiver = false),
+        )
+    }
+
+    @Test
+    fun castingWhilePlayingHandsOffTheSongPlayingNowNotTheRememberedQueue() {
+        // Play an artist, skip ahead a few songs, then cast: the local player is where playback
+        // actually is, so a queue left over from an earlier cast must not win.
+        assertEquals(
+            CastHandoffSource.LocalPlayer,
+            decideCastHandoffSource(
+                hasLocalQueue = true,
+                isLocalPlaybackActive = true,
+                hasRememberedCastQueue = true,
+            ),
+        )
+    }
+
+    @Test
+    fun interruptedCastSessionResumesFromTheReceiverPositionNotThePausedLocalPlayer() {
+        assertEquals(
+            CastHandoffSource.RememberedCastQueue,
+            decideCastHandoffSource(
+                hasLocalQueue = true,
+                isLocalPlaybackActive = false,
+                hasRememberedCastQueue = true,
+            ),
+        )
+    }
+
+    @Test
+    fun pausedLocalQueueStillCastsWhenNothingIsRemembered() {
+        assertEquals(
+            CastHandoffSource.LocalPlayer,
+            decideCastHandoffSource(
+                hasLocalQueue = true,
+                isLocalPlaybackActive = false,
+                hasRememberedCastQueue = false,
+            ),
+        )
+        assertEquals(
+            CastHandoffSource.None,
+            decideCastHandoffSource(
+                hasLocalQueue = false,
+                isLocalPlaybackActive = false,
+                hasRememberedCastQueue = false,
+            ),
         )
     }
 }

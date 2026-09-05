@@ -4788,12 +4788,17 @@ class CatalogRepository(
         return mergePlexLibraryRadioStations(stations, defaults)
     }
 
-    suspend fun playRadioStation(session: PlexSession?, station: PlexRadioStation): List<Track> {
+    /** [maxTracks] caps the initial station play queue; null keeps the full Plex window. */
+    suspend fun playRadioStation(
+        session: PlexSession?,
+        station: PlexRadioStation,
+        maxTracks: Int? = null,
+    ): List<Track> {
         val server = session?.selectedServer ?: return emptyList()
         session.selectedLibrary ?: return emptyList()
         val token = session.serverAuthToken() ?: return emptyList()
         val machineId = resolveMachineIdentifier(server, token)
-        return plexClient.createStationPlayQueue(server, token, machineId, station.key)
+        return plexClient.createStationPlayQueue(server, token, machineId, station.key, maxTracks)
             .map { it.withPlexPrefix() }
             .also { tracks -> publishRadioTracksInBackground(tracks) }
     }

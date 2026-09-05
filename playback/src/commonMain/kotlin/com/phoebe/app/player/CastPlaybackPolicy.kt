@@ -1,5 +1,7 @@
 package com.phoebe.app.player
 
+import com.phoebe.app.domain.Track
+
 /**
  * Cast protocol messages are capped at 64 KiB. Yesterday's Pixel 10 Pro session loaded
  * 80 queue items at ~122 KiB (`cast load failed status=13`) and then started local
@@ -93,6 +95,21 @@ fun shrinkCastReceiverQueueItemCount(
     return 1
 }
 
+/**
+ * Projects the full device queue to the small, contiguous window that is sent to Chromecast.
+ * `subList` deliberately avoids copying or traversing the rest of a large local queue.
+ */
+fun castReceiverQueueWindow(
+    queue: List<Track>,
+    startIndex: Int,
+    maxItems: Int = CAST_MAX_RECEIVER_QUEUE_ITEMS,
+): List<Track> {
+    if (queue.isEmpty()) return emptyList()
+    val start = startIndex.coerceIn(queue.indices)
+    val endExclusive = (start + maxItems.coerceAtLeast(1)).coerceAtMost(queue.size)
+    return queue.subList(start, endExclusive)
+}
+
 sealed interface CastIdleDecision {
     data object Ignore : CastIdleDecision
     data object AdvanceReceiverQueue : CastIdleDecision
@@ -126,6 +143,30 @@ fun decideCastIdleAction(
         }
         else -> CastIdleDecision.Ignore
     }
+}
+
+enum class CastHandoffSource {
+    LocalPlayer,
+    RememberedCastQueue,
+    None,
+}
+
+/**
+ * Which queue a freshly connected, empty receiver should be handed.
+ *
+ * Nothing is casting yet, so the local player is the live source of truth — including any songs
+ * skipped since the last cast. The remembered cast queue only wins when local playback is parked,
+ * because an interrupted session leaves the local player paused wherever the *previous* handoff
+ * started from and the receiver's last position is then the better anchor.
+ */
+fun decideCastHandoffSource(
+    hasLocalQueue: Boolean,
+    isLocalPlaybackActive: Boolean,
+    hasRememberedCastQueue: Boolean,
+): CastHandoffSource = when {
+    !hasRememberedCastQueue -> if (hasLocalQueue) CastHandoffSource.LocalPlayer else CastHandoffSource.None
+    hasLocalQueue && isLocalPlaybackActive -> CastHandoffSource.LocalPlayer
+    else -> CastHandoffSource.RememberedCastQueue
 }
 
 sealed interface CastSkipDecision {
