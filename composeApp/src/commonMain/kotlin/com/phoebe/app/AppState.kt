@@ -2684,6 +2684,12 @@ class AppState(
             ) {
                 requestNavigation(AppNavigationRequest.Player)
                 if (fillsWholeLibrary) {
+                    if (dependencies.castController.state.value.isConnected) {
+                        // Cast only loads the short seed window to the receiver. Seed the paused
+                        // local player with the same tracks so the background fill grows it into the
+                        // full library; the cast window reload then adopts that longer queue.
+                        dependencies.audioPlayer.suspendPlayback(tracks, 0, 0L)
+                    }
                     scheduleLibraryRadioFill(tracks)
                 }
             }
@@ -3276,6 +3282,7 @@ class AppState(
     }
 
     fun clearQueue() {
+        cancelLibraryRadioFill()
         markKeepPlayingQueueEditedByUser()
         if (mutableMusicAssistantRemotePlayback.value != null) {
             mutableMusicAssistantRemotePlayback.value = null
@@ -3285,6 +3292,7 @@ class AppState(
     }
 
     private fun stopPlayback() {
+        cancelLibraryRadioFill()
         mutableMusicAssistantRemotePlayback.value = null
         dependencies.playbackTransportService.stopPlayback()
     }
