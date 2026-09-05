@@ -49,6 +49,7 @@ private data class CastLoadRequest(
     val requestData: MediaLoadRequestData,
     val receiverQueueSize: Int,
     val estimatedBytes: Int,
+    val receiverQueue: List<Track>,
 )
 
 private data class AppQueueSnapshot(
@@ -59,6 +60,12 @@ private data class AppQueueSnapshot(
 private data class RemoteQueueEntry(
     val track: Track,
     val castUrl: String?,
+)
+
+/** The receiver only has this bounded slice; app indexes still point into the full device queue. */
+private data class ReceiverQueueWindow(
+    val startIndex: Int,
+    val tracks: List<Track>,
 )
 
 private class AndroidCastController : CastController {
@@ -73,6 +80,7 @@ private class AndroidCastController : CastController {
     private var pendingHandoff: PendingCastHandoff? = null
     private var expectedRemoteHandoff: PendingCastHandoff? = null
     private var appQueueSnapshot: AppQueueSnapshot? = null
+    private var activeReceiverQueueWindow: ReceiverQueueWindow? = null
     private var loadRequestId = 0L
     private var lastLoadReceiverQueueSize = 0
     private var mediaErrorRetryCount = 0
@@ -87,8 +95,10 @@ private class AndroidCastController : CastController {
     )
     override val state: StateFlow<CastState> = mutableState
 
-    override fun canLoadQueue(queue: List<Track>): CastQueueSupport =
-        queue.chromecastQueueSupport()
+    override fun canLoadQueue(queue: List<Track>): CastQueueSupport = canLoadQueue(queue, startIndex = 0)
+
+    override fun canLoadQueue(queue: List<Track>, startIndex: Int): CastQueueSupport =
+        castReceiverQueueWindow(queue, startIndex).chromecastQueueSupport()
 
     private val remoteMediaClientListener = object : RemoteMediaClient.Callback() {
         override fun onStatusUpdated() {
@@ -212,7 +222,7 @@ private class AndroidCastController : CastController {
         startPositionMs: Long = 0L,
         maxReceiverItems: Int = CAST_MAX_RECEIVER_QUEUE_ITEMS,
     ) {
-        val support = canLoadQueue(queue)
+        val support = canLoadQueue(queue, startIndex)
         if (!support.isSupported) {
             mutableState.update { it.copy(message = support.message) }
             return
@@ -258,6 +268,10 @@ private class AndroidCastController : CastController {
             )
         }
         val loadRequest = buildCastLoadRequest(queue, index, positionMs, maxItems = maxReceiverItems)
+        activeReceiverQueueWindow = ReceiverQueueWindow(
+            startIndex = index,
+            tracks = loadRequest.receiverQueue,
+        )
         lastLoadReceiverQueueSize = loadRequest.receiverQueueSize
         PhoebeLog.d(TAG) {
             "loading cast queue startId=${track.id} codec=${track.audioCodec} startIndex=$index receiverItems=${loadRequest.receiverQueueSize}/${queue.size} bytes=${loadRequest.estimatedBytes} budget=$CAST_LOAD_MESSAGE_BYTE_BUDGET requestId=$requestId"
@@ -420,6 +434,7 @@ private class AndroidCastController : CastController {
             reconnectJob?.cancel()
             reconnectJob = null
             appQueueSnapshot = null
+            activeReceiverQueueWindow = null
             if (pending != null) {
                 restoreLocalPlayback(pending)
             }             else if (previous.isConnected && previous.queue.isNotEmpty() && previous.currentIndex in previous.queue.indices) {
@@ -432,12 +447,18 @@ private class AndroidCastController : CastController {
             }
             positionJob?.cancel()
             positionJob = null
+            // The local player owns playback again, so this queue is history. Keeping it would
+            // make the next cast hand off this queue instead of whatever is playing by then.
             mutableState.update {
                 it.copy(
                     isConnected = false,
                     deviceName = null,
+                    queue = emptyList(),
+                    currentIndex = -1,
                     isPlaying = false,
                     isBuffering = false,
+                    positionMs = 0L,
+                    durationMs = 0L,
                     message = null,
                 )
             }
@@ -467,13 +488,22 @@ private class AndroidCastController : CastController {
         val remoteTrack = client.currentItem?.media?.toTrack() ?: client.mediaInfo?.toTrack()
         val remoteCastUrl = client.currentItem?.media?.contentId ?: client.mediaInfo?.contentId
         val receiverHasMedia = client.mediaInfo != null || queueItems.isNotEmpty() || remoteTrack != null
-        val knownQueue = appQueueSnapshot?.queue?.takeIf { it.isNotEmpty() }
+        val rememberedQueue = appQueueSnapshot?.queue?.takeIf { it.isNotEmpty() }
             ?: pendingHandoff?.queue?.takeIf { it.isNotEmpty() }
             ?: previous.queue
-        val remoteQueueEntries = queueItems.mapNotNull { item ->
-            val track = item.media?.toTrack() ?: return@mapNotNull null
+        val rememberedIndex = appQueueSnapshot?.currentIndex
+            ?: pendingHandoff?.index
+            ?: previous.currentIndex
+        // Library Mix keeps its complete queue in the local player. If its background fill grew
+        // while Cast was playing, adopt that longer queue by checking one stable anchor only.
+        val knownQueue = deviceQueueExtension(rememberedQueue, rememberedIndex)
+        val receiverWindow = activeReceiverQueueWindow
+        val remoteQueueEntries = queueItems.mapIndexedNotNull { receiverIndex, item ->
+            val track = item.media?.toTrack() ?: return@mapIndexedNotNull null
             RemoteQueueEntry(
-                track = knownQueue.firstOrNull { it.matchesCastMedia(track, item.media?.contentId) } ?: track,
+                track = receiverWindow?.tracks?.getOrNull(receiverIndex)
+                    ?.takeIf { it.matchesCastMedia(track, item.media?.contentId) }
+                    ?: track,
                 castUrl = item.media?.contentId,
             )
         }
@@ -500,20 +530,34 @@ private class AndroidCastController : CastController {
             deactivateEmptyReceiver()
             return
         }
-        val currentQueueItemKnownIndex = currentQueueItem?.media?.let { media ->
-            val track = media.toTrack()
-            knownQueue.indexOfFirst { it.matchesCastMedia(track, media.contentId) }.takeIf { index -> index >= 0 }
+        if (!receiverHasMedia) {
+            // A session that just connected answers with no status at all. Falling through would
+            // read that silence as "the remembered queue, at index 0" and stamp it into
+            // appQueueSnapshot — which is then what the handoff below casts, instead of the song
+            // that is actually playing.
+            return
         }
-        val remoteMediaKnownIndex = remoteTrack?.let { track ->
-            knownQueue.indexOfFirst { it.matchesCastMedia(track, remoteCastUrl) }.takeIf { index -> index >= 0 }
+        val currentQueueItemWindowIndex = remoteQueueIndex?.takeIf { receiverIndex ->
+            val expected = receiverWindow?.tracks?.getOrNull(receiverIndex) ?: return@takeIf false
+            val media = currentQueueItem?.media ?: return@takeIf false
+            expected.matchesCastMedia(media.toTrack(), media.contentId)
         }
-        val knownQueueTrackIndex = currentQueueItemKnownIndex ?: remoteMediaKnownIndex
-        val remoteQueueMatchesKnown = remoteQueueEntries.isNotEmpty() &&
-            knownQueue.isNotEmpty() &&
-            remoteQueueEntries.all { entry ->
-                knownQueue.any { it.matchesCastMedia(entry.track, entry.castUrl) }
+        val remoteMediaWindowIndex = remoteTrack?.let { track ->
+            receiverWindow?.tracks?.indexOfFirst { expected ->
+                expected.matchesCastMedia(track, remoteCastUrl)
+            }?.takeIf { receiverIndex -> receiverIndex >= 0 }
+        }
+        val knownQueueTrackIndex = (currentQueueItemWindowIndex ?: remoteMediaWindowIndex)
+            ?.let { receiverIndex -> receiverWindow?.startIndex?.plus(receiverIndex) }
+            ?.takeIf { it in knownQueue.indices }
+        val remoteQueueMatchesWindow = receiverWindow != null &&
+            queueItems.isNotEmpty() &&
+            queueItems.indices.all { receiverIndex ->
+                val expected = receiverWindow.tracks.getOrNull(receiverIndex) ?: return@all false
+                val media = queueItems[receiverIndex].media ?: return@all false
+                expected.matchesCastMedia(media.toTrack(), media.contentId)
             }
-        val preservingKnownQueue = knownQueueTrackIndex != null || remoteQueueMatchesKnown
+        val preservingKnownQueue = knownQueueTrackIndex != null || remoteQueueMatchesWindow
         val queue = when {
             preservingKnownQueue -> knownQueue
             remoteQueue.isNotEmpty() -> remoteQueue
@@ -523,9 +567,6 @@ private class AndroidCastController : CastController {
         val currentIndex = when {
             queue.isEmpty() -> previous.currentIndex
             preservingKnownQueue -> knownQueueTrackIndex
-                ?: remoteTrack?.let { track ->
-                    queue.indexOfFirst { it.matchesCastMedia(track, remoteCastUrl) }.takeIf { index -> index >= 0 }
-                }
                 ?: appQueueSnapshot?.currentIndex?.takeIf { it in queue.indices }
                 ?: previous.currentIndex.takeIf { it in queue.indices }
                 ?: 0
@@ -630,10 +671,19 @@ private class AndroidCastController : CastController {
         }
     }
 
+    private fun deviceQueueExtension(rememberedQueue: List<Track>, rememberedIndex: Int): List<Track> {
+        val localQueue = audioPlayer?.state?.value?.queue ?: return rememberedQueue
+        val anchor = rememberedQueue.getOrNull(rememberedIndex) ?: return rememberedQueue
+        return localQueue.takeIf { queue ->
+            queue.size > rememberedQueue.size && queue.getOrNull(rememberedIndex)?.id == anchor.id
+        } ?: rememberedQueue
+    }
+
     private fun deactivateEmptyReceiver() {
         positionJob?.cancel()
         positionJob = null
         appQueueSnapshot = null
+        activeReceiverQueueWindow = null
         mediaErrorRetryCount = 0
         mediaErrorTrackId = null
         mutableState.update {
@@ -807,12 +857,20 @@ private class AndroidCastController : CastController {
                 if (expectedRemoteHandoff?.requestId == requestId) {
                     expectedRemoteHandoff = null
                 }
+                // Same reason as the disconnect path: playback is local again, so the failed
+                // attempt must not anchor the next handoff.
+                appQueueSnapshot = null
+                activeReceiverQueueWindow = null
                 restoreLocalPlayback(handoff)
                 mutableState.update {
                     it.copy(
                         isConnected = false,
+                        queue = emptyList(),
+                        currentIndex = -1,
                         isPlaying = false,
                         isBuffering = false,
+                        positionMs = 0L,
+                        durationMs = 0L,
                         message = "$message Playing on this device.",
                     )
                 }
@@ -851,20 +909,36 @@ private class AndroidCastController : CastController {
         val rememberedQueue = snapshot?.queue?.takeIf { it.isNotEmpty() } ?: castState.queue
         val rememberedIndex = snapshot?.currentIndex ?: castState.currentIndex
         val local = audioPlayer?.state?.value
+        val source = decideCastHandoffSource(
+            hasLocalQueue = local != null && local.currentIndex in local.queue.indices,
+            isLocalPlaybackActive = local?.isPlaying == true ||
+                local?.isBuffering == true ||
+                AndroidPlaybackBridge.isServicePlaybackActive(),
+            hasRememberedCastQueue = rememberedQueue.isNotEmpty() && rememberedIndex in rememberedQueue.indices,
+        )
+        PhoebeLog.d(TAG) {
+            "handoff source=$source localIndex=${local?.currentIndex} localQueue=${local?.queue?.size} rememberedIndex=$rememberedIndex rememberedQueue=${rememberedQueue.size}"
+        }
         val queue: List<Track>
         val index: Int
         val positionMs: Long
-        if (rememberedQueue.isNotEmpty() && rememberedIndex in rememberedQueue.indices) {
-            queue = rememberedQueue
-            index = rememberedIndex
-            positionMs = castState.positionMs
-        } else {
-            if (local == null || local.currentIndex !in local.queue.indices) return
-            queue = local.queue
-            index = local.currentIndex
-            positionMs = local.positionMs
+        when (source) {
+            CastHandoffSource.None -> return
+            CastHandoffSource.RememberedCastQueue -> {
+                queue = rememberedQueue
+                index = rememberedIndex
+                // The stored position belongs to whatever the receiver last reported; it only
+                // applies when that is still the song we're about to hand off.
+                positionMs = castState.positionMs.takeIf { castState.currentIndex == index } ?: 0L
+            }
+            CastHandoffSource.LocalPlayer -> {
+                val localState = local ?: return
+                queue = localState.queue
+                index = localState.currentIndex
+                positionMs = localState.positionMs
+            }
         }
-        val support = canLoadQueue(queue)
+        val support = canLoadQueue(queue, index)
         if (!support.isSupported) {
             mutableState.update { it.copy(message = support.message) }
             return
@@ -879,28 +953,13 @@ private class AndroidCastController : CastController {
     ): MediaQueueItem? {
         val target = queue.getOrNull(appIndex) ?: return null
         val items = queueItems.orEmpty()
-        if (items.isEmpty()) return null
-        val firstMedia = items.first().media ?: return null
-        val windowStart = queue.indexOfFirst { track ->
-            track.matchesCastMedia(firstMedia.toTrack(), firstMedia.contentId)
-        }
-        if (windowStart >= 0) {
-            val receiverIndex = appIndex - windowStart
-            items.getOrNull(receiverIndex)?.let { item ->
-                val media = item.media ?: return@let null
-                if (target.matchesCastMedia(media.toTrack(), media.contentId)) return item
-            }
-        }
-        val matchingAppIndexes = queue.indices.filter { index ->
-            queue[index].matchesCastMedia(target, target.toCastMediaDescriptor().castUrl)
-        }
-        if (matchingAppIndexes.size == 1) {
-            return items.firstOrNull { item ->
-                val media = item.media ?: return@firstOrNull false
-                target.matchesCastMedia(media.toTrack(), media.contentId)
-            }
-        }
-        return null
+        val window = activeReceiverQueueWindow ?: return null
+        val receiverIndex = appIndex - window.startIndex
+        val expected = window.tracks.getOrNull(receiverIndex) ?: return null
+        if (expected.id != target.id) return null
+        val item = items.getOrNull(receiverIndex) ?: return null
+        val media = item.media ?: return null
+        return item.takeIf { target.matchesCastMedia(media.toTrack(), media.contentId) }
     }
 
     private fun jumpToReceiverAppIndex(
@@ -1021,20 +1080,22 @@ private class AndroidCastController : CastController {
         startPositionMs: Long,
         maxItems: Int = CAST_MAX_RECEIVER_QUEUE_ITEMS,
     ): CastLoadRequest {
-        val tail = queue.drop(startIndex)
+        val receiverWindow = castReceiverQueueWindow(queue, startIndex, maxItems)
         val itemCount = shrinkCastReceiverQueueItemCount(
-            tailSize = tail.size,
+            tailSize = receiverWindow.size,
             maxItems = maxItems,
             maxBytes = CAST_LOAD_MESSAGE_BYTE_BUDGET,
             estimatedBytesForCount = { count ->
-                buildMediaLoadRequest(tail.take(count), startPositionMs).estimatedByteSize()
+                buildMediaLoadRequest(receiverWindow.take(count), startPositionMs).estimatedByteSize()
             },
         ).coerceAtLeast(1)
-        val request = buildMediaLoadRequest(tail.take(itemCount), startPositionMs)
+        val receiverQueue = receiverWindow.take(itemCount)
+        val request = buildMediaLoadRequest(receiverQueue, startPositionMs)
         return CastLoadRequest(
             requestData = request,
             receiverQueueSize = itemCount,
             estimatedBytes = request.estimatedByteSize(),
+            receiverQueue = receiverQueue,
         )
     }
 

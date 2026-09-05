@@ -39,6 +39,7 @@ data class CastQueueSupport(
 interface CastController {
     val state: StateFlow<CastState>
     fun canLoadQueue(queue: List<Track>): CastQueueSupport
+    fun canLoadQueue(queue: List<Track>, startIndex: Int): CastQueueSupport = canLoadQueue(queue)
     fun showDevicePicker()
     fun disconnect()
     fun loadQueue(queue: List<Track>, startIndex: Int = 0, startPositionMs: Long = 0L)
@@ -93,9 +94,8 @@ fun List<Track>.chromecastQueueSupport(): CastQueueSupport {
 }
 
 /**
- * Name the song holding the queue back. The receiver loads the whole queue, so one song with no
- * remote URL stops the cast — a blanket "this queue can't cast" reads as a bug when the other
- * ninety-nine songs are ordinary streams.
+ * Name the song holding the queue back. Callers may validate a receiver window rather than the
+ * entire device queue, so this identifies the first item in the attempted window.
  */
 private fun Track.chromecastQueueBlockedMessage(): String {
     val name = title.takeIf { it.isNotBlank() } ?: "This song"
