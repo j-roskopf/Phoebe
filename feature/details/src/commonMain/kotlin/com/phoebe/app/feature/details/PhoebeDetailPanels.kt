@@ -2430,7 +2430,20 @@ fun ArtistDetailPanel(
                             }
                         }
                     }
-                    if (albumViewMode == LibraryViewMode.Grid) {
+                    if (albumViewMode == LibraryViewMode.List) {
+                        items(visibleAlbums, key = { it.id }, contentType = { "artist-album" }) { album ->
+                            LibraryRow(
+                                title = album.title,
+                                subtitle = "${album.artist} • ${album.year ?: "Album"}",
+                                seed = album.title,
+                                thumbUrl = album.thumbUrl,
+                                modifier = contentPaddingModifier,
+                                elevatedArtwork = useTable,
+                                sharedKey = "album:${album.id}",
+                                onClick = { onAlbum(album) },
+                            )
+                        }
+                    } else {
                         items(
                             albumGridRows.size,
                             key = { rowIndex -> "album-grid-row:${albumGridRows[rowIndex].first().id}" },
@@ -2480,19 +2493,6 @@ fun ArtistDetailPanel(
                                     Spacer(Modifier.weight(1f))
                                 }
                             }
-                        }
-                    } else {
-                        items(visibleAlbums, key = { it.id }, contentType = { "artist-album" }) { album ->
-                            LibraryRow(
-                                title = album.title,
-                                subtitle = "${album.artist} • ${album.year ?: "Album"}",
-                                seed = album.title,
-                                thumbUrl = album.thumbUrl,
-                                modifier = contentPaddingModifier,
-                                elevatedArtwork = useTable,
-                                sharedKey = "album:${album.id}",
-                                onClick = { onAlbum(album) },
-                            )
                         }
                     }
                     item(contentType = "artist-songs-header") {

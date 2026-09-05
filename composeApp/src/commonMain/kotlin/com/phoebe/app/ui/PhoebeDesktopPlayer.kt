@@ -276,6 +276,7 @@ internal fun DesktopPlayer(
     val onLibrarySortBy = browseActions.onLibrarySortBy
     val onLibraryAscending = browseActions.onLibraryAscending
     val onLibraryColumns = browseActions.onLibraryColumns
+    val onLibraryViewMode = browseActions.onLibraryViewMode
     val onToggle = playbackActions.onToggle
     val onPrevious = playbackActions.onPrevious
     val onNext = playbackActions.onNext
@@ -897,6 +898,7 @@ internal fun DesktopPlayer(
                                                 onLibrarySortBy = onLibrarySortBy,
                                                 onLibraryAscending = onLibraryAscending,
                                                 onLibraryColumns = onLibraryColumns,
+                                                onLibraryViewMode = onLibraryViewMode,
                                                 onArtist = onArtist,
                                                 onAlbum = onAlbum,
                                                 onPlayTracks = onPlayTracks,

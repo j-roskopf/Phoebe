@@ -258,6 +258,7 @@ internal enum class PhoebeScreenshotScenario {
     Library,
     LibraryScrollbar,
     LibraryFiveColumnGrid,
+    LibraryFlow,
     Radio,
     Playlist,
     Artist,
@@ -326,6 +327,9 @@ internal fun PhoebeScreenshotApp(
     modifier: Modifier = Modifier,
 ) {
     val fixture = remember { PhoebeScreenshotFixture }
+    if (scenario == PhoebeScreenshotScenario.LibraryFlow) {
+        resetCoverFlowScrollStore()
+    }
     val screenshotAudioAnalysis = remember(scenario) {
         MutableStateFlow(
             if (scenario.visualizerPreset().isVisualizer) {
@@ -462,6 +466,7 @@ internal fun PhoebeDesktopScreenshotScenario(
         PhoebeScreenshotScenario.Library,
         PhoebeScreenshotScenario.LibraryScrollbar,
         PhoebeScreenshotScenario.LibraryFiveColumnGrid,
+        PhoebeScreenshotScenario.LibraryFlow,
         -> BrowseSection.Library
         PhoebeScreenshotScenario.Radio -> BrowseSection.Radio
         PhoebeScreenshotScenario.Playlist -> BrowseSection.Library
@@ -474,13 +479,16 @@ internal fun PhoebeDesktopScreenshotScenario(
             albumGridItemSizeDp = LibraryUiPreferences.MinAlbumGridItemSizeDp,
             artistGridItemSizeDp = LibraryUiPreferences.MinArtistGridItemSizeDp,
         )
+        PhoebeScreenshotScenario.LibraryFlow -> fixture.libraryUi.copy(viewMode = "Flow")
         PhoebeScreenshotScenario.HomePlayedRows -> fixture.libraryUi.copy(
             homeSections = listOf(HomeSection.Played, HomeSection.Random),
         )
         else -> fixture.libraryUi
     }
     val catalog = when (scenario) {
-        PhoebeScreenshotScenario.LibraryFiveColumnGrid -> fixture.catalog.withFiveColumnGridArtists(fixture.nowMs)
+        PhoebeScreenshotScenario.LibraryFiveColumnGrid,
+        PhoebeScreenshotScenario.LibraryFlow,
+        -> fixture.catalog.withFiveColumnGridArtists(fixture.nowMs)
         else -> fixture.catalog
     }
     val visualizerPreset = scenario.visualizerPreset()
@@ -664,18 +672,21 @@ internal fun PhoebeMobileScreenshotScenario(
     tintId: String = PhoebeTintOption.Purple.id,
     modifier: Modifier = Modifier,
 ) {
-    val catalog = if (scenario == PhoebeScreenshotScenario.LibraryFiveColumnGrid) {
+    val catalog = if (
+        scenario == PhoebeScreenshotScenario.LibraryFiveColumnGrid ||
+        scenario == PhoebeScreenshotScenario.LibraryFlow
+    ) {
         fixture.catalog.withFiveColumnGridArtists(fixture.nowMs)
     } else {
         fixture.catalog
     }
-    val libraryUi = if (scenario == PhoebeScreenshotScenario.LibraryFiveColumnGrid) {
-        fixture.libraryUi.copy(
+    val libraryUi = when (scenario) {
+        PhoebeScreenshotScenario.LibraryFiveColumnGrid -> fixture.libraryUi.copy(
             albumGridItemSizeDp = LibraryUiPreferences.MinAlbumGridItemSizeDp,
             artistGridItemSizeDp = LibraryUiPreferences.MinArtistGridItemSizeDp,
         )
-    } else {
-        fixture.libraryUi
+        PhoebeScreenshotScenario.LibraryFlow -> fixture.libraryUi.copy(viewMode = "Flow")
+        else -> fixture.libraryUi
     }
 
     val isPlayer = scenario.name.startsWith("Player", ignoreCase = true)
@@ -945,6 +956,7 @@ internal fun PhoebeMobileScreenshotScenario(
                     PhoebeScreenshotScenario.Library,
                     PhoebeScreenshotScenario.LibraryScrollbar,
                     PhoebeScreenshotScenario.LibraryFiveColumnGrid,
+                    PhoebeScreenshotScenario.LibraryFlow,
                     -> BrowseSection.Library
                     PhoebeScreenshotScenario.Radio -> BrowseSection.Radio
                     PhoebeScreenshotScenario.Search -> BrowseSection.Search
@@ -1061,6 +1073,7 @@ internal fun PhoebeMobileScreenshotScenario(
                     PhoebeScreenshotScenario.Library,
                     PhoebeScreenshotScenario.LibraryScrollbar,
                     PhoebeScreenshotScenario.LibraryFiveColumnGrid,
+                    PhoebeScreenshotScenario.LibraryFlow,
                     -> BrowseSection.Library
                     PhoebeScreenshotScenario.Radio -> BrowseSection.Radio
                     PhoebeScreenshotScenario.Search -> BrowseSection.Search

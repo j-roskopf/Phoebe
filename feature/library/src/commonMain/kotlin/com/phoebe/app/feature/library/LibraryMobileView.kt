@@ -8,6 +8,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
@@ -226,6 +227,7 @@ fun LibraryMobileView(
                     columns = libraryUi.columns,
                     sortBy = sortBy,
                     ascending = ascending,
+                    viewMode = libraryViewMode,
                     onPlay = { index -> onPlayTracks(trackPage.items, index) },
                     onAddToUpNext = onAddToUpNext,
                     onAddToEndOfQueue = onAddToEndOfQueue,
@@ -616,6 +618,32 @@ private fun MobileArtistsContent(
                 )
             }
         }
+        LibraryViewMode.Flow -> {
+            Column(Modifier.fillMaxSize()) {
+                contentHeader?.let { header ->
+                    // Only top inset here — bottom chrome padding belongs on the flow stage,
+                    // not under the header (that left a large empty gap above the covers).
+                    Box(Modifier.padding(top = contentPadding.calculateTopPadding())) { header() }
+                }
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    val bottomPad = contentPadding.calculateBottomPadding()
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height((maxHeight - bottomPad).coerceAtLeast(0.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        ArtistCoverFlow(
+                            artists = artists,
+                            selectedArtistId = null,
+                            onSelect = {},
+                            onOpen = onArtist,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -858,6 +886,30 @@ private fun MobileAlbumsContent(
                 )
             }
         }
+        LibraryViewMode.Flow -> {
+            Column(Modifier.fillMaxSize()) {
+                contentHeader?.let { header ->
+                    Box(Modifier.padding(top = contentPadding.calculateTopPadding())) { header() }
+                }
+                BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                    val bottomPad = contentPadding.calculateBottomPadding()
+                    Box(
+                        Modifier
+                            .fillMaxWidth()
+                            .height((maxHeight - bottomPad).coerceAtLeast(0.dp)),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        AlbumCoverFlow(
+                            albums = albums,
+                            selectedAlbumId = null,
+                            onSelect = {},
+                            onOpen = onAlbum,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1006,7 +1058,52 @@ private fun MobileSongsList(
     onAddToEndOfQueue: (Track) -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(),
     contentHeader: (@Composable () -> Unit)? = null,
+    viewMode: LibraryViewMode = LibraryViewMode.List,
 ) {
+    if (viewMode == LibraryViewMode.Flow) {
+        if (tracks.isEmpty()) {
+            LazyColumn(
+                contentPadding = contentPadding,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                contentHeader?.let { header ->
+                    item(key = "library-header", contentType = "library-header") { header() }
+                }
+                item(contentType = "empty-state") {
+                    Text("No songs yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+                }
+            }
+            return
+        }
+        Column(Modifier.fillMaxSize()) {
+            contentHeader?.let { header ->
+                Box(Modifier.padding(top = contentPadding.calculateTopPadding())) { header() }
+            }
+            BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
+                val bottomPad = contentPadding.calculateBottomPadding()
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height((maxHeight - bottomPad).coerceAtLeast(0.dp)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    TrackCoverFlow(
+                        tracks = tracks,
+                        selectedTrackId = null,
+                        onSelect = {},
+                        onOpen = { track ->
+                            tracks.indexOfFirst { it.id == track.id }
+                                .takeIf { it >= 0 }
+                                ?.let(onPlay)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+        }
+        return
+    }
+
     if (tracks.isEmpty()) {
         LazyColumn(
             contentPadding = contentPadding,

@@ -15,7 +15,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,7 +22,6 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.lazy.grid.GridCells
@@ -33,7 +31,6 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
@@ -61,13 +58,11 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import com.phoebe.app.data.catalogAlbumBitrateKbps
 import com.phoebe.app.data.catalogAlbumCodec
 import com.phoebe.app.data.catalogAlbumGenre
 import com.phoebe.app.data.catalogAlbumTotalDurationMs
@@ -105,7 +100,7 @@ enum class AlbumSortKey { RecentlyAdded, Name, Year, Artist }
 
 enum class SongFileFilter { All, Lossless, Lossy }
 
-enum class LibraryViewMode { Grid, List }
+enum class LibraryViewMode { Grid, List, Flow }
 
 private const val JellyfinLibraryPageSize = 100
 
@@ -434,14 +429,15 @@ private fun FavoriteLibraryToolbar(
             DropdownMenuItem(text = { Text("A-Z") }, onClick = { onAscending(true); close() })
             DropdownMenuItem(text = { Text("Z-A / Desc") }, onClick = { onAscending(false); close() })
         }
-        LibraryDropdown(label = "View", value = if (viewMode == LibraryViewMode.Grid) "Grid" else "List") { close ->
+        LibraryDropdown(label = "View", value = viewMode.label()) { close ->
             DropdownMenuItem(text = { Text("Grid") }, onClick = { onViewMode(LibraryViewMode.Grid); close() })
             DropdownMenuItem(text = { Text("List") }, onClick = { onViewMode(LibraryViewMode.List); close() })
+            DropdownMenuItem(text = { Text("Flow") }, onClick = { onViewMode(LibraryViewMode.Flow); close() })
         }
     }
 }
 
-/** Top-level desktop Library view: header, tabs, toolbar, content, and right detail sidebar. */
+/** Top-level desktop Library view: header, tabs, toolbar, and content. */
 @Composable
 fun LibraryDesktopView(
     catalog: CatalogSnapshot,
@@ -452,6 +448,7 @@ fun LibraryDesktopView(
     onLibrarySortBy: (LibrarySortBy) -> Unit,
     onLibraryAscending: (Boolean) -> Unit,
     onLibraryColumns: (LibraryColumnVisibility) -> Unit,
+    onLibraryViewMode: (LibraryViewMode) -> Unit = {},
     onArtist: (Artist) -> Unit,
     onAlbum: (Album) -> Unit,
     onPlayTracks: (List<Track>, Int) -> Unit,
@@ -459,7 +456,6 @@ fun LibraryDesktopView(
     onDownload: (Track) -> Unit,
     onAddToEndOfQueue: (Track) -> Unit = {},
     modifier: Modifier = Modifier,
-    detailWidth: androidx.compose.ui.unit.Dp = 278.dp,
     searchQuery: String = "",
     onSearchQuery: (String) -> Unit = {},
     jellyfinPagination: Boolean = false,
@@ -467,7 +463,7 @@ fun LibraryDesktopView(
 ) {
     var selectedAlbumId by remember { mutableStateOf<String?>(null) }
     var selectedTrackId by remember { mutableStateOf<String?>(null) }
-    var libraryViewMode by remember { mutableStateOf(LibraryViewMode.Grid) }
+    val libraryViewMode = libraryUi.resolvedViewMode()
     var songFilter by remember { mutableStateOf(SongFileFilter.All) }
     var pageIndex by remember(filter) { mutableStateOf(0) }
 
@@ -570,7 +566,7 @@ fun LibraryDesktopView(
                 onAscending = onLibraryAscending,
                 onColumns = onLibraryColumns,
                 libraryViewMode = libraryViewMode,
-                onLibraryViewMode = { libraryViewMode = it },
+                onLibraryViewMode = onLibraryViewMode,
                 songFilter = songFilter,
                 onSongFilter = { songFilter = it },
             )
@@ -591,85 +587,48 @@ fun LibraryDesktopView(
                     pageIndex = it
                 })
             }
-            if (narrowPane || filter != LibraryFilterTab.Albums) {
-                when (filter) {
-                    LibraryFilterTab.Artists -> ArtistsContent(
-                        catalog = catalog,
-                        artists = artistPage.items,
-                        viewMode = libraryViewMode,
-                        artistGridItemSizeDp = libraryUi.artistGridItemSizeDp,
-                        sortBy = sortBy,
-                        ascending = ascending,
-                        onArtist = onArtist,
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                    )
-                    LibraryFilterTab.Albums -> AlbumsGrid(
-                        catalog = catalog,
-                        albums = albumPage.items,
-                        selectedAlbumId = selectedAlbumId,
-                        viewMode = libraryViewMode,
-                        albumGridItemSizeDp = libraryUi.albumGridItemSizeDp,
-                        sortBy = sortBy,
-                        ascending = ascending,
-                        onSelect = { selectedAlbumId = it.id },
-                        onOpen = onAlbum,
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                    )
-                    LibraryFilterTab.Songs -> SongsTable(
-                        tracks = trackPage.items,
-                        selectedTrackId = selectedTrackId,
-                        columns = libraryUi.columns,
-                        sortBy = sortBy,
-                        ascending = ascending,
-                        onSelect = { track ->
-                            selectedTrackId = track.id
-                            trackPage.items.indexOfFirst { it.id == track.id }
-                                .takeIf { it >= 0 }
-                                ?.let { index -> onPlayTracks(trackPage.items, index) }
-                        },
-                        onPlay = { index -> onPlayTracks(trackPage.items, index) },
-                        onAddToUpNext = onAddToUpNext,
-                        onAddToEndOfQueue = onAddToEndOfQueue,
-                        onDownload = onDownload,
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                    )
-                }
-            } else {
-                Row(
-                    Modifier.weight(1f).fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(28.dp),
-                ) {
-                    AlbumsGrid(
-                        catalog = catalog,
-                        albums = albumPage.items,
-                        selectedAlbumId = selectedAlbumId,
-                        viewMode = libraryViewMode,
-                        albumGridItemSizeDp = libraryUi.albumGridItemSizeDp,
-                        sortBy = sortBy,
-                        ascending = ascending,
-                        onSelect = { selectedAlbumId = it.id },
-                        onOpen = onAlbum,
-                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                    )
-                    Column(
-                        modifier = Modifier
-                            .width(detailWidth)
-                            .fillMaxHeight(),
-                    ) {
-                        val selected = albumPage.items.firstOrNull { it.id == selectedAlbumId }
-                            ?: sortedAlbums.firstOrNull { it.id == selectedAlbumId }
-                        if (selected != null) {
-                            AlbumDetailSidebar(
-                                album = selected,
-                                columns = libraryUi.columns,
-                                catalog = catalog,
-                                onPlayTrack = { tracks, index -> onPlayTracks(tracks, index) },
-                            )
-                        } else {
-                            LibraryEmptyDetail("Select an album to see details.")
-                        }
-                    }
-                }
+            when (filter) {
+                LibraryFilterTab.Artists -> ArtistsContent(
+                    catalog = catalog,
+                    artists = artistPage.items,
+                    viewMode = libraryViewMode,
+                    artistGridItemSizeDp = libraryUi.artistGridItemSizeDp,
+                    sortBy = sortBy,
+                    ascending = ascending,
+                    onArtist = onArtist,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
+                LibraryFilterTab.Albums -> AlbumsGrid(
+                    catalog = catalog,
+                    albums = albumPage.items,
+                    selectedAlbumId = selectedAlbumId,
+                    viewMode = libraryViewMode,
+                    albumGridItemSizeDp = libraryUi.albumGridItemSizeDp,
+                    sortBy = sortBy,
+                    ascending = ascending,
+                    onSelect = { selectedAlbumId = it.id },
+                    onOpen = onAlbum,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
+                LibraryFilterTab.Songs -> SongsTable(
+                    tracks = trackPage.items,
+                    selectedTrackId = selectedTrackId,
+                    columns = libraryUi.columns,
+                    sortBy = sortBy,
+                    ascending = ascending,
+                    viewMode = libraryViewMode,
+                    onSelect = { track ->
+                        selectedTrackId = track.id
+                        trackPage.items.indexOfFirst { it.id == track.id }
+                            .takeIf { it >= 0 }
+                            ?.let { index -> onPlayTracks(trackPage.items, index) }
+                    },
+                    onPlay = { index -> onPlayTracks(trackPage.items, index) },
+                    onAddToUpNext = onAddToUpNext,
+                    onAddToEndOfQueue = onAddToEndOfQueue,
+                    onDownload = onDownload,
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                )
             }
         }
     }
@@ -987,7 +946,7 @@ fun LibrarySectionOptionsMenu(
                     if (hasView) {
                         OptionsNavigationMenuItem(
                             label = "View",
-                            value = if (viewMode == LibraryViewMode.Grid) "Grid" else "List",
+                            value = viewMode?.label(),
                             onClick = { submenu = LibrarySectionOptionsSubmenu.View },
                         )
                     }
@@ -1106,6 +1065,15 @@ fun LibrarySectionOptionsMenu(
                             selected = viewMode == LibraryViewMode.List,
                             onClick = {
                                 selectViewMode(LibraryViewMode.List)
+                                expanded = false
+                                submenu = null
+                            },
+                        )
+                        SelectableOptionsMenuItem(
+                            label = "Flow",
+                            selected = viewMode == LibraryViewMode.Flow,
+                            onClick = {
+                                selectViewMode(LibraryViewMode.Flow)
                                 expanded = false
                                 submenu = null
                             },
@@ -1302,40 +1270,54 @@ fun LibraryFilterOptionsMenuItems(
             onDismiss()
         },
     )
-    if (filter != LibraryFilterTab.Songs) {
-        DropdownMenuItem(
-            text = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (libraryViewMode == LibraryViewMode.Grid) {
-                        PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
-                    } else {
-                        Spacer(Modifier.size(14.dp))
-                    }
-                    Text("View: Grid")
+    DropdownMenuItem(
+        text = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (libraryViewMode == LibraryViewMode.Grid) {
+                    PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
+                } else {
+                    Spacer(Modifier.size(14.dp))
                 }
-            },
-            onClick = {
-                onLibraryViewMode(LibraryViewMode.Grid)
-                onDismiss()
-            },
-        )
-        DropdownMenuItem(
-            text = {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (libraryViewMode == LibraryViewMode.List) {
-                        PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
-                    } else {
-                        Spacer(Modifier.size(14.dp))
-                    }
-                    Text("View: List")
+                Text("View: Grid")
+            }
+        },
+        onClick = {
+            onLibraryViewMode(LibraryViewMode.Grid)
+            onDismiss()
+        },
+    )
+    DropdownMenuItem(
+        text = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (libraryViewMode == LibraryViewMode.List) {
+                    PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
+                } else {
+                    Spacer(Modifier.size(14.dp))
                 }
-            },
-            onClick = {
-                onLibraryViewMode(LibraryViewMode.List)
-                onDismiss()
-            },
-        )
-    }
+                Text("View: List")
+            }
+        },
+        onClick = {
+            onLibraryViewMode(LibraryViewMode.List)
+            onDismiss()
+        },
+    )
+    DropdownMenuItem(
+        text = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (libraryViewMode == LibraryViewMode.Flow) {
+                    PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
+                } else {
+                    Spacer(Modifier.size(14.dp))
+                }
+                Text("View: Flow")
+            }
+        },
+        onClick = {
+            onLibraryViewMode(LibraryViewMode.Flow)
+            onDismiss()
+        },
+    )
     if (filter == LibraryFilterTab.Songs && songFilter != null && onSongFilter != null) {
         SongFileFilter.entries.forEach { option ->
             DropdownMenuItem(
@@ -1679,13 +1661,6 @@ private fun PlaylistEditRemoveButton(
 }
 
 @Composable
-private fun LibraryEmptyDetail(message: String) {
-    Box(Modifier.fillMaxSize().padding(top = 36.dp), contentAlignment = Alignment.TopCenter) {
-        Text(message, color = PhoebeUi.mutedText, fontSize = 13.sp, textAlign = TextAlign.Center)
-    }
-}
-
-@Composable
 fun LibraryLoadingStrip(modifier: Modifier = Modifier) {
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         LinearProgressIndicator(
@@ -1809,6 +1784,17 @@ private fun ArtistsContent(
                     revealSignal = revealIndex,
                     scrollbarState = scrollbarState,
                     modifier = Modifier.align(Alignment.CenterEnd),
+                )
+            }
+        }
+        LibraryViewMode.Flow -> {
+            Box(modifier, contentAlignment = Alignment.Center) {
+                ArtistCoverFlow(
+                    artists = artists,
+                    selectedArtistId = null,
+                    onSelect = {},
+                    onOpen = onArtist,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
@@ -2128,6 +2114,17 @@ private fun AlbumsGrid(
                 )
             }
         }
+        LibraryViewMode.Flow -> {
+            Box(modifier, contentAlignment = Alignment.Center) {
+                AlbumCoverFlow(
+                    albums = albums,
+                    selectedAlbumId = selectedAlbumId,
+                    onSelect = onSelect,
+                    onOpen = onOpen,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        }
     }
 }
 
@@ -2298,7 +2295,31 @@ private fun SongsTable(
     onDownload: (Track) -> Unit,
     onAddToEndOfQueue: (Track) -> Unit = {},
     modifier: Modifier = Modifier,
+    viewMode: LibraryViewMode = LibraryViewMode.List,
 ) {
+    if (viewMode == LibraryViewMode.Flow) {
+        if (tracks.isEmpty()) {
+            Box(modifier.padding(top = 24.dp)) {
+                Text("No songs yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+            }
+            return
+        }
+        Box(modifier, contentAlignment = Alignment.Center) {
+            TrackCoverFlow(
+                tracks = tracks,
+                selectedTrackId = selectedTrackId,
+                onSelect = {},
+                onOpen = { track ->
+                    tracks.indexOfFirst { it.id == track.id }
+                        .takeIf { it >= 0 }
+                        ?.let(onPlay)
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+        }
+        return
+    }
+
     val indexEntries = remember(tracks, sortBy, ascending) {
         libraryTrackScrollIndex(tracks, sortBy, ascending)
     }
@@ -2595,206 +2616,6 @@ fun SongRow(
                 onAddToEndOfQueue = onAddToEndOfQueue,
             )
         }
-    }
-}
-
-// =====================================================================
-// Detail sidebars
-// =====================================================================
-
-@Composable
-private fun AlbumDetailSidebar(
-    album: Album,
-    columns: LibraryColumnVisibility,
-    catalog: CatalogSnapshot,
-    onPlayTrack: (List<Track>, Int) -> Unit,
-) {
-    val tracks = remember(catalog, album.id) { catalogTracksForAlbum(catalog, album.id) }
-    val codec = remember(catalog, album.id) { catalogAlbumCodec(catalog, album.id) }
-    val genre = remember(catalog, album.id) { catalogAlbumGenre(catalog, album.id) }
-    val bitrate = remember(catalog, album.id) { catalogAlbumBitrateKbps(catalog, album.id) }
-    val duration = remember(tracks) { tracks.sumOf { it.durationMs } }
-    val sampleRate = remember(tracks) { tracks.firstOrNull { isLossless(it) }?.let { "44.1 kHz" } ?: tracks.firstOrNull()?.let { "—" } ?: "—" }
-
-    Column(
-        modifier = Modifier
-            .fillMaxHeight()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Box(Modifier.fillMaxWidth().aspectRatio(1f).widthIn(max = 232.dp)) {
-                ArtworkImage(album.title, album.thumbUrl, Modifier.fillMaxSize(), radius = 12.dp)
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(album.title, color = PhoebeUi.primaryText, fontSize = 18.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(album.artist.uppercase(), color = PhoebeUi.secondaryText, fontSize = 11.sp, letterSpacing = 0.06.em)
-            }
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            album.year?.let { DetailMetaRow("Released", "Sep 8, $it") }
-            if (columns.genre) DetailMetaRow("Genre", genre ?: "—")
-            DetailMetaRow("Tracks", tracks.size.toString())
-            if (columns.duration) DetailMetaRow("Total Duration", formatMinutesLabel(duration))
-            Spacer(Modifier.height(6.dp))
-            if (columns.audioCodec) DetailMetaRow("Codec", codec ?: "—")
-            if (columns.bitrate) DetailMetaRow(
-                "Bitrate",
-                if (codec.equals("FLAC", true) || codec.equals("ALAC", true)) "Lossless" else bitrate?.let { "$it kbps" } ?: "—",
-            )
-            if (columns.sampleRate) DetailMetaRow("Sample Rate", sampleRate)
-            if (columns.fileType) DetailMetaRow(
-                "File Type",
-                tracks.firstOrNull()?.let { displayFileTypeLabel(it) } ?: "—",
-            )
-            DetailMetaRow("File Size", "—")
-            Spacer(Modifier.height(6.dp))
-            DetailMetaRow("Location", "Local Library")
-            if (columns.filepath) DetailMetaRow(
-                "File Path",
-                tracks.firstOrNull()?.filepath?.let(::shortenFilepath)?.let { "/$it" } ?: "—",
-            )
-        }
-        Spacer(Modifier.height(4.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Top Tracks".uppercase(), color = PhoebeUi.mutedText, fontSize = 10.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.08.em)
-            Spacer(Modifier.weight(1f))
-            Text("View All", color = PhoebeUi.accentLight, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            tracks.take(5).forEachIndexed { index, t ->
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(6.dp)).phoebeClickable { onPlayTrack(tracks, index) }.padding(vertical = 3.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    Text("${index + 1}", color = PhoebeUi.mutedText, fontSize = 11.sp, modifier = Modifier.width(16.dp))
-                    Text(t.title, color = PhoebeUi.secondaryText, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    Text(formatMinutesSeconds(t.durationMs), color = PhoebeUi.mutedText, fontSize = 11.sp)
-                }
-            }
-            if (tracks.isEmpty()) {
-                Text("No tracks loaded yet.", color = PhoebeUi.mutedText, fontSize = 11.sp)
-            }
-        }
-    }
-}
-
-@Composable
-private fun SongDetailSidebar(
-    track: Track,
-    columns: LibraryColumnVisibility,
-    onPlay: () -> Unit,
-    onAddToPlaylist: () -> Unit,
-    onDownload: () -> Unit,
-) {
-    var playlistMenuExpanded by remember(track.id) { mutableStateOf(false) }
-    val nowPlaying = LocalNowPlaying.current
-    val likeActions = LocalLikeActions.current
-    val isCurrent = nowPlaying.trackId == track.id
-    Column(
-        modifier = Modifier
-            .fillMaxHeight()
-            .verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
-    ) {
-        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .aspectRatio(1f)
-                    .widthIn(max = 232.dp)
-                    .clip(RoundedCornerShape(12.dp))
-                    .phoebeClickable(onClick = onPlay),
-            ) {
-                TrackArtworkImage(track, Modifier.fillMaxSize(), radius = 12.dp)
-                if (isCurrent) {
-                    Box(
-                        Modifier
-                            .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.45f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        NowPlayingIndicator(
-                            isPlaying = nowPlaying.isPlaying,
-                            isBuffering = nowPlaying.isBuffering,
-                            modifier = Modifier.size(36.dp),
-                        )
-                    }
-                }
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(track.title, color = PhoebeUi.primaryText, fontSize = 17.sp, fontWeight = FontWeight.Black, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(track.artist.uppercase(), color = PhoebeUi.secondaryText, fontSize = 11.sp, letterSpacing = 0.06.em)
-                if (track.album.isNotBlank()) {
-                    Text(track.album, color = PhoebeUi.mutedText, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            if (columns.duration) DetailMetaRow("Duration", formatMinutesSeconds(track.durationMs))
-            if (columns.audioCodec) DetailMetaRow("Codec", track.audioCodec?.uppercase() ?: "—")
-            if (columns.bitrate) DetailMetaRow("Bitrate", displayBitrateLabel(track))
-            if (columns.sampleRate) DetailMetaRow("Sample Rate", displaySampleRateLabel(track))
-            if (columns.fileType) DetailMetaRow("File Type", displayFileTypeLabel(track))
-            DetailMetaRow("Channels", "2 (Stereo)")
-            DetailMetaRow("File Size", "—")
-            if (columns.dateAdded) DetailMetaRow("Date Added", "—")
-            DetailMetaRow("Play Count", "—")
-            if (columns.filepath) DetailMetaRow("File Path", track.filepath?.let(::shortenFilepath)?.let { "/$it" } ?: "—")
-        }
-        Spacer(Modifier.height(2.dp))
-        Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            if (likeActions.likesEnabled && track.canTogglePlexLike()) {
-                SongDetailAction(
-                    PhoebeIcon.Heart,
-                    if (likeActions.isLiked(track)) "Unlike Song" else "Like Song",
-                ) { likeActions.onToggleLiked(track) }
-            }
-            Box {
-                SongDetailAction(PhoebeIcon.Plus, "Add to Playlist") { playlistMenuExpanded = true }
-                DropdownMenu(
-                    expanded = playlistMenuExpanded,
-                    onDismissRequest = { playlistMenuExpanded = false },
-                ) {
-                    AddToPlaylistMenuItems(
-                        track = track,
-                        onAfter = { playlistMenuExpanded = false },
-                        startExpanded = true,
-                    )
-                }
-            }
-            DownloadActionButton("Download Song", listOf(track), onClick = onDownload)
-        }
-    }
-}
-
-@Composable
-private fun SongDetailAction(icon: PhoebeIcon, label: String, onClick: () -> Unit) {
-    Row(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .phoebeClickable(onClick = onClick)
-            .padding(vertical = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        PhoebeIconView(icon, tint = PhoebeUi.mutedText, modifier = Modifier.size(16.dp))
-        Text(label, color = PhoebeUi.secondaryText, fontSize = 12.sp, modifier = Modifier.weight(1f))
-        PhoebeIconView(PhoebeIcon.Forward, tint = PhoebeUi.mutedText, modifier = Modifier.size(14.dp))
-    }
-}
-
-@Composable
-private fun DetailMetaRow(label: String, value: String) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, color = PhoebeUi.mutedText, fontSize = 11.sp, modifier = Modifier.weight(1f))
-        Text(value, color = PhoebeUi.primaryText, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
