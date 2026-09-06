@@ -1108,7 +1108,7 @@ private fun PhoebeRootStateHolder(
             Unit
         }
     }
-    LaunchedEffect(screen, browseSection, catalog.albums, catalog.tracksByParent.keys, session?.selectedServer, trackHeavySectionsEnabled) {
+    LaunchedEffect(screen, browseSection, catalog.albums, session?.selectedServer, trackHeavySectionsEnabled) {
         if (!trackHeavySectionsEnabled) return@LaunchedEffect
         if (screen == AppScreen.Home && browseSection == BrowseSection.Home) {
             delay(1_500L)
