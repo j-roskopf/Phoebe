@@ -28,6 +28,7 @@ class AndroidPlaybackSmokeActivity : Activity() {
 
         val path = intent.getStringExtra(ExtraPath).orEmpty()
         val timeoutMs = intent.getLongExtra(ExtraTimeoutMs, DefaultTimeoutMs).takeIf { it > 0L } ?: DefaultTimeoutMs
+        val mode = intent.getStringExtra(ExtraMode).orEmpty().ifBlank { ModePlayback }
         val file = runCatching { resolveSmokeFile(path) }
             .getOrElse { error ->
                 logSmoke(
@@ -46,38 +47,107 @@ class AndroidPlaybackSmokeActivity : Activity() {
         val diagnostics = AndroidSmokeDiagnostics()
         val smokePlayer = AndroidAudioPlayer(diagnostics)
         player = smokePlayer
-        val track = file.toSmokeTrack()
         scope.launch {
             try {
-                diagnostics.markPlayRequested()
-                smokePlayer.play(listOf(track), 0)
-                val deadline = SystemClock.elapsedRealtime() + timeoutMs
-                while (SystemClock.elapsedRealtime() <= deadline) {
-                    val snapshot = diagnostics.snapshot()
-                    val firstAudioMs = snapshot.firstAudioMs
-                    if (firstAudioMs != null) {
-                        logSmoke(
-                            "PHOEBE_PLAYBACK_SMOKE_OK firstAudioMs=$firstAudioMs " +
-                                "engines=${snapshot.engines.asSmokeValue()} errors=${snapshot.errors.asSmokeValue()} " +
-                                "file=${file.absolutePath.asSmokeValue()}",
-                        )
-                        return@launch
-                    }
-                    delay(100L)
+                when (mode) {
+                    ModeShuffleLastTrack -> runShuffleLastTrackSmoke(smokePlayer, file, timeoutMs)
+                    else -> runPlaybackSmoke(smokePlayer, diagnostics, file, timeoutMs)
                 }
-
-                val snapshot = diagnostics.snapshot()
-                val state = smokePlayer.state.value
-                logSmoke(
-                    "PHOEBE_PLAYBACK_SMOKE_FAILED reason=timeout timeoutMs=$timeoutMs " +
-                        "engines=${snapshot.engines.asSmokeValue()} errors=${snapshot.errors.asSmokeValue()} " +
-                        "buffering=${state.isBuffering} playing=${state.isPlaying} errorSerial=${state.playbackErrorSerial} " +
-                        "file=${file.absolutePath.asSmokeValue()}",
-                )
             } finally {
                 smokePlayer.releaseForTests()
                 finishAndRemoveTask()
             }
+        }
+    }
+
+    private suspend fun runPlaybackSmoke(
+        smokePlayer: AndroidAudioPlayer,
+        diagnostics: AndroidSmokeDiagnostics,
+        file: File,
+        timeoutMs: Long,
+    ) {
+        val track = file.toSmokeTrack(id = "android-playback-smoke")
+        diagnostics.markPlayRequested()
+        smokePlayer.play(listOf(track), 0)
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() <= deadline) {
+            val snapshot = diagnostics.snapshot()
+            val firstAudioMs = snapshot.firstAudioMs
+            if (firstAudioMs != null) {
+                logSmoke(
+                    "PHOEBE_PLAYBACK_SMOKE_OK firstAudioMs=$firstAudioMs " +
+                        "engines=${snapshot.engines.asSmokeValue()} errors=${snapshot.errors.asSmokeValue()} " +
+                        "file=${file.absolutePath.asSmokeValue()}",
+                )
+                return
+            }
+            delay(100L)
+        }
+
+        val snapshot = diagnostics.snapshot()
+        val state = smokePlayer.state.value
+        logSmoke(
+            "PHOEBE_PLAYBACK_SMOKE_FAILED reason=timeout timeoutMs=$timeoutMs " +
+                "engines=${snapshot.engines.asSmokeValue()} errors=${snapshot.errors.asSmokeValue()} " +
+                "buffering=${state.isBuffering} playing=${state.isPlaying} errorSerial=${state.playbackErrorSerial} " +
+                "file=${file.absolutePath.asSmokeValue()}",
+        )
+    }
+
+    private suspend fun runShuffleLastTrackSmoke(
+        smokePlayer: AndroidAudioPlayer,
+        file: File,
+        timeoutMs: Long,
+    ) {
+        val tracks = (1..5).map { index ->
+            file.toSmokeTrack(id = "android-shuffle-smoke-$index", title = "Smoke $index")
+        }
+        smokePlayer.play(tracks, tracks.lastIndex)
+        val deadline = SystemClock.elapsedRealtime() + timeoutMs
+        while (SystemClock.elapsedRealtime() <= deadline && smokePlayer.state.value.currentTrack?.id != tracks.last().id) {
+            delay(50L)
+        }
+        val before = smokePlayer.state.value
+        if (before.currentTrack?.id != tracks.last().id) {
+            logSmoke(
+                "PHOEBE_PLAYBACK_SMOKE_FAILED reason=shuffle-last-track-not-current " +
+                    "current=${before.currentTrack?.id.orEmpty().asSmokeValue()} timeoutMs=$timeoutMs",
+            )
+            return
+        }
+        if (before.upNext.isNotEmpty()) {
+            logSmoke(
+                "PHOEBE_PLAYBACK_SMOKE_FAILED reason=shuffle-last-track-unexpected-up-next " +
+                    "upNext=${before.upNext.size} timeoutMs=$timeoutMs",
+            )
+            return
+        }
+
+        smokePlayer.setShuffle(true)
+        // Android rebases the Media3 window asynchronously after onQueueEdited.
+        delay(500L)
+
+        val after = smokePlayer.state.value
+        val expectedIds = tracks.dropLast(1).map { it.id }.toSet()
+        val upNextIds = after.upNext.map { it.id }.toSet()
+        val ok = after.shuffle &&
+            after.currentTrack?.id == tracks.last().id &&
+            after.currentIndex == 0 &&
+            after.upNext.size == expectedIds.size &&
+            upNextIds == expectedIds
+        if (ok) {
+            logSmoke(
+                "PHOEBE_PLAYBACK_SMOKE_OK mode=shuffle-last-track " +
+                    "current=${after.currentTrack?.id.orEmpty().asSmokeValue()} upNext=${after.upNext.size} " +
+                    "file=${file.absolutePath.asSmokeValue()}",
+            )
+        } else {
+            logSmoke(
+                "PHOEBE_PLAYBACK_SMOKE_FAILED reason=shuffle-last-track-order " +
+                    "shuffle=${after.shuffle} current=${after.currentTrack?.id.orEmpty().asSmokeValue()} " +
+                    "currentIndex=${after.currentIndex} upNext=${after.upNext.map { it.id }.joinToString(",").asSmokeValue()} " +
+                    "timeoutMs=$timeoutMs",
+            )
         }
     }
 
@@ -86,11 +156,14 @@ class AndroidPlaybackSmokeActivity : Activity() {
         super.onDestroy()
     }
 
-    private fun File.toSmokeTrack(): Track {
+    private fun File.toSmokeTrack(
+        id: String,
+        title: String = name,
+    ): Track {
         val uri = toURI().toString()
         return Track(
-            id = "android-playback-smoke",
-            title = name,
+            id = id,
+            title = title,
             artist = "Phoebe Smoke",
             album = "Android Playback Smoke",
             durationMs = 60_000L,
@@ -117,6 +190,9 @@ class AndroidPlaybackSmokeActivity : Activity() {
     private companion object {
         const val ExtraPath = "phoebe.playbackSmoke.path"
         const val ExtraTimeoutMs = "phoebe.playbackSmoke.timeoutMs"
+        const val ExtraMode = "phoebe.playbackSmoke.mode"
+        const val ModePlayback = "playback"
+        const val ModeShuffleLastTrack = "shuffle-last-track"
         const val DefaultTimeoutMs = 30_000L
         const val LogTag = "PhoebePlaybackSmoke"
     }
