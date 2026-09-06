@@ -81,8 +81,8 @@ fun RecentlyAddedScreen(
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
 ) {
-    val page = remember(kind, catalog, nowMs) {
-        RecentlyAddedPage.from(kind, catalog, nowMs)
+    val page = remember(kind, catalog) {
+        RecentlyAddedPage.from(kind, catalog)
     }
     Column(
         modifier
@@ -145,7 +145,7 @@ private fun RecentlyAddedHeader(page: RecentlyAddedPage, onBack: () -> Unit) {
                 letterSpacing = 0.08.em,
             )
             Text(page.title, color = PhoebeUi.primaryText, fontSize = 28.sp, fontWeight = FontWeight.Black)
-            Text("${page.count} from the last 7 days", color = PhoebeUi.secondaryText, fontSize = 13.sp)
+            Text("${page.count} most recently added", color = PhoebeUi.secondaryText, fontSize = 13.sp)
         }
     }
 }
@@ -160,7 +160,7 @@ private fun RecentlyAddedSongs(
     modifier: Modifier = Modifier,
 ) {
     if (tracks.isEmpty()) {
-        RecentlyAddedEmpty("No songs were added in the last 7 days.", modifier)
+        RecentlyAddedEmpty("No songs in your library yet.", modifier)
         return
     }
     LazyColumn(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -188,7 +188,7 @@ private fun RecentlyAddedArtists(
     modifier: Modifier = Modifier,
 ) {
     if (artists.isEmpty()) {
-        RecentlyAddedEmpty("No artists were added in the last 7 days.", modifier)
+        RecentlyAddedEmpty("No artists in your library yet.", modifier)
         return
     }
     LazyVerticalGrid(
@@ -222,7 +222,7 @@ private fun RecentlyAddedAlbums(
     modifier: Modifier = Modifier,
 ) {
     if (albums.isEmpty()) {
-        RecentlyAddedEmpty("No albums were added in the last 7 days.", modifier)
+        RecentlyAddedEmpty("No albums in your library yet.", modifier)
         return
     }
     LazyVerticalGrid(
@@ -426,22 +426,18 @@ private data class RecentlyAddedPage(
         get() = tracks.size + artists.size + albums.size
 
     companion object {
-        fun from(kind: RecentlyAddedKind, catalog: CatalogSnapshot, nowMs: Long): RecentlyAddedPage {
-            val cutoffMs = nowMs - RecentlyAddedWindowMs
+        fun from(kind: RecentlyAddedKind, catalog: CatalogSnapshot): RecentlyAddedPage {
             val albumAddedByTitle = albumAddedByTitle(catalog)
             val artistAddedByTitle = artistAddedByTitle(catalog)
             val tracks = catalog.tracksByParent.values
                 .asSequence()
                 .flatten()
                 .distinctBy { it.id }
-                .filter { effectiveTrackDateAdded(it, albumAddedByTitle) >= cutoffMs }
                 .sortedByDescending { effectiveTrackDateAdded(it, albumAddedByTitle) }
                 .toList()
             val albums = catalog.albums
-                .filter { (it.dateAddedMs ?: Long.MIN_VALUE) >= cutoffMs }
                 .sortedByDescending { it.dateAddedMs ?: 0L }
             val artists = catalog.artists
-                .filter { artist -> recentlyAddedAt(artist, artistAddedByTitle) >= cutoffMs }
                 .sortedByDescending { artist -> recentlyAddedAt(artist, artistAddedByTitle) }
             return when (kind) {
                 RecentlyAddedKind.Songs -> RecentlyAddedPage("Songs", tracks = tracks)

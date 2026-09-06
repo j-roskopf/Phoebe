@@ -19,7 +19,6 @@ import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.playHistoryIdentityKey
 import kotlin.random.Random
 
-const val RecentlyAddedWindowMs = 7L * 24L * 60L * 60L * 1000L
 internal const val HeavyRotationWindowMs = 14L * 24L * 60L * 60L * 1000L
 private const val HeavyRotationMinimumRecentPlays = 2L
 
@@ -124,7 +123,6 @@ class HomeCatalogIndexCache {
     fun trackIndex(
         catalog: CatalogSnapshot,
         albumAddedByTitle: Map<String, Long>,
-        cutoffMs: Long,
         limit: Int,
     ): HomeTrackIndex {
         val key = catalog.trackIndexKey()
@@ -141,9 +139,9 @@ class HomeCatalogIndexCache {
             val changedParents = newCounts.keys.filter { parentId ->
                 (parentTrackCounts[parentId] ?: 0) != newCounts[parentId]
             }.toSet()
-            mergeParents(catalog, albumAddedByTitle, cutoffMs, limit, changedParents)
+            mergeParents(catalog, albumAddedByTitle, limit, changedParents)
         } else {
-            rebuild(catalog, albumAddedByTitle, cutoffMs, limit)
+            rebuild(catalog, albumAddedByTitle, limit)
         }
         parentTrackCounts = newCounts
         trackIndexKey = key
@@ -153,24 +151,22 @@ class HomeCatalogIndexCache {
     private fun rebuild(
         catalog: CatalogSnapshot,
         albumAddedByTitle: Map<String, Long>,
-        cutoffMs: Long,
         limit: Int,
     ) {
         tracksById = linkedMapOf()
         recentlyAdded = mutableListOf()
-        mergeParents(catalog, albumAddedByTitle, cutoffMs, limit, catalog.tracksByParent.keys.toSet())
+        mergeParents(catalog, albumAddedByTitle, limit, catalog.tracksByParent.keys.toSet())
     }
 
     private fun mergeParents(
         catalog: CatalogSnapshot,
         albumAddedByTitle: Map<String, Long>,
-        cutoffMs: Long,
         limit: Int,
         parentIds: Set<String>,
     ) {
         parentIds.forEach { parentId ->
             catalog.tracksByParent[parentId]?.forEach { track ->
-                ingestTrack(track, albumAddedByTitle, cutoffMs, limit)
+                ingestTrack(track, albumAddedByTitle, limit)
             }
         }
     }
@@ -178,15 +174,12 @@ class HomeCatalogIndexCache {
     private fun ingestTrack(
         track: Track,
         albumAddedByTitle: Map<String, Long>,
-        cutoffMs: Long,
         limit: Int,
     ) {
         if (track.id in tracksById) return
         tracksById[track.id] = track
         val addedAt = effectiveTrackDateAdded(track, albumAddedByTitle)
-        if (addedAt >= cutoffMs) {
-            insertBounded(recentlyAdded, track, addedAt, limit, descending = true)
-        }
+        insertBounded(recentlyAdded, track, addedAt, limit, descending = true)
     }
 }
 
@@ -202,24 +195,23 @@ fun deriveHomeUiState(
     includeTrackDerivedSections: Boolean = true,
     resolvedTracksById: Map<String, Track> = emptyMap(),
 ): HomeUiState {
-    val cutoffMs = nowMs - RecentlyAddedWindowMs
     val albumAddedByTitle = albumAddedByTitle(catalog)
     val artistAddedByTitle = artistAddedByTitle(catalog)
     val trackIndex = if (includeTrackDerivedSections) {
-        trackIndexCache?.trackIndex(catalog, albumAddedByTitle, cutoffMs, limit)
-            ?: homeTrackIndex(catalog, albumAddedByTitle, cutoffMs, limit)
+        trackIndexCache?.trackIndex(catalog, albumAddedByTitle, limit)
+            ?: homeTrackIndex(catalog, albumAddedByTitle, limit)
     } else {
         HomeTrackIndex(emptyMap(), emptyList())
     }
     val recentArtists = topBy(
-        catalog.artists.asSequence().filter { artist -> recentlyAddedAt(artist, artistAddedByTitle) >= cutoffMs },
+        catalog.artists.asSequence(),
         limit = limit,
         descending = true,
     ) { artist ->
         recentlyAddedAt(artist, artistAddedByTitle)
     }
     val recentAlbums = topBy(
-        catalog.albums.asSequence().filter { (it.dateAddedMs ?: Long.MIN_VALUE) >= cutoffMs },
+        catalog.albums.asSequence(),
         limit = limit,
         descending = true,
     ) { album ->
@@ -386,7 +378,6 @@ private fun mostFrequentGenre(tracks: List<Track>): String? {
 private fun homeTrackIndex(
     catalog: CatalogSnapshot,
     albumAddedByTitle: Map<String, Long>,
-    cutoffMs: Long,
     limit: Int,
 ): HomeTrackIndex {
     val tracksById = linkedMapOf<String, Track>()
@@ -396,9 +387,7 @@ private fun homeTrackIndex(
             if (track.id !in tracksById) {
                 tracksById[track.id] = track
                 val addedAt = effectiveTrackDateAdded(track, albumAddedByTitle)
-                if (addedAt >= cutoffMs) {
-                    insertBounded(recentlyAdded, track, addedAt, limit, descending = true)
-                }
+                insertBounded(recentlyAdded, track, addedAt, limit, descending = true)
             }
         }
     }

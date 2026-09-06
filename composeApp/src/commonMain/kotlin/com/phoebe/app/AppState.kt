@@ -2162,12 +2162,11 @@ class AppState(
         }
     }
 
-    fun warmRecentAlbumTracks(cutoffMs: Long, maxAlbums: Int = 10) {
+    fun warmRecentAlbumTracks(maxAlbums: Int = 10) {
         if (!session.value.canUsePlexBackgroundFetches()) return
         val snapshot = catalog.value
         val albumIds = snapshot.albums
             .asSequence()
-            .filter { (it.dateAddedMs ?: Long.MIN_VALUE) >= cutoffMs }
             .filter { snapshot.tracksByParent[it.id].isNullOrEmpty() }
             .sortedByDescending { it.dateAddedMs ?: 0L }
             .take(maxAlbums)
@@ -2178,7 +2177,7 @@ class AppState(
         if (signature == recentAlbumWarmSignature) return
         recentAlbumWarmSignature = signature
         scope.launch {
-            dependencies.catalogRepository.warmRecentAlbumTracks(session.value, cutoffMs, maxAlbums)
+            dependencies.catalogRepository.warmRecentAlbumTracks(session.value, maxAlbums)
         }
     }
 
