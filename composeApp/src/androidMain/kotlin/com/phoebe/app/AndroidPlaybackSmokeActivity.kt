@@ -50,7 +50,7 @@ class AndroidPlaybackSmokeActivity : Activity() {
         scope.launch {
             try {
                 when (mode) {
-                    ModeShuffleLastTrack -> runShuffleLastTrackSmoke(smokePlayer, file, timeoutMs)
+                    ModeShuffleLastTrack -> runShuffleLastTrackSmoke(smokePlayer, diagnostics, file, timeoutMs)
                     else -> runPlaybackSmoke(smokePlayer, diagnostics, file, timeoutMs)
                 }
             } finally {
@@ -96,18 +96,30 @@ class AndroidPlaybackSmokeActivity : Activity() {
 
     private suspend fun runShuffleLastTrackSmoke(
         smokePlayer: AndroidAudioPlayer,
+        diagnostics: AndroidSmokeDiagnostics,
         file: File,
         timeoutMs: Long,
     ) {
         val tracks = (1..5).map { index ->
             file.toSmokeTrack(id = "android-shuffle-smoke-$index", title = "Smoke $index")
         }
+        diagnostics.markPlayRequested()
         smokePlayer.play(tracks, tracks.lastIndex)
         val deadline = SystemClock.elapsedRealtime() + timeoutMs
-        while (SystemClock.elapsedRealtime() <= deadline && smokePlayer.state.value.currentTrack?.id != tracks.last().id) {
+        while (SystemClock.elapsedRealtime() <= deadline) {
+            val ready = diagnostics.snapshot().firstAudioMs != null &&
+                smokePlayer.state.value.currentTrack?.id == tracks.last().id
+            if (ready) break
             delay(50L)
         }
         val before = smokePlayer.state.value
+        if (diagnostics.snapshot().firstAudioMs == null) {
+            logSmoke(
+                "PHOEBE_PLAYBACK_SMOKE_FAILED reason=shuffle-last-track-no-audio " +
+                    "current=${before.currentTrack?.id.orEmpty().asSmokeValue()} timeoutMs=$timeoutMs",
+            )
+            return
+        }
         if (before.currentTrack?.id != tracks.last().id) {
             logSmoke(
                 "PHOEBE_PLAYBACK_SMOKE_FAILED reason=shuffle-last-track-not-current " +
@@ -124,31 +136,60 @@ class AndroidPlaybackSmokeActivity : Activity() {
         }
 
         smokePlayer.setShuffle(true)
-        // Android rebases the Media3 window asynchronously after onQueueEdited.
-        delay(500L)
-
-        val after = smokePlayer.state.value
         val expectedIds = tracks.dropLast(1).map { it.id }.toSet()
-        val upNextIds = after.upNext.map { it.id }.toSet()
-        val ok = after.shuffle &&
+        var after = smokePlayer.state.value
+        val shuffleDeadline = SystemClock.elapsedRealtime() + 5_000L
+        while (SystemClock.elapsedRealtime() <= shuffleDeadline) {
+            after = smokePlayer.state.value
+            val reshuffled = after.shuffle &&
+                after.currentTrack?.id == tracks.last().id &&
+                after.currentIndex == 0 &&
+                after.upNext.size == expectedIds.size &&
+                after.upNext.map { it.id }.toSet() == expectedIds
+            if (reshuffled) break
+            delay(50L)
+        }
+        val reshuffled = after.shuffle &&
             after.currentTrack?.id == tracks.last().id &&
             after.currentIndex == 0 &&
             after.upNext.size == expectedIds.size &&
-            upNextIds == expectedIds
-        if (ok) {
-            logSmoke(
-                "PHOEBE_PLAYBACK_SMOKE_OK mode=shuffle-last-track " +
-                    "current=${after.currentTrack?.id.orEmpty().asSmokeValue()} upNext=${after.upNext.size} " +
-                    "file=${file.absolutePath.asSmokeValue()}",
-            )
-        } else {
+            after.upNext.map { it.id }.toSet() == expectedIds
+        if (!reshuffled) {
             logSmoke(
                 "PHOEBE_PLAYBACK_SMOKE_FAILED reason=shuffle-last-track-order " +
                     "shuffle=${after.shuffle} current=${after.currentTrack?.id.orEmpty().asSmokeValue()} " +
                     "currentIndex=${after.currentIndex} upNext=${after.upNext.map { it.id }.joinToString(",").asSmokeValue()} " +
                     "timeoutMs=$timeoutMs",
             )
+            return
         }
+
+        // Advance into the reshuffled Up Next so we exercise the Media3 queue rebase,
+        // not only the synchronous PlayerState update from setShuffle.
+        val upNextBeforeSkip = after.upNext.map { it.id }
+        smokePlayer.next()
+        var advanced = smokePlayer.state.value
+        val advanceDeadline = SystemClock.elapsedRealtime() + 10_000L
+        while (SystemClock.elapsedRealtime() <= advanceDeadline) {
+            advanced = smokePlayer.state.value
+            if (advanced.currentTrack?.id in expectedIds) break
+            delay(50L)
+        }
+        if (advanced.currentTrack?.id !in expectedIds) {
+            logSmoke(
+                "PHOEBE_PLAYBACK_SMOKE_FAILED reason=shuffle-last-track-next-failed " +
+                    "current=${advanced.currentTrack?.id.orEmpty().asSmokeValue()} " +
+                    "expectedUpNext=${upNextBeforeSkip.joinToString(",").asSmokeValue()} timeoutMs=$timeoutMs",
+            )
+            return
+        }
+
+        logSmoke(
+            "PHOEBE_PLAYBACK_SMOKE_OK mode=shuffle-last-track " +
+                "current=${after.currentTrack?.id.orEmpty().asSmokeValue()} upNext=${after.upNext.size} " +
+                "advanced=${advanced.currentTrack?.id.orEmpty().asSmokeValue()} " +
+                "file=${file.absolutePath.asSmokeValue()}",
+        )
     }
 
     override fun onDestroy() {
