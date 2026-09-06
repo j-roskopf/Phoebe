@@ -1333,6 +1333,71 @@ class PlayerStateTest {
     }
 
     @Test
+    fun enablingShuffleOnLastTrackReshufflesPlayedTracksIntoUpNext() {
+        val player = QueueEditHookTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+            Track("t2", "Two", "Artist", "Album", 90_000, "http://b", ""),
+            Track("t3", "Three", "Artist", "Album", 120_000, "http://c", ""),
+            Track("t4", "Four", "Artist", "Album", 150_000, "http://d", ""),
+            Track("t5", "Five", "Artist", "Album", 180_000, "http://e", ""),
+        )
+
+        player.play(tracks, tracks.lastIndex)
+        assertTrue(player.state.value.upNext.isEmpty())
+
+        player.setShuffle(true)
+
+        val state = player.state.value
+        assertTrue(state.shuffle)
+        assertEquals(tracks.last(), state.currentTrack)
+        assertEquals(0, state.currentIndex)
+        assertEquals(tracks.size - 1, state.upNext.size)
+        assertEquals(tracks.dropLast(1).map { it.id }.toSet(), state.upNext.map { it.id }.toSet())
+        assertEquals(0, player.lastEditedCurrentIndex)
+        assertEquals(state.queue, player.lastEditedQueue)
+    }
+
+    @Test
+    fun enablingShuffleMidQueueOnlyReshufflesUpcomingTracks() {
+        val player = QueueEditHookTestPlayer()
+        val tracks = listOf(
+            Track("t1", "One", "Artist", "Album", 60_000, "http://a", ""),
+            Track("t2", "Two", "Artist", "Album", 90_000, "http://b", ""),
+            Track("t3", "Three", "Artist", "Album", 120_000, "http://c", ""),
+            Track("t4", "Four", "Artist", "Album", 150_000, "http://d", ""),
+            Track("t5", "Five", "Artist", "Album", 180_000, "http://e", ""),
+            Track("t6", "Six", "Artist", "Album", 210_000, "http://f", ""),
+        )
+
+        player.play(tracks, 1)
+        player.setShuffle(true)
+
+        val state = player.state.value
+        assertTrue(state.shuffle)
+        assertEquals(tracks[1], state.currentTrack)
+        assertEquals(1, state.currentIndex)
+        assertEquals(listOf("t1", "t2"), state.queue.take(2).map { it.id })
+        assertEquals(tracks.drop(2).map { it.id }.toSet(), state.upNext.map { it.id }.toSet())
+        assertEquals(1, player.lastEditedCurrentIndex)
+        assertEquals(state.queue, player.lastEditedQueue)
+    }
+
+    @Test
+    fun enablingShuffleOnSingleTrackOnlySetsFlag() {
+        val player = QueueEditHookTestPlayer()
+        val track = Track("t1", "One", "Artist", "Album", 60_000, "http://a", "")
+
+        player.play(listOf(track), 0)
+        player.setShuffle(true)
+
+        assertTrue(player.state.value.shuffle)
+        assertEquals(listOf("t1"), player.state.value.queue.map { it.id })
+        assertEquals(-2, player.lastEditedCurrentIndex)
+        assertTrue(player.lastEditedQueue.isEmpty())
+    }
+
+    @Test
     fun clearingQueueNotifiesPlatformToDropFutureItems() {
         val player = QueueEditHookTestPlayer()
         val tracks = listOf(
