@@ -210,7 +210,6 @@ import com.phoebe.app.feature.home.RecentlyAddedNowPlayingState
 import com.phoebe.app.feature.home.RecentlyAddedRoute
 import com.phoebe.app.feature.home.RecentlyAddedRouteActions
 import com.phoebe.app.feature.home.RecentlyAddedRouteState
-import com.phoebe.app.feature.home.RecentlyAddedWindowMs
 import com.phoebe.app.feature.home.personalMix
 import com.phoebe.app.feature.home.personalMixIdentityKey
 import com.phoebe.app.feature.home.rememberHomeFeatureState
@@ -1109,11 +1108,11 @@ private fun PhoebeRootStateHolder(
             Unit
         }
     }
-    LaunchedEffect(screen, browseSection, catalog.albums, catalog.tracksByParent.keys, session?.selectedServer, nowMs, trackHeavySectionsEnabled) {
+    LaunchedEffect(screen, browseSection, catalog.albums, session?.selectedServer, trackHeavySectionsEnabled) {
         if (!trackHeavySectionsEnabled) return@LaunchedEffect
         if (screen == AppScreen.Home && browseSection == BrowseSection.Home) {
             delay(1_500L)
-            state.warmRecentAlbumTracks(cutoffMs = nowMs - RecentlyAddedWindowMs, maxAlbums = 10)
+            state.warmRecentAlbumTracks(maxAlbums = 10)
         }
     }
     LaunchedEffect(screen, browseSection, session?.selectedServer?.id, session?.selectedLibrary?.key) {

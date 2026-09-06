@@ -3972,17 +3972,16 @@ class CatalogRepository(
         return mutableCatalog.value.playableTrackCount() - startCount
     }
 
-    suspend fun warmRecentAlbumTracks(session: PlexSession?, cutoffMs: Long, maxAlbums: Int = 10) {
+    suspend fun warmRecentAlbumTracks(session: PlexSession?, maxAlbums: Int = 10) {
         val navidromeSession = session?.takeIf { it.isNavidrome() }
         if (navidromeSession != null) {
-            warmNavidromeRecentAlbumTracks(navidromeSession, cutoffMs, maxAlbums)
+            warmNavidromeRecentAlbumTracks(navidromeSession, maxAlbums)
             return
         }
         val server = session?.selectedServer ?: return
         val token = session.serverAuthToken() ?: return
         val albumsToFetch = mutableCatalog.value.albums
             .asSequence()
-            .filter { (it.dateAddedMs ?: Long.MIN_VALUE) >= cutoffMs }
             .filter { plexRatingKey(it.id) != null }
             .filter { mutableCatalog.value.tracksByParent[it.id].isNullOrEmpty() }
             .sortedByDescending { it.dateAddedMs ?: 0L }
@@ -4112,12 +4111,10 @@ class CatalogRepository(
 
     private suspend fun warmNavidromeRecentAlbumTracks(
         session: PlexSession,
-        cutoffMs: Long,
         maxAlbums: Int,
     ) {
         val albumsToFetch = mutableCatalog.value.albums
             .asSequence()
-            .filter { (it.dateAddedMs ?: Long.MIN_VALUE) >= cutoffMs }
             .filter { mutableCatalog.value.tracksByParent[it.id].isNullOrEmpty() }
             .sortedByDescending { it.dateAddedMs ?: 0L }
             .take(maxAlbums)

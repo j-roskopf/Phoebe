@@ -1543,7 +1543,7 @@ class CatalogRepositoryRefreshDesktopTest {
         repo.dropInMemoryCollectionMetadataForTest()
         assertTrue(repo.catalog.value.tracksByParent["plex:a1"].isNullOrEmpty())
 
-        repo.warmRecentAlbumTracks(testSession(), cutoffMs = 1L, maxAlbums = 10)
+        repo.warmRecentAlbumTracks(testSession(), maxAlbums = 10)
 
         assertEquals(listOf("Angry"), db.catalogQueries.selectCollectionValues().executeAsList().map { it.value_ })
         assertEquals(listOf("plex:a1"), db.catalogQueries.selectCollectionTags().executeAsList().map { it.itemId })
