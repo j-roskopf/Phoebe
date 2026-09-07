@@ -69,7 +69,7 @@ private data class PendingControllerTarget(
     val generation: Int,
 )
 
-private data class LoadedPlatformQueue(
+internal data class LoadedPlatformQueue(
     val queueIds: List<String>,
     val firstAppIndex: Int,
     val itemCount: Int,
@@ -79,6 +79,44 @@ private data class LoadedPlatformQueue(
 
     fun appIndexFor(platformIndex: Int): Int? =
         (firstAppIndex + platformIndex).takeIf { platformIndex in 0 until itemCount }
+}
+
+/**
+ * Where [targetIndex] sits in the live Media3 playlist, without replacing that playlist.
+ *
+ * Android Auto adopts a full queue onto the session player and never goes through
+ * [AndroidAudioPlayer.loadQueueOnPlayer], so [loaded] can be missing. Scanning by mediaId
+ * recovers the mapping so skip stays a seekTo. Calling setMediaItems on every skip replaces
+ * the MediaSession timeline and kicks Auto off Now Playing back to the browse page.
+ */
+internal fun resolvePlatformQueueIndex(
+    loaded: LoadedPlatformQueue?,
+    queueIds: List<String>,
+    targetIndex: Int,
+    platformMediaIds: List<String>,
+): Pair<Int, LoadedPlatformQueue>? {
+    loaded
+        ?.takeIf { it.queueIds == queueIds && platformMediaIds.size == it.itemCount }
+        ?.platformIndexFor(targetIndex)
+        ?.let { return it to loaded }
+
+    val targetId = queueIds.getOrNull(targetIndex) ?: return null
+    for (platformIndex in platformMediaIds.indices) {
+        if (platformMediaIds[platformIndex] != targetId) continue
+        val firstAppIndex = targetIndex - platformIndex
+        if (firstAppIndex < 0) continue
+        if (firstAppIndex + platformMediaIds.size > queueIds.size) continue
+        val aligned = platformMediaIds.indices.all { offset ->
+            queueIds[firstAppIndex + offset] == platformMediaIds[offset]
+        }
+        if (!aligned) continue
+        return platformIndex to LoadedPlatformQueue(
+            queueIds = queueIds,
+            firstAppIndex = firstAppIndex,
+            itemCount = platformMediaIds.size,
+        )
+    }
+    return null
 }
 
 private data class PendingPlatformSeek(
@@ -188,7 +226,17 @@ class AndroidAudioPlayer(
         AndroidPlaybackBridge.onServicePlayerChanged = { scope.launch { syncFromController() } }
         AndroidPlaybackBridge.onPlayQueue = { queue, index -> play(queue, index) }
         AndroidPlaybackBridge.onAdoptQueue = { queue, index, playing ->
-            loadedPlatformQueue = null
+            // MediaSession is about to install this full queue on the player. Remember it so
+            // Auto skip-to-next can seek inside the existing timeline instead of setMediaItems.
+            loadedPlatformQueue = if (queue.isEmpty()) {
+                null
+            } else {
+                LoadedPlatformQueue(
+                    queueIds = queue.map { it.id },
+                    firstAppIndex = 0,
+                    itemCount = queue.size,
+                )
+            }
             adoptPlatformPlayIntent(playing)
             adoptQueueState(queue, index, playing)
         }
@@ -250,11 +298,16 @@ class AndroidAudioPlayer(
         runPlatformLoad(generation) { player ->
             val targetIndex = startIndex.coerceIn(queue.indices)
             val queueIds = queue.map { it.id }
-            val loaded = loadedPlatformQueue
-            val platformIndex = loaded
-                ?.takeIf { it.queueIds == queueIds && player.mediaItemCount == it.itemCount }
-                ?.platformIndexFor(targetIndex)
-            if (platformIndex != null) {
+            val platformMediaIds = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }
+            val resolved = resolvePlatformQueueIndex(
+                loaded = loadedPlatformQueue,
+                queueIds = queueIds,
+                targetIndex = targetIndex,
+                platformMediaIds = platformMediaIds,
+            )
+            if (resolved != null) {
+                val (platformIndex, mapping) = resolved
+                loadedPlatformQueue = mapping
                 expectControllerTarget(queueIds, platformIndex, generation)
                 player.pause()
                 player.seekTo(platformIndex, 0L)
@@ -299,7 +352,10 @@ class AndroidAudioPlayer(
         pendingPlatformQueueRebase = null
         androidGaplessPrepareGeneration = -1
         clearPendingAutoplay()
-        clearLocalMediaSessionState()
+        // Do not clear local MediaSession state here. play() calls this before every same-queue
+        // skip; runPlatformLoad cancels this job before clearMediaItems runs. Clearing the
+        // session overlay early swaps playlist item UIDs twice per skip and can push Android
+        // Auto off the Now Playing screen even when the ExoPlayer timeline is reused.
         platformStopJob?.cancel()
         platformStopJob = scope.launch {
             priorLoad?.cancelAndJoin()
@@ -311,6 +367,7 @@ class AndroidAudioPlayer(
                     stop()
                     clearMediaItems()
                 }
+                clearLocalMediaSessionState()
                 // Forget the playlist only once it is actually gone. play() silences output
                 // before every load, including same-queue skips, and runPlatformLoad cancels
                 // this job before it runs — clearing the record synchronously above made
@@ -898,9 +955,14 @@ class AndroidAudioPlayer(
         crossfadeIncomingPlayer = null
         val owned = crossfadePlayer
         crossfadePlayer = null
+        val hadOwnedCrossfade = owned != null || incoming != null
         incoming?.release()
         owned?.release()
-        clearLocalMediaSessionState()
+        if (hadOwnedCrossfade) {
+            // Drop only a real crossfade overlay. Clearing on every runPlatformLoad (including
+            // same-queue Auto skips with no crossfade) rewrites MediaSession playlist identity.
+            clearLocalMediaSessionState()
+        }
     }
 
     private fun ownedCrossfadePlayer(): ExoPlayer? =
