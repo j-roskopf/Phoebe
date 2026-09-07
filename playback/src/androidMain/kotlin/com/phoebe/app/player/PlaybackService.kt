@@ -314,7 +314,8 @@ class PlaybackService : MediaLibraryService() {
         }
         AndroidPlaybackBridge.onLocalMediaSessionState = { state ->
             sessionPlayer.updateLocalState(state)
-            updateLikeButton(state?.track)
+            // Like button is refreshed from media-item transitions / explicit track publishes,
+            // not on every position tick — setCustomLayout flashes wide-screen Android Auto.
         }
         AndroidPlaybackBridge.attachServicePlayer(player, servicePlayerListener)
 
@@ -421,10 +422,25 @@ class PlaybackService : MediaLibraryService() {
             ?: source.resolveTracks(listOf(item)).firstOrNull()
     }
 
+    private var lastLikeButtonTrackId: String? = null
+    private var lastLikeButtonLiked: Boolean = false
+    private var lastLikeButtonEnabled: Boolean = false
+
     private fun updateLikeButton(track: Track? = null) {
         val session = mediaLibrarySession ?: return
         serviceScope.launch {
             val resolved = track ?: runCatching { currentTrackForLike() }.getOrNull()
+            val liked = resolved?.let { AndroidPlaybackBridge.isTrackLiked?.invoke(it) } == true
+            val enabled = resolved?.let { AndroidPlaybackBridge.isLikeAvailable?.invoke(it) } == true
+            if (resolved?.id == lastLikeButtonTrackId &&
+                liked == lastLikeButtonLiked &&
+                enabled == lastLikeButtonEnabled
+            ) {
+                return@launch
+            }
+            lastLikeButtonTrackId = resolved?.id
+            lastLikeButtonLiked = liked
+            lastLikeButtonEnabled = enabled
             val layout = likeButtonLayout(resolved)
             session.setCustomLayout(layout)
             session.setMediaButtonPreferences(layout)
@@ -446,8 +462,9 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
-    private fun handledQueueNavigationCommand(playerCommand: Int): Int? =
-        handleExternalQueueNavigationCommand(
+    private fun handledQueueNavigationCommand(playerCommand: Int): Int? {
+        val player = mediaLibrarySession?.player
+        return handleExternalQueueNavigationCommand(
             playerCommand = playerCommand,
             isCastActive = AndroidPlaybackBridge.isCastActive?.invoke() == true,
             hasNextTrack = AndroidPlaybackBridge.hasNextTrack?.invoke() == true,
@@ -456,7 +473,10 @@ class PlaybackService : MediaLibraryService() {
             onSkipPrevious = AndroidPlaybackBridge.onSkipPrevious,
             onCastSkipNext = AndroidPlaybackBridge.onCastSkipNext,
             onCastSkipPrevious = AndroidPlaybackBridge.onCastSkipPrevious,
+            platformHasNext = player?.hasNextMediaItem() == true,
+            platformHasPrevious = player?.hasPreviousMediaItem() == true,
         )
+    }
 
     private fun List<MediaItem>.isInAppPlaybackQueue(): Boolean =
         isNotEmpty() && all { it.requestMetadata.extras?.getBoolean(InAppPlaybackExtra, false) == true }
@@ -600,7 +620,24 @@ internal fun handleExternalQueueNavigationCommand(
     onSkipPrevious: (() -> Unit)?,
     onCastSkipNext: (() -> Unit)?,
     onCastSkipPrevious: (() -> Unit)?,
+    platformHasNext: Boolean = false,
+    platformHasPrevious: Boolean = false,
 ): Int? {
+    // When the Media3 playlist already contains the next/previous item, let the session
+    // player seek natively. Routing through Phoebe next()/play() rebuilds app state and
+    // briefly mutates the MediaSession timeline — on wide-screen Android Auto that kicks
+    // the user off the song-detail / Now Playing surface back to browse.
+    if (!isCastActive) {
+        when (playerCommand) {
+            Player.COMMAND_SEEK_TO_NEXT,
+            Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+            -> if (platformHasNext) return null
+            Player.COMMAND_SEEK_TO_PREVIOUS,
+            Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+            -> if (platformHasPrevious) return null
+        }
+    }
+
     val handler = when (playerCommand) {
         Player.COMMAND_SEEK_TO_NEXT,
         Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,

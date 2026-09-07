@@ -309,12 +309,14 @@ class AndroidAudioPlayer(
                 val (platformIndex, mapping) = resolved
                 loadedPlatformQueue = mapping
                 expectControllerTarget(queueIds, platformIndex, generation)
-                player.pause()
+                // Do not pause before seek — a playWhenReady false dip is enough for some
+                // Android Auto head units to dismiss the song-detail surface.
                 player.seekTo(platformIndex, 0L)
                 updateOptimisticLocalBufferedPosition(track, generation)
                 player.volume = effectiveOutputVolume()
                 if (playWhenReady) {
                     markPendingAutoplay(generation)
+                    player.playWhenReady = true
                     player.play()
                 }
             } else {
@@ -1769,8 +1771,18 @@ class AndroidAudioPlayer(
         retryCount = 0
     }
 
+    private var localMediaSessionStatePublished = false
+
     private fun publishLocalMediaSessionState(player: Player, track: Track?) {
-        if (crossfadePlayer != null && crossfadePlayer !== player) return
+        // Routine local playback must expose ExoPlayer's timeline directly. Overlaying a
+        // LocalMediaSessionState rebuilds MediaSession state on every sync tick and fights
+        // native seeks — wide-screen Android Auto then flashes or leaves song detail.
+        // Only overlay while an owned crossfade player is the audible source.
+        if (crossfadePlayer == null || crossfadeOwnedTrackId == null) {
+            clearLocalMediaSessionState()
+            return
+        }
+        if (crossfadePlayer !== player) return
         val currentTrack = track ?: state.value.currentTrack
         if (currentTrack == null) {
             clearLocalMediaSessionState()
@@ -1781,6 +1793,7 @@ class AndroidAudioPlayer(
             .takeIf { it > 0L }
             ?.coerceAtLeast(currentTrack.durationMs)
             ?: currentTrack.durationMs
+        localMediaSessionStatePublished = true
         AndroidPlaybackBridge.onLocalMediaSessionState?.invoke(
             LocalMediaSessionState(
                 track = currentTrack,
@@ -1794,6 +1807,8 @@ class AndroidAudioPlayer(
     }
 
     private fun clearLocalMediaSessionState() {
+        if (!localMediaSessionStatePublished) return
+        localMediaSessionStatePublished = false
         AndroidPlaybackBridge.onLocalMediaSessionState?.invoke(null)
     }
 

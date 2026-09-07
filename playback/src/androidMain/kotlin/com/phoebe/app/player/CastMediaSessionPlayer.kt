@@ -111,6 +111,7 @@ internal class CastMediaSessionPlayer(
             }
             return Futures.immediateVoidFuture()
         }
+        // Crossfade overlay: Phoebe owns transport until the ramp commits.
         if (localState != null) {
             when (seekCommand) {
                 Player.COMMAND_SEEK_TO_NEXT,
@@ -127,6 +128,13 @@ internal class CastMediaSessionPlayer(
             Player.COMMAND_SEEK_TO_NEXT,
             Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
             -> {
+                // Prefer a native Media3 seek whenever the session playlist already has a
+                // next item. Phoebe next()/play() is only for advancing past the platform
+                // window (or wrapping repeat) — that path is what kicks Android Auto off
+                // the song-detail page.
+                if (hasNextMediaItem()) {
+                    return super.handleSeek(mediaItemIndex, positionMs, seekCommand)
+                }
                 if (AndroidPlaybackBridge.hasNextTrack?.invoke() == true) {
                     AndroidPlaybackBridge.onSkipNext?.invoke()
                     return Futures.immediateVoidFuture()
@@ -135,6 +143,9 @@ internal class CastMediaSessionPlayer(
             Player.COMMAND_SEEK_TO_PREVIOUS,
             Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
             -> {
+                if (hasPreviousMediaItem()) {
+                    return super.handleSeek(mediaItemIndex, positionMs, seekCommand)
+                }
                 if (AndroidPlaybackBridge.hasPreviousTrack?.invoke() == true) {
                     AndroidPlaybackBridge.onSkipPrevious?.invoke()
                     return Futures.immediateVoidFuture()
@@ -189,15 +200,33 @@ internal class CastMediaSessionPlayer(
                 ?: currentMediaItemIndex.takeIf { it in delegatePlaylist.indices }
                 ?: 0
         }
-        val existing = delegatePlaylist.getOrNull(currentIndex)
-        val overrideItem = mediaSessionOverrideItem(
-            track = track,
-            durationMs = durationMs,
-            existing = existing,
-        )
         if (delegatePlaylist.isEmpty()) {
-            return MediaSessionOverridePlaylist(listOf(overrideItem), currentIndex)
+            return MediaSessionOverridePlaylist(
+                playlist = listOf(mediaSessionOverrideItem(track, durationMs, existing = null)),
+                currentIndex = currentIndex,
+            )
         }
+        val existing = delegatePlaylist[currentIndex]
+        // Keep the existing MediaItemData when the mediaId already matches. Rebuilding via
+        // playbackMediaItem() every publish creates a new MediaItem instance and makes
+        // Media3 report a playlist change — that flashes / dismisses Android Auto Now Playing.
+        if (existing.mediaItem.mediaId == track.id) {
+            val durationUs = durationMs.takeIf { it > 0L }?.times(1_000L) ?: C.TIME_UNSET
+            val item = if (durationUs != C.TIME_UNSET && existing.durationUs != durationUs) {
+                existing.buildUpon().setDurationUs(durationUs).setIsSeekable(true).build()
+            } else {
+                existing
+            }
+            return MediaSessionOverridePlaylist(
+                playlist = if (item === existing) {
+                    delegatePlaylist
+                } else {
+                    delegatePlaylist.toMutableList().also { it[currentIndex] = item }
+                },
+                currentIndex = currentIndex,
+            )
+        }
+        val overrideItem = mediaSessionOverrideItem(track, durationMs, existing)
         return MediaSessionOverridePlaylist(
             playlist = delegatePlaylist.toMutableList().also { it[currentIndex] = overrideItem },
             currentIndex = currentIndex,

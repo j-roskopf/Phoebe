@@ -194,11 +194,32 @@ class BrowseMediaItemsTest {
             onSkipPrevious = null,
             onCastSkipNext = { castNextCalls++ },
             onCastSkipPrevious = null,
+            platformHasNext = false,
         )
 
         assertEquals(SessionResult.RESULT_INFO_SKIPPED, result)
         assertEquals(1, localNextCalls)
         assertEquals(0, castNextCalls)
+    }
+
+    @Test
+    fun externalNextCommandUsesNativeSeekWhenPlatformPlaylistAlreadyHasNext() {
+        var localNextCalls = 0
+
+        val result = handleExternalQueueNavigationCommand(
+            playerCommand = Player.COMMAND_SEEK_TO_NEXT,
+            isCastActive = false,
+            hasNextTrack = true,
+            hasPreviousTrack = false,
+            onSkipNext = { localNextCalls++ },
+            onSkipPrevious = null,
+            onCastSkipNext = null,
+            onCastSkipPrevious = null,
+            platformHasNext = true,
+        )
+
+        assertNull(result)
+        assertEquals(0, localNextCalls)
     }
 
     @Test
@@ -234,6 +255,7 @@ class BrowseMediaItemsTest {
             onSkipPrevious = null,
             onCastSkipNext = { castNextCalls++ },
             onCastSkipPrevious = null,
+            platformHasNext = true,
         )
 
         assertEquals(SessionResult.RESULT_INFO_SKIPPED, result)

@@ -26,6 +26,40 @@ import kotlin.test.assertTrue
 @Config(sdk = [35], application = Application::class)
 class CastMediaSessionPlayerTest {
     @Test
+    fun nativeSkipUsesDelegateSeekWhenPlaylistAlreadyHasNext() {
+        val delegate = FakeSessionDelegate()
+        val player = CastMediaSessionPlayer(delegate)
+        val first = testTrack("native-first")
+        val second = testTrack("native-second")
+        var skipNextCalls = 0
+        val previousHasNext = AndroidPlaybackBridge.hasNextTrack
+        val previousSkipNext = AndroidPlaybackBridge.onSkipNext
+
+        try {
+            AndroidPlaybackBridge.hasNextTrack = { true }
+            AndroidPlaybackBridge.onSkipNext = { skipNextCalls++ }
+            delegate.setStateForTest(
+                delegateState(
+                    tracks = listOf(first, second),
+                    currentIndex = 0,
+                ).build(),
+            )
+            shadowOf(Looper.getMainLooper()).idle()
+
+            player.seekToNext()
+            shadowOf(Looper.getMainLooper()).idle()
+
+            assertEquals(0, skipNextCalls)
+            assertEquals(1, player.currentMediaItemIndex)
+            assertEquals("native-second", player.currentMediaItem?.mediaId)
+        } finally {
+            AndroidPlaybackBridge.hasNextTrack = previousHasNext
+            AndroidPlaybackBridge.onSkipNext = previousSkipNext
+            player.release()
+        }
+    }
+
+    @Test
     fun localStateOverridesPausedDelegateForAndroidAuto() {
         val player = CastMediaSessionPlayer(FakeSessionDelegate())
         val track = testTrack("track-crossfade")
@@ -262,9 +296,20 @@ class CastMediaSessionPlayerTest {
             positionMs: Long,
             seekCommand: Int,
         ): ListenableFuture<*> {
+            val targetIndex = when (seekCommand) {
+                Player.COMMAND_SEEK_TO_NEXT,
+                Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                -> (state.currentMediaItemIndex + 1).takeIf { it < state.playlist.size }
+                Player.COMMAND_SEEK_TO_PREVIOUS,
+                Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+                -> (state.currentMediaItemIndex - 1).takeIf { it >= 0 }
+                else -> mediaItemIndex.takeIf { it in state.playlist.indices }
+            } ?: state.currentMediaItemIndex
             state = state.buildUpon()
+                .setCurrentMediaItemIndex(targetIndex)
                 .setContentPositionMs(positionMs.coerceAtLeast(0L))
                 .build()
+            invalidateState()
             return Futures.immediateVoidFuture()
         }
 
