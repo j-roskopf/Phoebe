@@ -7,7 +7,9 @@ import com.phoebe.app.domain.supportsRemotePlaylists
 import com.phoebe.app.player.AndroidPlaybackBridge
 
 actual fun bindCarPlayPlayback(state: AppState) {
-    AndroidPlaybackBridge.onToggleLikedTrack = { track -> state.toggleLikedTrack(track) }
+    AndroidPlaybackBridge.onToggleLikedTrack = { track ->
+        state.toggleLikedTrack(track).join()
+    }
     AndroidPlaybackBridge.isLikeAvailable = { track ->
         track.canTogglePlexLike() && state.session.value.supportsRemotePlaylists()
     }

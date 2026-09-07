@@ -190,6 +190,8 @@ class PlaybackService : MediaLibraryService() {
                 if (AndroidPlaybackBridge.isLikeAvailable?.invoke(track) != true) {
                     return@listenableFuture SessionResult(SessionError.ERROR_NOT_SUPPORTED)
                 }
+                // Await the catalog mutation so the heart reflects the post-toggle state.
+                // Local MediaSession ticks no longer call updateLikeButton (they flash AA).
                 AndroidPlaybackBridge.onToggleLikedTrack?.invoke(track)
                 updateLikeButton(track)
                 SessionResult(SessionResult.RESULT_SUCCESS)
