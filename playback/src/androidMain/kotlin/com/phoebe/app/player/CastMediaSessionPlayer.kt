@@ -189,10 +189,11 @@ internal class CastMediaSessionPlayer(
                 ?: currentMediaItemIndex.takeIf { it in delegatePlaylist.indices }
                 ?: 0
         }
+        val existing = delegatePlaylist.getOrNull(currentIndex)
         val overrideItem = mediaSessionOverrideItem(
             track = track,
             durationMs = durationMs,
-            index = currentIndex,
+            existing = existing,
         )
         if (delegatePlaylist.isEmpty()) {
             return MediaSessionOverridePlaylist(listOf(overrideItem), currentIndex)
@@ -206,10 +207,14 @@ internal class CastMediaSessionPlayer(
     private fun mediaSessionOverrideItem(
         track: Track,
         durationMs: Long,
-        index: Int,
+        existing: SimpleBasePlayer.MediaItemData?,
     ): SimpleBasePlayer.MediaItemData {
         val mediaItem = playbackMediaItem(track, inAppPlayback = true)
-        return SimpleBasePlayer.MediaItemData.Builder("${track.id}:media-session:$index")
+        // Keep the delegate UID when present. Minting a new uid per track/index made every
+        // local-state publish look like a playlist rewrite to Android Auto.
+        val builder = existing?.buildUpon()
+            ?: SimpleBasePlayer.MediaItemData.Builder(track.id)
+        return builder
             .setMediaItem(mediaItem)
             .setMediaMetadata(mediaItem.mediaMetadata)
             .setDurationUs(durationMs.takeIf { it > 0L }?.times(1_000L) ?: C.TIME_UNSET)

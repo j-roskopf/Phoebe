@@ -6,6 +6,7 @@ import androidx.annotation.OptIn
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
+import androidx.media3.common.Timeline
 import androidx.media3.common.util.UnstableApi
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
@@ -207,6 +208,9 @@ class CastMediaSessionCrossfadeTest {
             shadowOf(Looper.getMainLooper()).idle()
             assertEquals(2, player.currentTimeline.windowCount)
             assertEquals(0, player.currentMediaItemIndex)
+            val window = Timeline.Window()
+            val firstWindowUid = player.currentTimeline.getWindow(0, window).uid
+            val secondWindowUid = player.currentTimeline.getWindow(1, window).uid
 
             player.updateLocalState(
                 LocalMediaSessionState(
@@ -223,6 +227,9 @@ class CastMediaSessionCrossfadeTest {
             assertEquals(2, player.currentTimeline.windowCount)
             assertEquals(1, player.currentMediaItemIndex)
             assertEquals("delegate-second", player.currentMediaItem?.mediaId)
+            // Stable window UIDs keep Android Auto on Now Playing across skips.
+            assertEquals(firstWindowUid, player.currentTimeline.getWindow(0, window).uid)
+            assertEquals(secondWindowUid, player.currentTimeline.getWindow(1, window).uid)
         } finally {
             player.release()
         }
