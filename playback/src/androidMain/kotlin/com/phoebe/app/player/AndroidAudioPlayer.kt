@@ -356,8 +356,15 @@ class AndroidAudioPlayer(
         // skip; runPlatformLoad cancels this job before clearMediaItems runs. Clearing the
         // session overlay early swaps playlist item UIDs twice per skip and can push Android
         // Auto off the Now Playing screen even when the ExoPlayer timeline is reused.
+        //
+        // Launch on plain Dispatchers.Main (not Main.immediate): with the immediate dispatcher a
+        // call arriving on the main looper runs this block inline, so pause/stop/clearMediaItems,
+        // clearLocalMediaSessionState, and loadedPlatformQueue = null all execute before the
+        // following runPlatformLoad can cancel the job — and the same-queue skip then still
+        // rebuilds the timeline. Deferring a dispatch makes that cancellation reliable, which is
+        // what lets skipToInQueueOnPlatform resolve and seek within the existing timeline.
         platformStopJob?.cancel()
-        platformStopJob = scope.launch {
+        platformStopJob = scope.launch(Dispatchers.Main) {
             priorLoad?.cancelAndJoin()
             crossfadeJob?.cancelAndJoin()
             stopAndroidCrossfade()
