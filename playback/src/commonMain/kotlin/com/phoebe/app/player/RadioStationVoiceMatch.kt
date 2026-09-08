@@ -29,12 +29,18 @@ fun String.radioStationVoiceKeys(): Set<String> {
     val full = normalizedRadioCallSign()
     if (full.isBlank()) return emptySet()
     val keys = linkedSetOf(full)
-    val firstToken = full.split(' ').firstOrNull().orEmpty()
     // Leading call-sign / brand token ("KEXP" from "KEXP 90.3", "BBC" from "BBC Radio 6 Music").
-    if (firstToken.length >= 3 && firstToken.any { it.isLetter() }) {
-        keys += firstToken
-    }
+    // Only offer it as a bare query key when it looks like a call sign so generic words that
+    // prefix many station names ("Radio", "The", "Ambient") cannot hijack a plain search.
+    leadingCallSignToken()?.let { keys += it }
     return keys
+}
+
+private fun String.leadingCallSignToken(): String? {
+    val first = split(Regex("[^\\p{L}\\p{N}]+")).firstOrNull { it.isNotBlank() } ?: return null
+    val callSignLike = first.length in 2..5 &&
+        (first.any { it.isDigit() } || first == first.uppercase())
+    return first.lowercase().takeIf { callSignLike }
 }
 
 fun String.normalizedRadioCallSign(): String =

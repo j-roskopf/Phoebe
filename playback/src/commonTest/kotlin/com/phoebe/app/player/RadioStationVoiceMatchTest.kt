@@ -43,6 +43,18 @@ class RadioStationVoiceMatchTest {
         assertNull(findStrongRadioStationMatch("wave", emptyList(), listOf(station)))
     }
 
+    @Test
+    fun genericLeadingWordDoesNotHijackBareQuery() {
+        val station = station("radio-paradise", "Radio Paradise")
+        assertNull(findStrongRadioStationMatch("radio", emptyList(), listOf(station)))
+    }
+
+    @Test
+    fun leadingCallSignWithDigitsMatches() {
+        val station = station("wfmu-91-1", "WFMU 91.1")
+        assertEquals(station, findStrongRadioStationMatch("WFMU", emptyList(), listOf(station)))
+    }
+
     private fun station(id: String, name: String): RadioStation =
         RadioStation(
             id = id,

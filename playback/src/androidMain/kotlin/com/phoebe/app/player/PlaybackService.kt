@@ -565,7 +565,13 @@ class PlaybackService : MediaLibraryService() {
     private fun syncRadioNowPlaying(track: Track?) {
         radioNowPlayingJob?.cancel()
         if (track?.id?.startsWith("radio:") != true) return
-        val stationName = track.album.ifBlank { track.title }
+        // Prefer the full app-queue track, which retains the station's configured metadata source
+        // (BBC RMS / KEXP / ICY). The MediaItem hint rebuilt from session metadata drops it, which
+        // would otherwise fall back to default ICY/HLS probing for stations with a custom endpoint.
+        val authoritative = AndroidPlaybackBridge.currentTrack?.invoke()
+            ?.takeIf { it.id == track.id }
+            ?: track
+        val stationName = authoritative.album.ifBlank { authoritative.title }
         radioNowPlayingJob = serviceScope.launch {
             while (isActive) {
                 val deps = runCatching {
@@ -573,10 +579,10 @@ class PlaybackService : MediaLibraryService() {
                     AndroidPlaybackRuntime.radioNowPlayingRepository()
                 }.getOrNull()
                 val metadata = deps?.let { repo ->
-                    runCatching { repo.resolve(track) }.getOrNull()
+                    runCatching { repo.resolve(authoritative) }.getOrNull()
                 }
                 if (metadata != null && metadata.hasTrack) {
-                    applyRadioNowPlayingMetadata(track, stationName, metadata)
+                    applyRadioNowPlayingMetadata(authoritative, stationName, metadata)
                 }
                 delay(RadioNowPlayingRefreshMs)
             }

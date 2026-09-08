@@ -193,7 +193,7 @@ class RadioNowPlayingRepository(
             value: String,
             sourceType: RadioNowPlayingSourceType,
         ): RadioNowPlayingMetadata? {
-            if (!value.contains('=') || !value.contains("title", ignoreCase = true)) return null
+            if (!value.contains('=') || !Regex("""(?i)\b(title|song|track|artist)\s*=""").containsMatchIn(value)) return null
             val fields = linkedMapOf<String, String>()
             val pattern = Regex(
                 """(?i)(title|artist|song|track|album)\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^,]*))""",

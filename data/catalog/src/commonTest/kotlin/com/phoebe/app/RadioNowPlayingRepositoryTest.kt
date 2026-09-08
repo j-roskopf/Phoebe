@@ -115,6 +115,16 @@ class RadioNowPlayingRepositoryTest {
     }
 
     @Test
+    fun parsesIcyStreamTitleWithSongTrackKeys() {
+        val metadata = RadioNowPlayingRepository.parseIcyMetadata(
+            """StreamTitle='song="Autumn Sweater",artist="Yo La Tengo"';""",
+        )
+
+        assertEquals("Yo La Tengo", metadata?.artist)
+        assertEquals("Autumn Sweater", metadata?.title)
+    }
+
+    @Test
     fun resolvesIcyMetadataBlockFromStream() = runTest {
         val metaint = 8
         val icyMetadata = "StreamTitle='Durand Jones - Morning in America';"
