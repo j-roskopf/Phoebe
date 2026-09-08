@@ -12,12 +12,10 @@ import com.phoebe.app.domain.CatalogSnapshot
 import com.phoebe.app.domain.DownloadItem
 import com.phoebe.app.domain.DownloadState
 import com.phoebe.app.domain.DownloadStatusEvent
-import com.phoebe.app.domain.MediaProviderType
 import com.phoebe.app.domain.Playlist
 import com.phoebe.app.domain.SmartPlaylist
 import com.phoebe.app.domain.SmartPlaylistTemplate
 import com.phoebe.app.domain.Track
-import com.phoebe.app.domain.catalogPrefix
 import com.phoebe.app.domain.isRemoteLibraryTrack
 import com.phoebe.app.playlists.PlaylistExportFormat
 import kotlin.math.max
@@ -379,19 +377,5 @@ fun buildTrackRatingIndex(catalog: CatalogSnapshot): Map<String, Float?> {
     return ratings
 }
 
-private fun equivalentTrackIds(id: String): Set<String> {
-    if (id.isBlank()) return emptySet()
-    for (provider in MediaProviderType.entries) {
-        val prefix = "${provider.catalogPrefix}:"
-        if (id.startsWith(prefix)) {
-            val bare = id.removePrefix(prefix)
-            return setOf(id, bare)
-        }
-    }
-    return buildSet {
-        add(id)
-        for (provider in MediaProviderType.entries) {
-            add("${provider.catalogPrefix}:$id")
-        }
-    }
-}
+private fun equivalentTrackIds(id: String): Set<String> =
+    com.phoebe.app.domain.equivalentProviderTrackIds(id)

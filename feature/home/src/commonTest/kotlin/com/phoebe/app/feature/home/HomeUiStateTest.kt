@@ -11,6 +11,10 @@ import com.phoebe.app.domain.Playlist
 import com.phoebe.app.domain.RecentlyPlayedEntry
 import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.playHistoryIdentityKey
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -595,6 +599,45 @@ class HomeUiStateTest {
             trackIndexCache = cache,
         )
         assertEquals(listOf("t2", "t1"), pass2.recentlyAddedTracks.map { it.id })
+    }
+
+    @Test
+    fun homeCatalogIndexCacheSurvivesOverlappingDeriveCalls() = runBlocking {
+        val albums = (1..40).map { Album("al$it", "Album $it", "Artist", dateAddedMs = it.toLong()) }
+        fun catalogWithTracks(tracksPerAlbum: Int): CatalogSnapshot {
+            val tracksByParent = albums.associate { album ->
+                album.id to (1..tracksPerAlbum).map { trackIndex ->
+                    Track(
+                        id = "${album.id}-$trackIndex",
+                        title = "Song $trackIndex",
+                        artist = "Artist",
+                        album = album.title,
+                        durationMs = 1_000L,
+                        streamUrl = "",
+                        downloadUrl = "",
+                        parentAlbumId = album.id,
+                        dateAddedMs = album.dateAddedMs!! + trackIndex,
+                    )
+                }
+            }
+            return CatalogSnapshot(albums = albums, tracksByParent = tracksByParent)
+        }
+        val cache = HomeCatalogIndexCache()
+        val catalogs = listOf(catalogWithTracks(8), catalogWithTracks(12), catalogWithTracks(16))
+        coroutineScope {
+            repeat(24) { index ->
+                launch(Dispatchers.Default) {
+                    deriveHomeUiState(
+                        catalog = catalogs[index % catalogs.size],
+                        playHistory = PlayHistorySnapshot(),
+                        randomArtistSeed = index,
+                        randomAlbumSeed = index + 1,
+                        nowMs = 1_000L,
+                        trackIndexCache = cache,
+                    )
+                }
+            }
+        }
     }
 
     @Test

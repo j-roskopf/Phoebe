@@ -2100,6 +2100,167 @@ class CatalogRepositoryRefreshDesktopTest {
     }
 
     @Test
+    fun tracksForLikedSongsFetchesRemoteWhenOnlyMetadataIsCached() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        db.transaction {
+            db.catalogQueries.upsertArtist("plex:artist-1", "Artist One", null, 1, 0, 0, null, null, null, null, null, 0)
+            db.catalogQueries.upsertAlbum("plex:a1", "Album One", "Artist One", null, null, 0, null, null, null, null, null, 0)
+            // Metadata-only Liked Songs: composite art + trackCount, but no track parents yet.
+            db.catalogQueries.upsertPlaylist(
+                "plex:liked",
+                "Liked Songs",
+                2,
+                "/playlists/liked/items",
+                "/library/metadata/liked/thumb",
+                0,
+                null,
+                0,
+            )
+        }
+        var playlistFetches = 0
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/playlists/liked/items" -> {
+                    playlistFetches++
+                    respondJson(playlistTracksJson())
+                }
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val http = testHttpClient(engine)
+        val media = MediaSourcesRepository(db, PlatformStorage())
+        val repo = testCatalogRepository(
+            plexClient = PlexClient.withoutResolver(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+        repo.restoreCachedCatalog()
+        val playlist = repo.catalog.value.playlists.single { it.title == "Liked Songs" }
+        assertEquals(2, playlist.trackCount)
+        assertTrue(repo.catalog.value.tracksByParent[playlist.id].isNullOrEmpty())
+
+        val tracks = repo.tracksForPlaylist(testSession(), playlist)
+
+        assertEquals(1, playlistFetches)
+        assertEquals(listOf("plex:t1", "plex:t2"), tracks.map { it.id })
+        assertEquals(listOf("plex:t1", "plex:t2"), repo.catalog.value.tracksByParent[playlist.id].orEmpty().map { it.id })
+    }
+
+    @Test
+    fun likedTrackSurvivesRestartForHeartState() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        db.transaction {
+            db.catalogQueries.upsertArtist("plex:artist-1", "Artist One", null, 1, 0, 0, null, null, null, null, null, 0)
+            db.catalogQueries.upsertAlbum("plex:a1", "Album One", "Artist One", null, null, 0, null, null, null, null, null, 0)
+            db.catalogQueries.upsertPlaylist("plex:p1", "Playlist One", 0, null, null, 0, null, 0)
+        }
+        val engine = MockEngine { respond("", HttpStatusCode.NotFound) }
+        val http = testHttpClient(engine)
+        val media = MediaSourcesRepository(db, PlatformStorage())
+        val repo1 = testCatalogRepository(
+            plexClient = PlexClient.withoutResolver(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+        repo1.restoreCachedCatalog()
+        val track = Track(
+            id = "plex:t1",
+            title = "Liked Song",
+            artist = "Artist One",
+            album = "Album One",
+            durationMs = 1_000,
+            streamUrl = "https://plex.example/t1",
+            downloadUrl = "",
+        )
+        assertTrue(repo1.toggleLikedTrackLocally(testSession(), track))
+        assertTrue(repo1.isTrackLiked("plex:t1"))
+        repo1.awaitDatabaseIdle()
+
+        val repo2 = testCatalogRepository(
+            plexClient = PlexClient.withoutResolver(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+        repo2.restoreCachedCatalog()
+        assertTrue(
+            repo2.isTrackLiked("plex:t1"),
+            "Liked Songs track parents should hydrate on restore so the AA heart starts filled",
+        )
+
+        // Cold-start race: shell is present but parents were cleared before warm-up finished.
+        clearInMemoryTrackParents(repo2)
+        assertFalse(repo2.isTrackLiked("plex:t1"))
+        repo2.ensureLikedSongsTracksLoaded(testSession())
+        assertTrue(repo2.isTrackLiked("plex:t1"))
+    }
+
+    @Test
+    fun ensureLikedSongsDiscoversRemotePlaylistAfterReinstall() = runTest {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/playlists" -> respondJson(
+                    """
+                    {
+                      "MediaContainer": {
+                        "Metadata": [
+                          {
+                            "ratingKey": "liked-remote",
+                            "title": "Liked Songs",
+                            "leafCount": 2,
+                            "key": "/playlists/liked-remote/items"
+                          }
+                        ]
+                      }
+                    }
+                    """.trimIndent(),
+                )
+                "/playlists/liked-remote/items" -> respondJson(playlistTracksJson())
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val http = testHttpClient(engine)
+        val media = MediaSourcesRepository(db, PlatformStorage())
+        val repo = testCatalogRepository(
+            plexClient = PlexClient.withoutResolver(http),
+            database = db,
+            storage = PlatformStorage(),
+            httpClient = http,
+            mediaSourcesRepository = media,
+        )
+
+        // Reinstall: empty catalog, or only the local plex:liked-songs placeholder.
+        repo.ensureLocalLikedSongsPlaylist(testSession())
+        assertFalse(repo.isTrackLiked("plex:t1"))
+
+        repo.ensureLikedSongsTracksLoaded(testSession())
+
+        assertEquals("plex:liked-remote", repo.catalog.value.playlists.single { it.title == "Liked Songs" }.id)
+        assertTrue(
+            repo.isTrackLiked("plex:t1"),
+            "After reinstall, ensure should discover remote Liked Songs and fill the heart",
+        )
+        assertTrue(repo.isTrackLiked("plex:t2"))
+    }
+
+    private fun clearInMemoryTrackParents(repo: CatalogRepository) {
+        val field = CatalogRepository::class.java.getDeclaredField("mutableCatalog")
+        field.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val mutable = field.get(repo) as kotlinx.coroutines.flow.MutableStateFlow<CatalogSnapshot>
+        mutable.value = mutable.value.copy(tracksByParent = emptyMap())
+    }
+
+    @Test
     fun refreshRefetchesPlaylistWhenPlexReportsFewerTracksThanCache() = runTest {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d

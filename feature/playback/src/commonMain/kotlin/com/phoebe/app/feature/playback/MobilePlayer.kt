@@ -152,13 +152,27 @@ private fun MobileExpandedUtilityControls(
     ultimateGuitarTrack: Track?,
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit,
     onShowVisualizerInTvFrame: (Boolean) -> Unit,
+    showLikeControl: Boolean = false,
+    liked: Boolean = false,
+    onToggleLiked: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (showLikeControl) {
+            MobileUtilityControl {
+                TransportIcon(
+                    PhoebeIcon.Heart,
+                    if (liked) "Remove from Liked Songs" else "Add to Liked Songs",
+                    onToggleLiked,
+                    active = liked,
+                    filled = liked,
+                )
+            }
+        }
         MobileUtilityControl {
             CastIcon(
                 active = castState.isConnected,
@@ -199,7 +213,7 @@ private fun MobileUtilityControl(
     content: @Composable () -> Unit,
 ) {
     Box(
-        modifier = modifier.width(48.dp),
+        modifier = modifier.width(44.dp),
         contentAlignment = Alignment.Center,
     ) {
         content()
@@ -725,6 +739,11 @@ fun MobilePlayer(
                     RepeatIcon(mode = repeat, onClick = onRepeat)
                 }
                 Spacer(Modifier.weight(1f).heightIn(min = expandedControlsGap))
+                val utilityTrack = track
+                val utilityShowLike = utilityTrack != null && (
+                    utilityTrack.id.startsWith("radio:") ||
+                        (likeActions.likesEnabled && utilityTrack.canTogglePlexLike())
+                    )
                 MobileExpandedUtilityControls(
                     castState = castState,
                     equalizerActive = equalizerProfile.enabled,
@@ -734,9 +753,12 @@ fun MobilePlayer(
                     onEqualizer = { equalizerOpen = true },
                     onLyrics = onLyrics,
                     onUltimateGuitar = onUltimateGuitar,
-                    ultimateGuitarTrack = track?.takeIf { showUltimateGuitarButton && it.title.isNotBlank() },
+                    ultimateGuitarTrack = utilityTrack?.takeIf { showUltimateGuitarButton && it.title.isNotBlank() },
                     onVisualizerPreset = onVisualizerPreset,
                     onShowVisualizerInTvFrame = onShowVisualizerInTvFrame,
+                    showLikeControl = utilityShowLike,
+                    liked = utilityTrack?.let(likeActions::isLiked) == true,
+                    onToggleLiked = { utilityTrack?.let(likeActions.onToggleLiked) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(horizontal = 20.dp)

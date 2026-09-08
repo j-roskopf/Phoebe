@@ -68,10 +68,15 @@ internal class CastMediaSessionPlayer(
                 hasPrevious = AndroidPlaybackBridge.hasPreviousTrack?.invoke() == true,
             )
         }
-        return delegateState.withPhoebeQueueNavigationCommands(
-            hasNext = AndroidPlaybackBridge.hasNextTrack?.invoke() == true,
-            hasPrevious = AndroidPlaybackBridge.hasPreviousTrack?.invoke() == true,
-        )
+        // Routine local playback no longer overlays LocalMediaSessionState (that rebuild
+        // flashed Android Auto). Still promote catalog duration into seekability so AA
+        // keeps its Now Playing scrubber when ExoPlayer has not yet marked the item seekable.
+        return delegateState
+            .withCatalogSeekability()
+            .withPhoebeQueueNavigationCommands(
+                hasNext = AndroidPlaybackBridge.hasNextTrack?.invoke() == true,
+                hasPrevious = AndroidPlaybackBridge.hasPreviousTrack?.invoke() == true,
+            )
     }
 
     override fun handleSetPlayWhenReady(playWhenReady: Boolean): ListenableFuture<*> {
@@ -346,6 +351,55 @@ internal fun SimpleBasePlayer.State.withPhoebeQueueNavigationCommands(
         }
     }.build()
     return buildUpon()
+        .setAvailableCommands(commands)
+        .build()
+}
+
+/**
+ * Android Auto hides the Now Playing seek bar unless the legacy session exposes
+ * ACTION_SEEK_TO. Media3 only publishes that when the current item is seekable and not live.
+ * Catalog metadata already knows the track length; use it when ExoPlayer still reports
+ * TIME_UNSET / not-seekable (common for progressive Plex/HTTP streams).
+ */
+@OptIn(UnstableApi::class)
+internal fun SimpleBasePlayer.State.withCatalogSeekability(): SimpleBasePlayer.State {
+    val playlist = getPlaylist()
+    if (playlist.isEmpty()) return this
+    val index = currentMediaItemIndex.takeIf { it in playlist.indices } ?: return this
+    val item = playlist[index]
+    val metadataDurationMs = item.mediaItem.mediaMetadata.durationMs
+    val knownDurationUs = when {
+        item.durationUs != C.TIME_UNSET && item.durationUs > 0L -> item.durationUs
+        metadataDurationMs != null && metadataDurationMs > 0L -> metadataDurationMs * 1_000L
+        else -> C.TIME_UNSET
+    }
+    if (knownDurationUs == C.TIME_UNSET) return this
+
+    val needsItemPatch = item.durationUs != knownDurationUs || !item.isSeekable || item.isDynamic
+    val needsSeekCommand = !availableCommands.contains(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+    if (!needsItemPatch && !needsSeekCommand) return this
+
+    val patchedPlaylist = if (needsItemPatch) {
+        playlist.toMutableList().also { items ->
+            items[index] = item.buildUpon()
+                .setDurationUs(knownDurationUs)
+                .setIsSeekable(true)
+                .setIsDynamic(false)
+                .build()
+        }
+    } else {
+        playlist
+    }
+    val commands = if (needsSeekCommand) {
+        availableCommands.buildUpon()
+            .add(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+            .add(Player.COMMAND_SEEK_TO_DEFAULT_POSITION)
+            .build()
+    } else {
+        availableCommands
+    }
+    return buildUpon()
+        .setPlaylist(patchedPlaylist)
         .setAvailableCommands(commands)
         .build()
 }

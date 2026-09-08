@@ -267,6 +267,33 @@ class CastMediaSessionPlayerTest {
         }
     }
 
+    @Test
+    fun catalogDurationMakesUnseekableDelegateSeekableForAndroidAuto() {
+        val delegate = FakeSessionDelegate()
+        val player = CastMediaSessionPlayer(delegate)
+        val track = testTrack("track-seekable")
+
+        try {
+            delegate.setStateForTest(
+                delegateState(
+                    tracks = listOf(track),
+                    currentIndex = 0,
+                    seekable = false,
+                    includeDuration = false,
+                    includeSeekCommand = false,
+                ).build(),
+            )
+            shadowOf(Looper.getMainLooper()).idle()
+
+            assertTrue(player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM))
+            assertEquals(180_000, player.duration)
+            assertTrue(player.isCurrentMediaItemSeekable)
+            assertFalse(player.isCurrentMediaItemLive)
+        } finally {
+            player.release()
+        }
+    }
+
     private class FakeSessionDelegate : SimpleBasePlayer(Looper.getMainLooper()) {
         private var state = SimpleBasePlayer.State.Builder()
             .setAvailableCommands(Player.Commands.Builder().addAllCommands().build())
@@ -346,18 +373,27 @@ class CastMediaSessionPlayerTest {
     private fun delegateState(
         tracks: List<Track>,
         currentIndex: Int,
+        seekable: Boolean = true,
+        includeDuration: Boolean = true,
+        includeSeekCommand: Boolean = true,
     ): SimpleBasePlayer.State.Builder {
         val items = tracks.map { track ->
             val mediaItem = playbackMediaItem(track, inAppPlayback = true)
-            SimpleBasePlayer.MediaItemData.Builder(track.id)
+            val builder = SimpleBasePlayer.MediaItemData.Builder(track.id)
                 .setMediaItem(mediaItem)
                 .setMediaMetadata(mediaItem.mediaMetadata)
-                .setDurationUs(track.durationMs * 1_000L)
-                .setIsSeekable(true)
-                .build()
+                .setIsSeekable(seekable)
+            if (includeDuration) {
+                builder.setDurationUs(track.durationMs * 1_000L)
+            }
+            builder.build()
+        }
+        val commands = Player.Commands.Builder().addAllCommands()
+        if (!includeSeekCommand) {
+            commands.remove(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
         }
         return SimpleBasePlayer.State.Builder()
-            .setAvailableCommands(Player.Commands.Builder().addAllCommands().build())
+            .setAvailableCommands(commands.build())
             .setPlaylist(items)
             .setCurrentMediaItemIndex(currentIndex)
     }
