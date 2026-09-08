@@ -503,7 +503,9 @@ private fun RadioStation.toTrack(streamUrl: String): Track =
         id = "radio:$id",
         title = name,
         artist = displaySubtitle,
-        album = "Radio",
+        // Keep the station identity in album so live ICY title/artist swaps still show which
+        // station is playing (Android Auto Now Playing / phone mini-player album line).
+        album = name,
         durationMs = 0L,
         streamUrl = streamUrl,
         downloadUrl = streamUrl,

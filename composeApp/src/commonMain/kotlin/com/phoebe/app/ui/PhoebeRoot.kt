@@ -3118,9 +3118,13 @@ private fun Track?.withRadioNowPlaying(metadata: RadioNowPlayingMetadata?): Trac
     val live = metadata?.takeIf { it.hasTrack } ?: return track
     if (!track.id.startsWith("radio:")) return track
     if (live.trackId != null && live.trackId != track.id) return track
+    val stationName = track.album
+        .takeIf { it.isNotBlank() && !it.equals("Radio", ignoreCase = true) }
+        ?: track.title
     return track.copy(
         title = live.title.ifBlank { live.rawTitle ?: track.title },
         artist = live.artist.ifBlank { track.artist },
+        album = stationName,
     )
 }
 

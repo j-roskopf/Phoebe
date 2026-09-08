@@ -95,6 +95,21 @@ class BrowseMediaItemsTest {
     }
 
     @Test
+    fun androidAutoLikeButtonHiddenForRadio() {
+        val radio = Track(
+            id = "radio:kexp",
+            title = "KEXP 90.3",
+            artist = "Indie",
+            album = "KEXP 90.3",
+            durationMs = 0L,
+            streamUrl = "https://example.test/kexp.mp3",
+            downloadUrl = "",
+        )
+        assertTrue(androidAutoLikeButtonLayout(radio).isEmpty())
+        assertTrue(androidAutoLikeButtonLayout(radio, liked = true).isEmpty())
+    }
+
+    @Test
     fun browseTrackItemHandlesMissingPlayableUri() {
         val item = browseTrackItem(
             Track(

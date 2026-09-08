@@ -170,6 +170,8 @@ class RadioNowPlayingRepository(
 
         private fun String.asStreamTitleMetadata(sourceType: RadioNowPlayingSourceType): RadioNowPlayingMetadata? {
             val value = trim().takeIf { it.isNotBlank() } ?: return null
+            parseKeyedStreamTitle(value, sourceType)?.let { return it }
+            parseJsonStreamTitle(value, sourceType)?.let { return it }
             val split = Regex("""\s+-\s+""").split(value, limit = 2)
             return if (split.size == 2 && split[0].isNotBlank() && split[1].isNotBlank()) {
                 radioNowPlayingMetadata(
@@ -181,6 +183,64 @@ class RadioNowPlayingRepository(
             } else {
                 radioNowPlayingMetadata(rawTitle = value, title = value, sourceType = sourceType)
             }
+        }
+
+        /**
+         * Some stations put structured fields inside StreamTitle, e.g.
+         * `title="Risk It All",artist="Bruno Mars",url="..."`.
+         */
+        private fun parseKeyedStreamTitle(
+            value: String,
+            sourceType: RadioNowPlayingSourceType,
+        ): RadioNowPlayingMetadata? {
+            if (!value.contains('=') || !value.contains("title", ignoreCase = true)) return null
+            val fields = linkedMapOf<String, String>()
+            val pattern = Regex(
+                """(?i)(title|artist|song|track|album)\s*=\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|([^,]*))""",
+            )
+            pattern.findAll(value).forEach { match ->
+                val key = match.groupValues[1].lowercase()
+                val parsed = listOf(
+                    match.groupValues[2],
+                    match.groupValues[3],
+                    match.groupValues[4],
+                ).firstOrNull { it.isNotBlank() } ?: return@forEach
+                fields[key] = parsed
+                    .replace("\\\"", "\"")
+                    .replace("\\'", "'")
+                    .trim()
+                    .takeIf { it.isNotBlank() }
+                    ?: return@forEach
+            }
+            val title = fields["title"] ?: fields["song"] ?: fields["track"]
+            val artist = fields["artist"]
+            if (title.isNullOrBlank() && artist.isNullOrBlank()) return null
+            return radioNowPlayingMetadata(
+                artist = artist,
+                title = title,
+                rawTitle = value,
+                sourceType = sourceType,
+            )
+        }
+
+        private fun parseJsonStreamTitle(
+            value: String,
+            sourceType: RadioNowPlayingSourceType,
+        ): RadioNowPlayingMetadata? {
+            val trimmed = value.trim()
+            if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null
+            val root = runCatching { PhoebeDataJson.parseToJsonElement(trimmed).jsonObjectOrNull() }
+                .getOrNull()
+                ?: return null
+            val title = root.string("title") ?: root.string("song") ?: root.string("track")
+            val artist = root.string("artist")
+            if (title.isNullOrBlank() && artist.isNullOrBlank()) return null
+            return radioNowPlayingMetadata(
+                artist = artist,
+                title = title,
+                rawTitle = value,
+                sourceType = sourceType,
+            )
         }
     }
 }

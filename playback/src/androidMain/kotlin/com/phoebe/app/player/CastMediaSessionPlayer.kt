@@ -48,6 +48,7 @@ internal class CastMediaSessionPlayer(
                 durationMs = cast.durationMs,
                 playWhenReadyChangeReason = Player.PLAY_WHEN_READY_CHANGE_REASON_REMOTE,
             )
+            .withRadioLiveTransport()
             .withPhoebeQueueNavigationCommands(
                 hasNext = AndroidPlaybackBridge.hasNextTrack?.invoke() == true,
                 hasPrevious = AndroidPlaybackBridge.hasPreviousTrack?.invoke() == true,
@@ -63,6 +64,7 @@ internal class CastMediaSessionPlayer(
                 durationMs = local.durationMs,
                 playWhenReadyChangeReason = Player.PLAY_WHEN_READY_CHANGE_REASON_USER_REQUEST,
             )
+            .withRadioLiveTransport()
             .withPhoebeQueueNavigationCommands(
                 hasNext = AndroidPlaybackBridge.hasNextTrack?.invoke() == true,
                 hasPrevious = AndroidPlaybackBridge.hasPreviousTrack?.invoke() == true,
@@ -71,8 +73,10 @@ internal class CastMediaSessionPlayer(
         // Routine local playback no longer overlays LocalMediaSessionState (that rebuild
         // flashed Android Auto). Still promote catalog duration into seekability so AA
         // keeps its Now Playing scrubber when ExoPlayer has not yet marked the item seekable.
+        // Radio streams take the opposite path: hide seek and disable skip.
         return delegateState
             .withCatalogSeekability()
+            .withRadioLiveTransport()
             .withPhoebeQueueNavigationCommands(
                 hasNext = AndroidPlaybackBridge.hasNextTrack?.invoke() == true,
                 hasPrevious = AndroidPlaybackBridge.hasPreviousTrack?.invoke() == true,
@@ -217,8 +221,19 @@ internal class CastMediaSessionPlayer(
         // Media3 report a playlist change — that flashes / dismisses Android Auto Now Playing.
         if (existing.mediaItem.mediaId == track.id) {
             val durationUs = durationMs.takeIf { it > 0L }?.times(1_000L) ?: C.TIME_UNSET
-            val item = if (durationUs != C.TIME_UNSET && existing.durationUs != durationUs) {
-                existing.buildUpon().setDurationUs(durationUs).setIsSeekable(true).build()
+            val needsSeekabilityPatch = durationUs != C.TIME_UNSET && (
+                existing.durationUs != durationUs ||
+                    !existing.isSeekable ||
+                    existing.isDynamic ||
+                    existing.liveConfiguration != null
+                )
+            val item = if (needsSeekabilityPatch) {
+                existing.buildUpon()
+                    .setDurationUs(durationUs)
+                    .setIsSeekable(true)
+                    .setIsDynamic(false)
+                    .setLiveConfiguration(null)
+                    .build()
             } else {
                 existing
             }
@@ -253,6 +268,8 @@ internal class CastMediaSessionPlayer(
             .setMediaMetadata(mediaItem.mediaMetadata)
             .setDurationUs(durationMs.takeIf { it > 0L }?.times(1_000L) ?: C.TIME_UNSET)
             .setIsSeekable(durationMs > 0L)
+            .setIsDynamic(false)
+            .setLiveConfiguration(null)
             .build()
     }
 
@@ -360,6 +377,11 @@ internal fun SimpleBasePlayer.State.withPhoebeQueueNavigationCommands(
  * ACTION_SEEK_TO. Media3 only publishes that when the current item is seekable and not live.
  * Catalog metadata already knows the track length; use it when ExoPlayer still reports
  * TIME_UNSET / not-seekable (common for progressive Plex/HTTP streams).
+ *
+ * Media3's legacy stub also strips ACTION_SEEK_TO whenever [Player.isCurrentMediaItemLive]
+ * is true (`liveConfiguration != null`) — even if we already forced seekable + duration.
+ * Fresh HLS windows often look live until the playlist resolves as VOD, which is why the
+ * scrubber can show on song 1 and vanish after a skip. Clear liveConfiguration here too.
  */
 @OptIn(UnstableApi::class)
 internal fun SimpleBasePlayer.State.withCatalogSeekability(): SimpleBasePlayer.State {
@@ -367,15 +389,25 @@ internal fun SimpleBasePlayer.State.withCatalogSeekability(): SimpleBasePlayer.S
     if (playlist.isEmpty()) return this
     val index = currentMediaItemIndex.takeIf { it in playlist.indices } ?: return this
     val item = playlist[index]
-    val metadataDurationMs = item.mediaItem.mediaMetadata.durationMs
+    if (item.mediaItem.mediaId.startsWith("radio:")) return this
+    val metadataDurationMs = item.mediaMetadata?.durationMs
+        ?: item.mediaItem.mediaMetadata.durationMs
+    val bridgeDurationMs = AndroidPlaybackBridge.currentTrack?.invoke()
+        ?.takeIf { it.id == item.mediaItem.mediaId }
+        ?.durationMs
+        ?.takeIf { it > 0L }
     val knownDurationUs = when {
         item.durationUs != C.TIME_UNSET && item.durationUs > 0L -> item.durationUs
         metadataDurationMs != null && metadataDurationMs > 0L -> metadataDurationMs * 1_000L
+        bridgeDurationMs != null -> bridgeDurationMs * 1_000L
         else -> C.TIME_UNSET
     }
     if (knownDurationUs == C.TIME_UNSET) return this
 
-    val needsItemPatch = item.durationUs != knownDurationUs || !item.isSeekable || item.isDynamic
+    val needsItemPatch = item.durationUs != knownDurationUs ||
+        !item.isSeekable ||
+        item.isDynamic ||
+        item.liveConfiguration != null
     val needsSeekCommand = !availableCommands.contains(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
     if (!needsItemPatch && !needsSeekCommand) return this
 
@@ -385,6 +417,7 @@ internal fun SimpleBasePlayer.State.withCatalogSeekability(): SimpleBasePlayer.S
                 .setDurationUs(knownDurationUs)
                 .setIsSeekable(true)
                 .setIsDynamic(false)
+                .setLiveConfiguration(null)
                 .build()
         }
     } else {
@@ -398,6 +431,40 @@ internal fun SimpleBasePlayer.State.withCatalogSeekability(): SimpleBasePlayer.S
     } else {
         availableCommands
     }
+    return buildUpon()
+        .setPlaylist(patchedPlaylist)
+        .setAvailableCommands(commands)
+        .build()
+}
+
+/**
+ * Live internet radio: hide the seek bar and strip skip commands so AA does not imply a queue.
+ */
+@OptIn(UnstableApi::class)
+internal fun SimpleBasePlayer.State.withRadioLiveTransport(): SimpleBasePlayer.State {
+    val playlist = getPlaylist()
+    if (playlist.isEmpty()) return this
+    val index = currentMediaItemIndex.takeIf { it in playlist.indices } ?: return this
+    val item = playlist[index]
+    val mediaId = item.mediaItem.mediaId
+    val bridgeRadio = AndroidPlaybackBridge.currentTrack?.invoke()?.id?.startsWith("radio:") == true
+    if (!mediaId.startsWith("radio:") && !bridgeRadio) return this
+
+    val patchedItem = item.buildUpon()
+        .setIsSeekable(false)
+        .setIsDynamic(true)
+        .setDurationUs(C.TIME_UNSET)
+        .setLiveConfiguration(MediaItem.LiveConfiguration.UNSET)
+        .build()
+    val patchedPlaylist = playlist.toMutableList().also { it[index] = patchedItem }
+    val commands = availableCommands.buildUpon()
+        .remove(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM)
+        .remove(Player.COMMAND_SEEK_TO_DEFAULT_POSITION)
+        .remove(Player.COMMAND_SEEK_TO_NEXT)
+        .remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
+        .remove(Player.COMMAND_SEEK_TO_PREVIOUS)
+        .remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
+        .build()
     return buildUpon()
         .setPlaylist(patchedPlaylist)
         .setAvailableCommands(commands)

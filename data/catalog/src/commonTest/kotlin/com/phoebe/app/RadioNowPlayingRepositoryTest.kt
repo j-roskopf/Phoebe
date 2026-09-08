@@ -94,6 +94,27 @@ class RadioNowPlayingRepositoryTest {
     }
 
     @Test
+    fun parsesIcyStreamTitleWithKeyedTitleArtistFields() {
+        val metadata = RadioNowPlayingRepository.parseIcyMetadata(
+            """StreamTitle='title="Risk It All",artist="Bruno Mars",url="song_spot=\"M\" Media"';""",
+        )
+
+        assertEquals("Bruno Mars", metadata?.artist)
+        assertEquals("Risk It All", metadata?.title)
+        assertEquals(RadioNowPlayingSourceType.Icy, metadata?.sourceType)
+    }
+
+    @Test
+    fun parsesIcyStreamTitleWithJsonPayload() {
+        val metadata = RadioNowPlayingRepository.parseIcyMetadata(
+            """StreamTitle='{"title":"French Disko","artist":"Stereolab"}';""",
+        )
+
+        assertEquals("Stereolab", metadata?.artist)
+        assertEquals("French Disko", metadata?.title)
+    }
+
+    @Test
     fun resolvesIcyMetadataBlockFromStream() = runTest {
         val metaint = 8
         val icyMetadata = "StreamTitle='Durand Jones - Morning in America';"

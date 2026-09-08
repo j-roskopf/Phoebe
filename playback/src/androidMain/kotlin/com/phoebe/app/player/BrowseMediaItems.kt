@@ -17,6 +17,7 @@ internal fun browseFolderItem(
     mediaId: String,
     title: String,
     artworkUri: Uri? = null,
+    mediaType: Int = MediaMetadata.MEDIA_TYPE_FOLDER_MIXED,
 ): MediaItem =
     MediaItem.Builder()
         .setMediaId(mediaId)
@@ -25,7 +26,7 @@ internal fun browseFolderItem(
                 .setTitle(title)
                 .setIsBrowsable(true)
                 .setIsPlayable(false)
-                .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
+                .setMediaType(mediaType)
                 .apply { artworkUri?.let { setArtworkUri(it) } }
                 .build(),
         )
@@ -84,6 +85,52 @@ internal fun browsePlayableActionItem(
                 .setIsBrowsable(false)
                 .setIsPlayable(true)
                 .setMediaType(MediaMetadata.MEDIA_TYPE_PLAYLIST)
+                .apply { artworkUri?.let { setArtworkUri(it) } }
+                .build(),
+        )
+        .build()
+
+internal fun browseRadioStationItem(
+    stationId: String,
+    title: String,
+    subtitle: String?,
+    artworkUri: Uri?,
+    fallbackArtworkUri: Uri?,
+): MediaItem =
+    MediaItem.Builder()
+        .setMediaId(BrowseMediaIds.radioStation(stationId))
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setTitle(title)
+                .setDisplayTitle(title)
+                .apply { subtitle?.let { setSubtitle(it) } }
+                .setAlbumTitle(title)
+                .setIsBrowsable(false)
+                .setIsPlayable(true)
+                .setMediaType(MediaMetadata.MEDIA_TYPE_RADIO_STATION)
+                .apply {
+                    (artworkUri ?: fallbackArtworkUri)?.let { setArtworkUri(it) }
+                }
+                .build(),
+        )
+        .build()
+
+internal fun browseNonPlayableHintItem(
+    mediaId: String,
+    title: String,
+    subtitle: String? = null,
+    artworkUri: Uri? = null,
+): MediaItem =
+    MediaItem.Builder()
+        .setMediaId(mediaId)
+        .setMediaMetadata(
+            MediaMetadata.Builder()
+                .setTitle(title)
+                .setDisplayTitle(title)
+                .apply { subtitle?.let { setSubtitle(it) } }
+                .setIsBrowsable(false)
+                .setIsPlayable(false)
+                .setMediaType(MediaMetadata.MEDIA_TYPE_FOLDER_MIXED)
                 .apply { artworkUri?.let { setArtworkUri(it) } }
                 .build(),
         )

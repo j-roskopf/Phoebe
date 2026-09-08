@@ -4,6 +4,7 @@ import android.app.Application
 import android.os.Looper
 import androidx.annotation.OptIn
 import androidx.media3.common.C
+import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.SimpleBasePlayer
 import androidx.media3.common.util.UnstableApi
@@ -294,6 +295,132 @@ class CastMediaSessionPlayerTest {
         }
     }
 
+    @Test
+    fun catalogSeekabilitySurvivesSkipToSecondUnseekableItem() {
+        val delegate = FakeSessionDelegate()
+        val player = CastMediaSessionPlayer(delegate)
+        val first = testTrack("track-first", durationMs = 180_000)
+        val second = testTrack("track-second", durationMs = 240_000)
+
+        try {
+            delegate.setStateForTest(
+                delegateState(
+                    tracks = listOf(first, second),
+                    currentIndex = 1,
+                    seekable = false,
+                    includeDuration = false,
+                    includeSeekCommand = false,
+                ).build(),
+            )
+            shadowOf(Looper.getMainLooper()).idle()
+
+            assertEquals("track-second", player.currentMediaItem?.mediaId)
+            assertTrue(player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM))
+            assertEquals(240_000, player.duration)
+            assertTrue(player.isCurrentMediaItemSeekable)
+            assertFalse(player.isCurrentMediaItemLive)
+            assertFalse(player.isCurrentMediaItemDynamic)
+        } finally {
+            player.release()
+        }
+    }
+
+    @Test
+    fun catalogSeekabilityClearsLiveConfigurationSoAndroidAutoKeepsSeekBar() {
+        val delegate = FakeSessionDelegate()
+        val player = CastMediaSessionPlayer(delegate)
+        val first = testTrack("live-first")
+        val second = testTrack("live-second", durationMs = 210_000)
+
+        try {
+            delegate.setStateForTest(
+                delegateState(
+                    tracks = listOf(first, second),
+                    currentIndex = 1,
+                    seekable = false,
+                    includeDuration = false,
+                    includeSeekCommand = false,
+                    live = true,
+                ).build(),
+            )
+            shadowOf(Looper.getMainLooper()).idle()
+
+            // Media3 legacy stub strips ACTION_SEEK_TO while isCurrentMediaItemLive is true.
+            assertFalse(player.isCurrentMediaItemLive)
+            assertTrue(player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM))
+            assertEquals(210_000, player.duration)
+            assertTrue(player.isCurrentMediaItemSeekable)
+        } finally {
+            player.release()
+        }
+    }
+
+    @Test
+    fun radioLiveTransportHidesSeekAndSkipCommands() {
+        val delegate = FakeSessionDelegate()
+        val player = CastMediaSessionPlayer(delegate)
+        val radio = testTrack("radio:kexp", durationMs = 0)
+        val previousHasNext = AndroidPlaybackBridge.hasNextTrack
+        val previousHasPrevious = AndroidPlaybackBridge.hasPreviousTrack
+
+        try {
+            AndroidPlaybackBridge.hasNextTrack = { false }
+            AndroidPlaybackBridge.hasPreviousTrack = { false }
+            delegate.setStateForTest(
+                delegateState(
+                    tracks = listOf(radio),
+                    currentIndex = 0,
+                    seekable = true,
+                    includeDuration = false,
+                    includeSeekCommand = true,
+                    live = false,
+                ).build(),
+            )
+            shadowOf(Looper.getMainLooper()).idle()
+
+            assertFalse(player.isCurrentMediaItemSeekable)
+            assertTrue(player.isCurrentMediaItemLive)
+            assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM))
+            assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT))
+            assertFalse(player.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS))
+        } finally {
+            AndroidPlaybackBridge.hasNextTrack = previousHasNext
+            AndroidPlaybackBridge.hasPreviousTrack = previousHasPrevious
+            player.release()
+        }
+    }
+
+    @Test
+    fun catalogSeekabilityFallsBackToBridgeTrackDurationWhenMetadataMissing() {
+        val delegate = FakeSessionDelegate()
+        val player = CastMediaSessionPlayer(delegate)
+        val track = testTrack("bridge-duration", durationMs = 0)
+        val previousCurrentTrack = AndroidPlaybackBridge.currentTrack
+
+        try {
+            AndroidPlaybackBridge.currentTrack = {
+                testTrack("bridge-duration", durationMs = 195_000)
+            }
+            delegate.setStateForTest(
+                delegateState(
+                    tracks = listOf(track),
+                    currentIndex = 0,
+                    seekable = false,
+                    includeDuration = false,
+                    includeSeekCommand = false,
+                ).build(),
+            )
+            shadowOf(Looper.getMainLooper()).idle()
+
+            assertTrue(player.isCommandAvailable(Player.COMMAND_SEEK_IN_CURRENT_MEDIA_ITEM))
+            assertEquals(195_000, player.duration)
+            assertTrue(player.isCurrentMediaItemSeekable)
+        } finally {
+            AndroidPlaybackBridge.currentTrack = previousCurrentTrack
+            player.release()
+        }
+    }
+
     private class FakeSessionDelegate : SimpleBasePlayer(Looper.getMainLooper()) {
         private var state = SimpleBasePlayer.State.Builder()
             .setAvailableCommands(Player.Commands.Builder().addAllCommands().build())
@@ -376,6 +503,7 @@ class CastMediaSessionPlayerTest {
         seekable: Boolean = true,
         includeDuration: Boolean = true,
         includeSeekCommand: Boolean = true,
+        live: Boolean = false,
     ): SimpleBasePlayer.State.Builder {
         val items = tracks.map { track ->
             val mediaItem = playbackMediaItem(track, inAppPlayback = true)
@@ -383,6 +511,10 @@ class CastMediaSessionPlayerTest {
                 .setMediaItem(mediaItem)
                 .setMediaMetadata(mediaItem.mediaMetadata)
                 .setIsSeekable(seekable)
+                .setIsDynamic(live)
+            if (live) {
+                builder.setLiveConfiguration(MediaItem.LiveConfiguration.UNSET)
+            }
             if (includeDuration) {
                 builder.setDurationUs(track.durationMs * 1_000L)
             }
@@ -398,13 +530,13 @@ class CastMediaSessionPlayerTest {
             .setCurrentMediaItemIndex(currentIndex)
     }
 
-    private fun testTrack(id: String): Track =
+    private fun testTrack(id: String, durationMs: Long = 180_000): Track =
         Track(
             id = id,
             title = "Track",
             artist = "Artist",
             album = "Album",
-            durationMs = 180_000,
+            durationMs = durationMs,
             streamUrl = "https://example.test/$id.mp3",
             downloadUrl = "",
         )
