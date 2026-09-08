@@ -2313,7 +2313,12 @@ const val PENDING_LIKED_SONGS_PLAYLIST_ID = "plex:liked-songs-pending"
 const val NavidromeLikedSongsPlaylistId = "navidrome:$LIKED_SONGS_PLAYLIST_BARE_ID"
 
 fun likedSongsPlaylistId(providerType: MediaProviderType): String =
-    "${providerType.catalogPrefix}:$LIKED_SONGS_PLAYLIST_BARE_ID"
+    if (providerType.isEmbyFamily()) {
+        // Jellyfin/Emby share one client that always emits/recognizes the Jellyfin synthetic id.
+        "jellyfin:$LIKED_SONGS_PLAYLIST_BARE_ID"
+    } else {
+        "${providerType.catalogPrefix}:$LIKED_SONGS_PLAYLIST_BARE_ID"
+    }
 
 /** User-created playlist stored only in Phoebe (not synced to Plex). */
 fun Playlist.isLocalPlaylist(): Boolean = id.startsWith(LOCAL_PLAYLIST_ID_PREFIX)

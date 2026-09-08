@@ -159,7 +159,7 @@ private fun MobileExpandedUtilityControls(
 ) {
     Row(
         modifier = modifier,
-        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
+        horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (showLikeControl) {
@@ -213,7 +213,7 @@ private fun MobileUtilityControl(
     content: @Composable () -> Unit,
 ) {
     Box(
-        modifier = modifier.width(48.dp),
+        modifier = modifier.width(44.dp),
         contentAlignment = Alignment.Center,
     ) {
         content()

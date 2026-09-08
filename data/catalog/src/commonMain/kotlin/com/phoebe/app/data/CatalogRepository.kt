@@ -5159,7 +5159,15 @@ class CatalogRepository(
 
     suspend fun toggleLikedTrackLocally(session: PlexSession?, track: Track): Boolean {
         if (!track.canTogglePlexLike()) return false
-        val playlist = ensureLocalLikedSongsPlaylist(session)
+        var playlist = ensureLocalLikedSongsPlaylist(session)
+        if (playlist.isPlexLikedSongsPlaceholder()) {
+            // A placeholder shell carries no membership (it is not a valid Plex rating key). Resolve
+            // the real remote Liked Songs playlist first so an already-liked track is not re-added
+            // and its members are not clobbered by a 1-track list. If it cannot be resolved (e.g.
+            // offline first-like), fall through to the local pending toggle below.
+            ensureLikedSongsTracksLoaded(session)
+            playlist = ensureLocalLikedSongsPlaylist(session)
+        }
         var existing = mutableCatalog.value.tracksByParent[playlist.id].orEmpty()
         // Heart toggles from Android Auto can land before the playlist detail has ever been
         // opened. Fetch remote members first so we don't publish a 1-song list over a 13-song
@@ -5168,10 +5176,15 @@ class CatalogRepository(
             playlist.trackCount > 0 &&
             !playlist.isPlexLikedSongsPlaceholder()
         ) {
-            runCatching {
+            val loaded = runCatching {
                 refetchPlaylistTracksFromPlex(session, playlist, showRefreshing = false)
-                existing = mutableCatalog.value.tracksByParent[playlist.id].orEmpty()
-            }
+                true
+            }.getOrDefault(false)
+            existing = mutableCatalog.value.tracksByParent[playlist.id].orEmpty()
+            // Metadata reports members but they could not be loaded (e.g. offline). Never treat an
+            // unavailable list as empty, or we would re-add an already-liked track and delete the
+            // cached members when persisting a 1-track list.
+            if (existing.isEmpty() && !loaded) return false
         }
         val isLiked = existing.any { it.hasSamePlexIdentity(track.id) }
         val updated = if (isLiked) {
