@@ -31,8 +31,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 class PlaybackService : MediaLibraryService() {
 
@@ -66,7 +69,9 @@ class PlaybackService : MediaLibraryService() {
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             AndroidPlaybackBridge.updateServicePlayerState()
             AndroidPlaybackBridge.onServicePlayerChanged?.invoke()
-            updateLikeButton()
+            lastLikeButtonTrackId = null
+            lastLikeButtonLiked = null
+            updateLikeButton(mediaItem?.let(::trackFromMediaItemForLike))
         }
     }
 
@@ -79,13 +84,15 @@ class PlaybackService : MediaLibraryService() {
             val sessionCommands = MediaSession.ConnectionResult.DEFAULT_SESSION_AND_LIBRARY_COMMANDS
                 .buildUpon()
                 .add(LikeTrackCommand)
+                .add(UnlikeTrackCommand)
                 .build()
             return MediaSession.ConnectionResult.AcceptedResultBuilder(session)
                 .setAvailableSessionCommands(sessionCommands)
                 .setAvailablePlayerCommands(MediaSession.ConnectionResult.DEFAULT_PLAYER_COMMANDS)
-                .setCustomLayout(likeButtonLayout())
-                .setMediaButtonPreferences(likeButtonLayout())
+                .setCustomLayout(likeButtonLayout(currentTrackHintForLike()))
+                .setMediaButtonPreferences(likeButtonLayout(currentTrackHintForLike()))
                 .build()
+                .also { updateLikeButton() }
         }
 
         @Suppress("OVERRIDE_DEPRECATION", "DEPRECATION")
@@ -182,17 +189,27 @@ class PlaybackService : MediaLibraryService() {
             customCommand: SessionCommand,
             args: Bundle,
         ): ListenableFuture<SessionResult> {
-            if (customCommand.customAction != LikeTrackAction) {
+            if (customCommand.customAction != LikeTrackAction &&
+                customCommand.customAction != UnlikeTrackAction
+            ) {
                 return immediateFuture(SessionResult(SessionError.ERROR_BAD_VALUE))
             }
-            return listenableFuture("onCustomCommand:$LikeTrackAction") {
-                val track = currentTrackForLike() ?: return@listenableFuture SessionResult(SessionError.ERROR_BAD_VALUE)
-                if (AndroidPlaybackBridge.isLikeAvailable?.invoke(track) != true) {
+            return listenableFuture("onCustomCommand:${customCommand.customAction}") {
+                val track = currentTrackForLike()
+                if (track == null) {
+                    PhoebeLog.d(TAG) { "like ignored: no current track resolved" }
+                    return@listenableFuture SessionResult(SessionError.ERROR_BAD_VALUE)
+                }
+                if (!AndroidPlaybackRuntime.isLikeAvailable(track)) {
+                    PhoebeLog.d(TAG) { "like ignored: unavailable for ${track.id}" }
                     return@listenableFuture SessionResult(SessionError.ERROR_NOT_SUPPORTED)
                 }
                 // Await the catalog mutation so the heart reflects the post-toggle state.
                 // Local MediaSession ticks no longer call updateLikeButton (they flash AA).
-                AndroidPlaybackBridge.onToggleLikedTrack?.invoke(track)
+                AndroidPlaybackRuntime.toggleLikedTrack(track)
+                // Force a preference refresh even when track id is unchanged.
+                lastLikeButtonTrackId = null
+                lastLikeButtonLiked = null
                 updateLikeButton(track)
                 SessionResult(SessionResult.RESULT_SUCCESS)
             }
@@ -319,6 +336,16 @@ class PlaybackService : MediaLibraryService() {
             // Like button is refreshed from media-item transitions / explicit track publishes,
             // not on every position tick — setCustomLayout flashes wide-screen Android Auto.
         }
+        AndroidPlaybackBridge.onLikeStateMayHaveChanged = {
+            lastLikeButtonTrackId = null
+            lastLikeButtonLiked = null
+            updateLikeButton()
+        }
+        AndroidPlaybackBridge.onCurrentTrackChanged = { track ->
+            lastLikeButtonTrackId = null
+            lastLikeButtonLiked = null
+            updateLikeButton(track)
+        }
         AndroidPlaybackBridge.attachServicePlayer(player, servicePlayerListener)
 
         val openAppIntent = PendingIntent.getActivity(
@@ -332,9 +359,28 @@ class PlaybackService : MediaLibraryService() {
         mediaLibrarySession = MediaLibrarySession.Builder(this, sessionPlayer, librarySessionCallback)
             .setSessionActivity(openAppIntent)
             .setBitmapLoader(AndroidPlaybackHttp.sessionBitmapLoader(this))
-            .setCustomLayout(likeButtonLayout())
-            .setMediaButtonPreferences(likeButtonLayout())
+            .setCustomLayout(likeButtonLayout(currentTrackHintForLike()))
+            .setMediaButtonPreferences(likeButtonLayout(currentTrackHintForLike()))
             .build()
+            .also { session ->
+                // Custom heart preferences otherwise steal skip slots in the legacy PlaybackState
+                // Android Auto reads — reserve them so next/prev (and the seek bar layout) stay.
+                session.setSessionExtras(
+                    Bundle().apply {
+                        putBoolean(MediaConstants.EXTRAS_KEY_SLOT_RESERVATION_SEEK_TO_PREV, true)
+                        putBoolean(MediaConstants.EXTRAS_KEY_SLOT_RESERVATION_SEEK_TO_NEXT, true)
+                    },
+                )
+                updateLikeButton()
+            }
+        serviceScope.launch {
+            runCatching { AndroidPlaybackRuntime.ensureInstalledNow() }
+            AndroidPlaybackRuntime.likedSongsMembershipFlow()?.collect {
+                lastLikeButtonTrackId = null
+                lastLikeButtonLiked = null
+                updateLikeButton()
+            }
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaLibrarySession? =
@@ -353,6 +399,8 @@ class PlaybackService : MediaLibraryService() {
         mediaLibrarySession?.player?.let { player ->
             AndroidPlaybackBridge.onCastMediaSessionState = null
             AndroidPlaybackBridge.onLocalMediaSessionState = null
+            AndroidPlaybackBridge.onLikeStateMayHaveChanged = null
+            AndroidPlaybackBridge.onCurrentTrackChanged = null
             AndroidPlaybackBridge.detachServicePlayer(servicePlayerListener)
             player.release()
         }
@@ -418,34 +466,73 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private suspend fun currentTrackForLike(): Track? {
+        AndroidPlaybackBridge.currentTrack?.invoke()?.let { return it }
         val item = mediaLibrarySession?.player?.currentMediaItem ?: return null
         val source = AndroidPlaybackRuntime.ensureInstalledNow()
-        return source.expandPlayableItem(item).firstOrNull()
-            ?: source.resolveTracks(listOf(item)).firstOrNull()
+        source.expandPlayableItem(item).firstOrNull()?.let { return it }
+        source.resolveTracks(listOf(item)).firstOrNull()?.let { return it }
+        return trackFromMediaItemForLike(item)
+    }
+
+    private fun trackFromMediaItemForLike(item: MediaItem): Track? {
+        val id = item.mediaId.takeIf { it.isNotBlank() } ?: return null
+        val metadata = item.mediaMetadata
+        val title = metadata.title?.toString()?.takeIf { it.isNotBlank() } ?: return null
+        return Track(
+            id = id,
+            title = title,
+            artist = metadata.artist?.toString().orEmpty(),
+            album = metadata.albumTitle?.toString().orEmpty(),
+            durationMs = metadata.durationMs ?: 0L,
+            streamUrl = item.localConfiguration?.uri?.toString().orEmpty(),
+            downloadUrl = "",
+            thumbUrl = metadata.artworkUri?.toString(),
+        )
     }
 
     private var lastLikeButtonTrackId: String? = null
-    private var lastLikeButtonLiked: Boolean = false
-    private var lastLikeButtonEnabled: Boolean = false
+    private var lastLikeButtonLiked: Boolean? = null
+    private val likeButtonMutex = Mutex()
+    private val likeButtonGeneration = AtomicInteger(0)
+
+    private fun currentTrackHintForLike(): Track? =
+        AndroidPlaybackBridge.currentTrack?.invoke()
+            ?: mediaLibrarySession?.player?.currentMediaItem?.let(::trackFromMediaItemForLike)
 
     private fun updateLikeButton(track: Track? = null) {
         val session = mediaLibrarySession ?: return
+        val generation = likeButtonGeneration.incrementAndGet()
         serviceScope.launch {
-            val resolved = track ?: runCatching { currentTrackForLike() }.getOrNull()
-            val liked = resolved?.let { AndroidPlaybackBridge.isTrackLiked?.invoke(it) } == true
-            val enabled = resolved?.let { AndroidPlaybackBridge.isLikeAvailable?.invoke(it) } == true
-            if (resolved?.id == lastLikeButtonTrackId &&
-                liked == lastLikeButtonLiked &&
-                enabled == lastLikeButtonEnabled
-            ) {
-                return@launch
+            likeButtonMutex.withLock {
+                if (generation != likeButtonGeneration.get()) return@withLock
+                // Prefer the live app queue track over a stale MediaItem hint from an older skip.
+                val resolved = AndroidPlaybackBridge.currentTrack?.invoke()
+                    ?: track
+                    ?: runCatching { currentTrackForLike() }.getOrNull()
+                runCatching { AndroidPlaybackRuntime.ensureLikedSongsLoaded() }
+                if (generation != likeButtonGeneration.get()) return@withLock
+                // Re-read after ensure — AppState may have advanced during the suspend.
+                val current = AndroidPlaybackBridge.currentTrack?.invoke() ?: resolved
+                val liked = current?.let { AndroidPlaybackRuntime.isTrackLiked(it) } == true
+                if (current?.id == lastLikeButtonTrackId && liked == lastLikeButtonLiked) {
+                    return@withLock
+                }
+                lastLikeButtonTrackId = current?.id
+                lastLikeButtonLiked = liked
+                val layout = androidAutoLikeButtonLayout(current, liked = liked)
+                publishLikeButtonLayout(session, layout)
             }
-            lastLikeButtonTrackId = resolved?.id
-            lastLikeButtonLiked = liked
-            lastLikeButtonEnabled = enabled
-            val layout = likeButtonLayout(resolved)
-            session.setCustomLayout(layout)
-            session.setMediaButtonPreferences(layout)
+        }
+    }
+
+    private fun publishLikeButtonLayout(session: MediaLibrarySession, layout: List<CommandButton>) {
+        session.setCustomLayout(layout)
+        session.setMediaButtonPreferences(layout)
+        // Android Auto often adopts preferences from onConnect; push per-controller so a later
+        // filled/unfilled swap actually reaches the already-connected DHU session.
+        session.connectedControllers.forEach { controller ->
+            session.setCustomLayout(controller, layout)
+            session.setMediaButtonPreferences(controller, layout)
         }
     }
 
@@ -516,23 +603,11 @@ class PlaybackService : MediaLibraryService() {
     private companion object {
         private const val TAG = "PlaybackService"
         private const val NOTIFICATION_ID = 1001
-        private const val LikeTrackAction = "com.phoebe.app.action.LIKE_TRACK"
         private val LikeTrackCommand = SessionCommand(LikeTrackAction, Bundle.EMPTY)
+        private val UnlikeTrackCommand = SessionCommand(UnlikeTrackAction, Bundle.EMPTY)
 
-        private fun likeButtonLayout(track: Track? = null): List<CommandButton> {
-            val enabled = track?.let { AndroidPlaybackBridge.isLikeAvailable?.invoke(it) } ?: false
-            val liked = track?.let { AndroidPlaybackBridge.isTrackLiked?.invoke(it) } ?: false
-            return listOf(
-                CommandButton.Builder(
-                    if (liked) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED,
-                )
-                    .setDisplayName(if (liked) "Unlike" else "Like")
-                    .setSessionCommand(LikeTrackCommand)
-                    .setEnabled(enabled)
-                    .setSlots(CommandButton.SLOT_OVERFLOW)
-                    .build(),
-            )
-        }
+        private fun likeButtonLayout(track: Track? = null): List<CommandButton> =
+            androidAutoLikeButtonLayout(track)
 
         private fun androidAutoRootParams(
             @Suppress("UNUSED_PARAMETER") incoming: MediaLibraryService.LibraryParams?,
@@ -552,6 +627,34 @@ class PlaybackService : MediaLibraryService() {
                 .build()
         }
     }
+}
+
+internal const val LikeTrackAction = "com.phoebe.app.action.LIKE_TRACK"
+internal const val UnlikeTrackAction = "com.phoebe.app.action.UNLIKE_TRACK"
+
+/** Heart control for Android Auto Now Playing / song detail. */
+internal fun androidAutoLikeButtonLayout(
+    track: Track? = null,
+    liked: Boolean? = null,
+): List<CommandButton> {
+    val isLiked = liked ?: (track?.let { AndroidPlaybackRuntime.isTrackLiked(it) } == true)
+    // Liked vs unliked use *different* session commands. Android Auto keys legacy custom actions
+    // by action string and often keeps the previous icon when only ICON_HEART_* changes.
+    val action = if (isLiked) UnlikeTrackAction else LikeTrackAction
+    return listOf(
+        CommandButton.Builder(
+            if (isLiked) CommandButton.ICON_HEART_FILLED else CommandButton.ICON_HEART_UNFILLED,
+        )
+            .setDisplayName(if (isLiked) "Unlike" else "Like")
+            .setSessionCommand(SessionCommand(action, Bundle.EMPTY))
+            // Must stay enabled: Media3 drops disabled buttons from the legacy PlaybackState that
+            // Android Auto / DHU render. Availability is enforced in onCustomCommand instead.
+            .setEnabled(true)
+            // Overflow keeps Next/Previous in their primary slots; with skip-slot reservation the
+            // heart still lands as a Now Playing custom action on Android Auto.
+            .setSlots(CommandButton.SLOT_OVERFLOW)
+            .build(),
+    )
 }
 
 /**

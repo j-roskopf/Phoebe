@@ -14,6 +14,8 @@ import com.phoebe.app.domain.CatalogSnapshot
 import com.phoebe.app.domain.Track
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.random.Random
@@ -42,6 +44,8 @@ fun rememberHomeFeatureState(
     var randomArtistSeed by remember { mutableStateOf(Random.nextInt()) }
     var randomAlbumSeed by remember { mutableStateOf(Random.nextInt()) }
     val trackIndexCache = remember { HomeCatalogIndexCache() }
+    // Default-bound derive is non-cancellable mid-work; serialize shared cache access.
+    val homeDeriveMutex = remember { Mutex() }
     val catalogHomeMetadataKey = if (catalogSyncInProgress) {
         catalog.homeMetadataRevisionKey()
     } else {
@@ -84,16 +88,18 @@ fun rememberHomeFeatureState(
         )
         if (delayMs > 0L) delay(delayMs)
         value = withContext(Dispatchers.Default) {
-            deriveHomeUiState(
-                catalog = catalog,
-                playHistory = playHistory,
-                randomArtistSeed = randomArtistSeed,
-                randomAlbumSeed = randomAlbumSeed,
-                nowMs = nowMs,
-                trackIndexCache = trackIndexCache,
-                includeTrackDerivedSections = trackHeavySectionsEnabled,
-                resolvedTracksById = resolvedTracksById,
-            )
+            homeDeriveMutex.withLock {
+                deriveHomeUiState(
+                    catalog = catalog,
+                    playHistory = playHistory,
+                    randomArtistSeed = randomArtistSeed,
+                    randomAlbumSeed = randomAlbumSeed,
+                    nowMs = nowMs,
+                    trackIndexCache = trackIndexCache,
+                    includeTrackDerivedSections = trackHeavySectionsEnabled,
+                    resolvedTracksById = resolvedTracksById,
+                )
+            }
         }
     }
     val mostPlayedResolving = playHistory.mostPlayedPendingResolution(

@@ -1,9 +1,16 @@
 package com.phoebe.app.player
 
 import com.phoebe.app.data.ArtworkOriginHolder
+import com.phoebe.app.domain.Track
+import com.phoebe.app.domain.canTogglePlexLike
+import com.phoebe.app.domain.isLikedSongsPlaylist
+import com.phoebe.app.domain.supportsRemotePlaylists
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -79,6 +86,60 @@ object AndroidPlaybackRuntime {
         if (ArtworkOriginHolder.liveOrigin != null) return
         installScope.launch {
             if (ensureLiveOriginNow() != null) onBound()
+        }
+    }
+
+    /**
+     * Like controls must work when Android Auto starts [PlaybackService] without Compose.
+     * Prefer live AppState bridges when present; otherwise use the headless catalog/session.
+     */
+    fun isLikeAvailable(track: Track): Boolean {
+        AndroidPlaybackBridge.isLikeAvailable?.let { return it(track) }
+        if (!track.canTogglePlexLike()) return false
+        val session = dependencies?.sessionRepository?.session?.value
+        return session.supportsRemotePlaylists()
+    }
+
+    fun isTrackLiked(track: Track): Boolean {
+        AndroidPlaybackBridge.isTrackLiked?.let { bridgeLiked ->
+            if (bridgeLiked(track)) return true
+            // Bridge can be bound to AppState while Liked Songs members are still warming via
+            // the headless catalog path — fall through so ensureLikedSongsLoaded can win.
+        }
+        return dependencies?.catalogRepository?.isTrackLiked(track.id) == true
+    }
+
+    /**
+     * Load Liked Songs members (DB, then remote) so [isTrackLiked] is accurate after a cold start
+     * before playlist detail or catalog warm-up has filled tracksByParent.
+     */
+    suspend fun ensureLikedSongsLoaded() {
+        ensureInstalledNow()
+        val deps = dependencies ?: return
+        deps.catalogRepository.ensureLikedSongsTracksLoaded(deps.sessionRepository.session.value)
+    }
+
+    /** Emit Liked Songs membership signatures so Android Auto can refresh the heart when loaded. */
+    fun likedSongsMembershipFlow(): Flow<Set<String>>? {
+        val catalog = dependencies?.catalogRepository?.catalog ?: return null
+        return catalog.map { snapshot ->
+            val liked = snapshot.playlists.firstOrNull { it.isLikedSongsPlaylist() } ?: return@map emptySet()
+            snapshot.tracksByParent[liked.id].orEmpty().map { it.id }.toSet()
+        }.distinctUntilChanged()
+    }
+
+    suspend fun toggleLikedTrack(track: Track) {
+        AndroidPlaybackBridge.onToggleLikedTrack?.let { bridge ->
+            bridge(track)
+            return
+        }
+        ensureInstalledNow()
+        val deps = dependencies ?: return
+        if (!isLikeAvailable(track)) return
+        val session = deps.sessionRepository.session.value
+        val liked = deps.catalogRepository.toggleLikedTrackLocally(session, track)
+        installScope.launch {
+            runCatching { deps.catalogRepository.syncLikedTrackChange(session, track, liked) }
         }
     }
 }

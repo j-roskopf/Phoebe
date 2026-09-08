@@ -245,6 +245,16 @@ class AndroidAudioPlayer(
         AndroidPlaybackBridge.onLocalMediaSessionPause = { pause() }
         AndroidPlaybackBridge.onLocalMediaSessionSeekTo = { positionMs -> seekTo(positionMs) }
         scope.launch { ensureController() }
+        scope.launch {
+            var lastTrackId: String? = null
+            state.collect { playerState ->
+                val track = playerState.currentTrack
+                val trackId = track?.id
+                if (trackId == lastTrackId) return@collect
+                lastTrackId = trackId
+                AndroidPlaybackBridge.onCurrentTrackChanged?.invoke(track)
+            }
+        }
     }
 
     fun ensureConnected() {

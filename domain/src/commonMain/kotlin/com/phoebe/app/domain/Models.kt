@@ -2321,6 +2321,37 @@ fun Playlist.isLocalPlaylist(): Boolean = id.startsWith(LOCAL_PLAYLIST_ID_PREFIX
 fun Playlist.isLikedSongsPlaylist(): Boolean =
     !isLocalPlaylist() && title.equals(LIKED_SONGS_PLAYLIST_TITLE, ignoreCase = false)
 
+/**
+ * Local shell used before a real Plex "Liked Songs" playlist rating key is known.
+ * These ids are not valid Plex playlist rating keys, so track fetch / remote sync must
+ * discover or create the real server playlist instead of calling the API with them.
+ */
+fun Playlist.isPlexLikedSongsPlaceholder(): Boolean =
+    id == PENDING_LIKED_SONGS_PLAYLIST_ID || id == "plex:$LIKED_SONGS_PLAYLIST_BARE_ID"
+
+/** Provider-prefixed and bare forms of a catalog track id for like / rating membership checks. */
+fun equivalentProviderTrackIds(id: String): Set<String> {
+    if (id.isBlank()) return emptySet()
+    for (provider in MediaProviderType.entries) {
+        val prefix = "${provider.catalogPrefix}:"
+        if (id.startsWith(prefix)) {
+            return setOf(id, id.removePrefix(prefix))
+        }
+    }
+    return buildSet {
+        add(id)
+        for (provider in MediaProviderType.entries) {
+            add("${provider.catalogPrefix}:$id")
+        }
+    }
+}
+
+fun Track.hasSameProviderTrackIdentity(otherId: String): Boolean =
+    equivalentProviderTrackIds(id).any { it in equivalentProviderTrackIds(otherId) }
+
+fun Track.hasSameProviderTrackIdentity(other: Track): Boolean =
+    hasSameProviderTrackIdentity(other.id)
+
 /** Local playlists accept on-device audio files only. */
 fun Track.canAddToLocalPlaylist(): Boolean = isLocalMediaPlayback()
 

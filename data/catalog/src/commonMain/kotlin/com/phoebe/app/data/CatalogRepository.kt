@@ -61,7 +61,10 @@ import com.phoebe.app.domain.isJellyfinLibraryTrack
 import com.phoebe.app.domain.isNavidrome
 import com.phoebe.app.domain.isPlex
 import com.phoebe.app.domain.isPlexLibraryTrack
+import com.phoebe.app.domain.isPlexLikedSongsPlaceholder
 import com.phoebe.app.domain.isRemoteLibraryTrack
+import com.phoebe.app.domain.hasSameProviderTrackIdentity
+import com.phoebe.app.domain.equivalentProviderTrackIds
 import com.phoebe.app.domain.filterWith
 import com.phoebe.app.domain.mergeDownloadCopiesById
 import com.phoebe.app.domain.remoteProviderPrefix
@@ -2567,13 +2570,14 @@ class CatalogRepository(
         // If Plex reports a playlist count mismatch, keep stale tracks visible and refetch after
         // the main catalog is published so additions and removals update the detail panel in place.
         // Liked Songs is also fetched the first time it appears so global heart state has ids to
-        // compare against.
+        // compare against. Artwork alone must not skip refetch — composite thumbs are common on
+        // Liked Songs while tracksByParent is still empty.
         val staleForRefetch = mutableListOf<Playlist>()
         val reconciledPlaylists = merged.playlists.map { p ->
             val cached = preservedTracks[p.id]
             val cachedSize = cached?.size ?: 0
             when {
-                p.trackCount > 0 && cached == null && p.thumbUrl.isNullOrBlank() -> {
+                p.trackCount > 0 && cachedSize == 0 -> {
                     staleForRefetch += p
                     p
                 }
@@ -4917,16 +4921,19 @@ class CatalogRepository(
                     return fromDb
                 }
             }
-            if (session?.isNavidrome() == true) {
-                pushTracksLoading(playlist.id)
-                return try {
-                    refetchPlaylistTracksFromPlex(session, playlist, showRefreshing = false)
-                    mutableCatalog.value.tracksByParent[playlist.id].orEmpty()
-                } finally {
-                    popTracksLoading(playlist.id)
-                }
+            // Pending local-only Liked Songs has no remote playlist to fetch.
+            if (playlist.id == PENDING_LIKED_SONGS_PLAYLIST_ID) {
+                return emptyList()
             }
-            return emptyList()
+            // Real provider Liked Songs (Plex playlist, Subsonic starred, etc.) must fetch like
+            // any other playlist — otherwise the detail page shows trackCount + art with an empty list.
+            pushTracksLoading(playlist.id)
+            return try {
+                refetchPlaylistTracksFromPlex(session, playlist, showRefreshing = false)
+                mutableCatalog.value.tracksByParent[playlist.id].orEmpty()
+            } finally {
+                popTracksLoading(playlist.id)
+            }
         }
         val snapshot = mutableCatalog.value
         val playlistMeta = snapshot.playlists.find { it.id == playlist.id } ?: playlist
@@ -4985,9 +4992,10 @@ class CatalogRepository(
 
     suspend fun findOrCreateLikedSongsPlaylist(session: PlexSession?): Playlist? {
         val existing = mutableCatalog.value.playlists.firstOrNull {
-            it.isLikedSongsPlaylist() && it.id != PENDING_LIKED_SONGS_PLAYLIST_ID
+            it.isLikedSongsPlaylist() && !it.isPlexLikedSongsPlaceholder()
         }
         if (existing != null) return existing
+        discoverRemoteLikedSongsPlaylist(session)?.let { return it }
         return createPlaylist(session, LIKED_SONGS_PLAYLIST_TITLE)
     }
 
@@ -5043,7 +5051,104 @@ class CatalogRepository(
     fun isTrackLiked(trackId: String): Boolean {
         if (trackId.isBlank()) return false
         val liked = mutableCatalog.value.playlists.firstOrNull { it.isLikedSongsPlaylist() } ?: return false
-        return mutableCatalog.value.tracksByParent[liked.id].orEmpty().any { it.hasSamePlexIdentity(trackId) }
+        return mutableCatalog.value.tracksByParent[liked.id].orEmpty()
+            .any { it.hasSameProviderTrackIdentity(trackId) }
+    }
+
+    /**
+     * Heart / like UI needs Liked Songs membership in memory. After a cold start the playlist
+     * shell restores first and track parents hydrate (or refetch) asynchronously — ensure they
+     * are present before answering [isTrackLiked].
+     *
+     * After reinstall the catalog may be empty or only have a [isPlexLikedSongsPlaceholder]
+     * shell; discover the real remote Liked Songs playlist before giving up.
+     */
+    suspend fun ensureLikedSongsTracksLoaded(session: PlexSession?): Playlist? {
+        fun preferredLikedSongs(): Playlist? {
+            val liked = mutableCatalog.value.playlists.filter { it.isLikedSongsPlaylist() }
+            return liked.firstOrNull { !it.isPlexLikedSongsPlaceholder() } ?: liked.firstOrNull()
+        }
+
+        var playlist = preferredLikedSongs()
+        if (playlist == null || playlist.isPlexLikedSongsPlaceholder()) {
+            runCatching { discoverRemoteLikedSongsPlaylist(session) }
+            playlist = preferredLikedSongs()
+        }
+        playlist ?: return null
+        if (mutableCatalog.value.tracksByParent[playlist.id].orEmpty().isNotEmpty()) {
+            return playlist
+        }
+        readTracksForParentFromDatabase(playlist.id)?.takeIf { it.isNotEmpty() }?.let { fromDb ->
+            publish(
+                mutableCatalog.value.copy(
+                    tracksByParent = mutableCatalog.value.tracksByParent + (playlist.id to fromDb),
+                ),
+                persist = false,
+            )
+            return playlist
+        }
+        // Placeholders are not valid Plex rating keys — cannot fetch until discovery/create.
+        if (playlist.isPlexLikedSongsPlaceholder()) {
+            return playlist
+        }
+        // Fetch even when trackCount is 0 (Jellyfin favorites shell, stale metadata after reinstall).
+        tracksForPlaylist(session, playlist)
+        return preferredLikedSongs() ?: playlist
+    }
+
+    /**
+     * Find an existing remote "Liked Songs" playlist and publish it into the catalog, replacing
+     * any local plex placeholder. Used after reinstall when local DB is empty.
+     */
+    private suspend fun discoverRemoteLikedSongsPlaylist(session: PlexSession?): Playlist? {
+        if (session?.supportsRemotePlaylists() != true) return null
+        mutableCatalog.value.playlists
+            .firstOrNull { it.isLikedSongsPlaylist() && !it.isPlexLikedSongsPlaceholder() }
+            ?.let { return it }
+
+        if (session.isPlex()) {
+            val server = session.selectedServer ?: return null
+            val token = session.serverAuthToken() ?: return null
+            val remote = runCatching { plexClient.playlists(server, token) }
+                .onFailure { error ->
+                    PhoebeLog.d("CatalogRepository") {
+                        "discover Liked Songs playlists failed: ${error.message}"
+                    }
+                }
+                .getOrNull()
+                ?.firstOrNull { it.isLikedSongsPlaylist() }
+                ?: return null
+            val prefixed = if (remote.id.startsWith("plex:")) remote else remote.copy(id = "plex:${remote.id}")
+            val snapshot = mutableCatalog.value
+            val placeholderIds = snapshot.playlists
+                .filter { it.isPlexLikedSongsPlaceholder() }
+                .map { it.id }
+                .toSet()
+            val placeholderTracks = placeholderIds.flatMap { id ->
+                snapshot.tracksByParent[id].orEmpty()
+            }
+            val existingRemoteTracks = snapshot.tracksByParent[prefixed.id].orEmpty()
+            val seededTracks = (placeholderTracks + existingRemoteTracks)
+                .distinctBy { equivalentProviderTrackIds(it.id).firstOrNull() ?: it.id }
+            val nextTracks = snapshot.tracksByParent
+                .filterKeys { it !in placeholderIds }
+                .let { base ->
+                    if (seededTracks.isEmpty()) base else base + (prefixed.id to seededTracks)
+                }
+            val next = snapshot.copy(
+                playlists = listOf(prefixed) + snapshot.playlists.filterNot { it.isLikedSongsPlaylist() },
+                tracksByParent = nextTracks,
+            )
+            publish(next, persist = false)
+            return prefixed
+        }
+
+        // Jellyfin / Emby / Navidrome use a stable synthetic Liked Songs id that the provider
+        // adapters know how to fetch (favorites / starred). Ensure the shell exists.
+        if (session.isEmbyFamily() || session.isNavidrome()) {
+            return ensureLocalLikedSongsPlaylist(session)
+        }
+        return null
     }
 
     suspend fun toggleLikedTrack(session: PlexSession?, track: Track): Boolean {
@@ -5053,8 +5158,19 @@ class CatalogRepository(
     suspend fun toggleLikedTrackLocally(session: PlexSession?, track: Track): Boolean {
         if (!track.canTogglePlexLike()) return false
         val playlist = ensureLocalLikedSongsPlaylist(session)
-        val snapshot = mutableCatalog.value
-        val existing = snapshot.tracksByParent[playlist.id].orEmpty()
+        var existing = mutableCatalog.value.tracksByParent[playlist.id].orEmpty()
+        // Heart toggles from Android Auto can land before the playlist detail has ever been
+        // opened. Fetch remote members first so we don't publish a 1-song list over a 13-song
+        // Liked Songs playlist that only had metadata loaded.
+        if (existing.isEmpty() &&
+            playlist.trackCount > 0 &&
+            !playlist.isPlexLikedSongsPlaceholder()
+        ) {
+            runCatching {
+                refetchPlaylistTracksFromPlex(session, playlist, showRefreshing = false)
+                existing = mutableCatalog.value.tracksByParent[playlist.id].orEmpty()
+            }
+        }
         val isLiked = existing.any { it.hasSamePlexIdentity(track.id) }
         val updated = if (isLiked) {
             existing.filterNot { it.hasSamePlexIdentity(track.id) }
@@ -5069,8 +5185,8 @@ class CatalogRepository(
         if (session.isEmbyFamily()) return true
         if (session?.supportsPlexPlaylists() != true) return false
         val remotePlaylist = mutableCatalog.value.playlists.firstOrNull {
-            it.isLikedSongsPlaylist() && it.id != PENDING_LIKED_SONGS_PLAYLIST_ID
-        }
+            it.isLikedSongsPlaylist() && !it.isPlexLikedSongsPlaceholder()
+        } ?: discoverRemoteLikedSongsPlaylist(session)
         val localPlaylistBeforeFetch = mutableCatalog.value.playlists.firstOrNull { it.isLikedSongsPlaylist() } ?: return false
         val desiredTracksBeforeFetch = mutableCatalog.value.tracksByParent[localPlaylistBeforeFetch.id]
         if (remotePlaylist == null) {
@@ -5134,8 +5250,8 @@ class CatalogRepository(
         }
         if (session?.supportsPlexPlaylists() != true || !track.canTogglePlexLike()) return false
         val remotePlaylist = mutableCatalog.value.playlists.firstOrNull {
-            it.isLikedSongsPlaylist() && it.id != PENDING_LIKED_SONGS_PLAYLIST_ID
-        } ?: run {
+            it.isLikedSongsPlaylist() && !it.isPlexLikedSongsPlaceholder()
+        } ?: discoverRemoteLikedSongsPlaylist(session) ?: run {
             if (!liked) return false
             return createPlaylist(session, LIKED_SONGS_PLAYLIST_TITLE, listOf(track)) != null
         }

@@ -21,6 +21,12 @@ object AndroidPlaybackBridge {
     var onToggleLikedTrack: (suspend (Track) -> Unit)? = null
     var isLikeAvailable: ((Track) -> Boolean)? = null
     var isTrackLiked: ((Track) -> Boolean)? = null
+    /** Current app queue track — preferred target for Android Auto like toggles. */
+    var currentTrack: (() -> Track?)? = null
+    /** Fired when Liked Songs membership may have changed so Android Auto can refresh the heart. */
+    var onLikeStateMayHaveChanged: (() -> Unit)? = null
+    /** Fired when the in-app current track id changes (skip / play). */
+    var onCurrentTrackChanged: ((Track?) -> Unit)? = null
     var isCastActive: (() -> Boolean)? = null
     var onCastTogglePlayPause: (() -> Unit)? = null
     var onCastPlay: (() -> Unit)? = null

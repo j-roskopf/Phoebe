@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.session.CommandButton
 import androidx.media3.session.SessionResult
 import com.phoebe.app.data.ArtworkAuthHolder
 import com.phoebe.app.data.ArtworkOriginHolder
@@ -52,6 +53,45 @@ class BrowseMediaItemsTest {
         assertTrue(metadata.isPlayable == true)
         assertFalse(metadata.isBrowsable == true)
         assertEquals(MediaMetadata.MEDIA_TYPE_MUSIC, metadata.mediaType)
+    }
+
+    @Test
+    fun androidAutoLikeButtonStaysEnabledAndReflectsLikedState() {
+        val track = Track(
+            id = "plex:liked-1",
+            title = "Liked",
+            artist = "Artist",
+            album = "Album",
+            durationMs = 180_000,
+            streamUrl = "https://example.test/liked.mp3",
+            downloadUrl = "",
+        )
+        val previousLiked = AndroidPlaybackBridge.isTrackLiked
+        try {
+            AndroidPlaybackBridge.isTrackLiked = { it.id == track.id }
+
+            val liked = androidAutoLikeButtonLayout(track).single()
+            assertTrue(liked.isEnabled)
+            assertEquals(CommandButton.ICON_HEART_FILLED, liked.icon)
+            assertEquals("Unlike", liked.displayName.toString())
+            assertTrue(liked.slots.contains(CommandButton.SLOT_OVERFLOW))
+            assertEquals(UnlikeTrackAction, liked.sessionCommand?.customAction)
+
+            AndroidPlaybackBridge.isTrackLiked = { false }
+            val unliked = androidAutoLikeButtonLayout(track).single()
+            assertTrue(unliked.isEnabled)
+            assertEquals(CommandButton.ICON_HEART_UNFILLED, unliked.icon)
+            assertEquals("Like", unliked.displayName.toString())
+            assertEquals(LikeTrackAction, unliked.sessionCommand?.customAction)
+
+            // Even with no track resolved yet, publish an enabled heart so AA includes it.
+            val pending = androidAutoLikeButtonLayout(null).single()
+            assertTrue(pending.isEnabled)
+            assertEquals(CommandButton.ICON_HEART_UNFILLED, pending.icon)
+            assertEquals(LikeTrackAction, pending.sessionCommand?.customAction)
+        } finally {
+            AndroidPlaybackBridge.isTrackLiked = previousLiked
+        }
     }
 
     @Test

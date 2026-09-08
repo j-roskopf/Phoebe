@@ -115,8 +115,8 @@ fun CatalogSnapshot.homeMetadataKey(): Long {
 }
 
 class HomeCatalogIndexCache {
-    private var tracksById: LinkedHashMap<String, Track> = linkedMapOf()
-    private var recentlyAdded: MutableList<Pair<Track, Long>> = mutableListOf()
+    private var tracksById: Map<String, Track> = emptyMap()
+    private var recentlyAdded: List<Pair<Track, Long>> = emptyList()
     private var parentTrackCounts: Map<String, Int> = emptyMap()
     private var trackIndexKey: Long = 0L
 
@@ -126,39 +126,55 @@ class HomeCatalogIndexCache {
         limit: Int,
     ): HomeTrackIndex {
         val key = catalog.trackIndexKey()
-        if (key == trackIndexKey && tracksById.isNotEmpty()) {
-            return HomeTrackIndex(tracksById, recentlyAdded.map { it.first })
+        val cachedTracks = tracksById
+        val cachedRecent = recentlyAdded
+        if (key == trackIndexKey && cachedTracks.isNotEmpty()) {
+            return HomeTrackIndex(cachedTracks, cachedRecent.map { it.first })
         }
+        val previousCounts = parentTrackCounts
         val newCounts = catalog.tracksByParent.mapValues { it.value.size }
         val canMergeIncrementally =
             trackIndexKey != 0L &&
-                parentTrackCounts.isNotEmpty() &&
-                newCounts.keys.containsAll(parentTrackCounts.keys) &&
-                newCounts.any { (parentId, count) -> (parentTrackCounts[parentId] ?: 0) < count }
+                previousCounts.isNotEmpty() &&
+                newCounts.keys.containsAll(previousCounts.keys) &&
+                newCounts.any { (parentId, count) -> (previousCounts[parentId] ?: 0) < count }
+        // Mutate local copies so overlapping Default-dispatcher derives cannot CME shared lists.
+        val localTracks: LinkedHashMap<String, Track>
+        val localRecent: MutableList<Pair<Track, Long>>
         if (canMergeIncrementally) {
+            localTracks = LinkedHashMap(cachedTracks)
+            localRecent = cachedRecent.toMutableList()
             val changedParents = newCounts.keys.filter { parentId ->
-                (parentTrackCounts[parentId] ?: 0) != newCounts[parentId]
+                (previousCounts[parentId] ?: 0) != newCounts[parentId]
             }.toSet()
-            mergeParents(catalog, albumAddedByTitle, limit, changedParents)
+            mergeParents(localTracks, localRecent, catalog, albumAddedByTitle, limit, changedParents)
         } else {
-            rebuild(catalog, albumAddedByTitle, limit)
+            localTracks = linkedMapOf()
+            localRecent = mutableListOf()
+            mergeParents(
+                localTracks,
+                localRecent,
+                catalog,
+                albumAddedByTitle,
+                limit,
+                catalog.tracksByParent.keys.toSet(),
+            )
         }
+        val snapshotTracks = localTracks.toMap()
+        val snapshotRecent = localRecent.toList()
+        tracksById = snapshotTracks
+        recentlyAdded = snapshotRecent
         parentTrackCounts = newCounts
         trackIndexKey = key
-        return HomeTrackIndex(tracksById, recentlyAdded.map { it.first })
-    }
-
-    private fun rebuild(
-        catalog: CatalogSnapshot,
-        albumAddedByTitle: Map<String, Long>,
-        limit: Int,
-    ) {
-        tracksById = linkedMapOf()
-        recentlyAdded = mutableListOf()
-        mergeParents(catalog, albumAddedByTitle, limit, catalog.tracksByParent.keys.toSet())
+        return HomeTrackIndex(
+            tracksById = snapshotTracks,
+            recentlyAddedTracks = snapshotRecent.map { it.first },
+        )
     }
 
     private fun mergeParents(
+        tracksById: MutableMap<String, Track>,
+        recentlyAdded: MutableList<Pair<Track, Long>>,
         catalog: CatalogSnapshot,
         albumAddedByTitle: Map<String, Long>,
         limit: Int,
@@ -166,20 +182,12 @@ class HomeCatalogIndexCache {
     ) {
         parentIds.forEach { parentId ->
             catalog.tracksByParent[parentId]?.forEach { track ->
-                ingestTrack(track, albumAddedByTitle, limit)
+                if (track.id in tracksById) return@forEach
+                tracksById[track.id] = track
+                val addedAt = effectiveTrackDateAdded(track, albumAddedByTitle)
+                insertBounded(recentlyAdded, track, addedAt, limit, descending = true)
             }
         }
-    }
-
-    private fun ingestTrack(
-        track: Track,
-        albumAddedByTitle: Map<String, Long>,
-        limit: Int,
-    ) {
-        if (track.id in tracksById) return
-        tracksById[track.id] = track
-        val addedAt = effectiveTrackDateAdded(track, albumAddedByTitle)
-        insertBounded(recentlyAdded, track, addedAt, limit, descending = true)
     }
 }
 
@@ -424,9 +432,14 @@ private fun <T, S : Comparable<S>> insertBounded(
         val belongs = if (descending) score > boundary else score < boundary
         if (!belongs) return
     }
-    val insertAt = top.indexOfFirst { (_, existing) ->
-        if (descending) score > existing else score < existing
-    }.takeIf { it >= 0 } ?: top.size
+    var insertAt = top.size
+    for (index in top.indices) {
+        val existing = top[index].second
+        if (if (descending) score > existing else score < existing) {
+            insertAt = index
+            break
+        }
+    }
     top.add(insertAt, item to score)
     if (top.size > limit) top.removeAt(top.lastIndex)
 }

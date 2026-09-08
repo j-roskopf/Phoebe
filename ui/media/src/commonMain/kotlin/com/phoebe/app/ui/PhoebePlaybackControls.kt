@@ -78,6 +78,7 @@ fun TransportIcon(
     description: String,
     onClick: () -> Unit = {},
     active: Boolean = false,
+    filled: Boolean = false,
     iconSize: Dp = 20.dp,
 ) {
     Box(
@@ -89,7 +90,12 @@ fun TransportIcon(
             .semantics { contentDescription = description },
         contentAlignment = Alignment.Center,
     ) {
-        PhoebeIconView(icon, tint = if (active) PhoebeUi.accentLight else PhoebeUi.primaryText, modifier = Modifier.size(iconSize))
+        PhoebeIconView(
+            icon,
+            tint = if (active) PhoebeUi.accentLight else PhoebeUi.primaryText,
+            modifier = Modifier.size(iconSize),
+            filled = filled,
+        )
     }
 }
 
