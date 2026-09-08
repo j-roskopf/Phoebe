@@ -2570,14 +2570,16 @@ class CatalogRepository(
         // If Plex reports a playlist count mismatch, keep stale tracks visible and refetch after
         // the main catalog is published so additions and removals update the detail panel in place.
         // Liked Songs is also fetched the first time it appears so global heart state has ids to
-        // compare against. Artwork alone must not skip refetch — composite thumbs are common on
-        // Liked Songs while tracksByParent is still empty.
+        // compare against. Artwork alone must not skip that refetch — composite thumbs are common
+        // on Liked Songs while tracksByParent is still empty. Other playlists with a thumb are
+        // left for on-demand fetch to avoid eagerly loading every playlist's tracks.
         val staleForRefetch = mutableListOf<Playlist>()
         val reconciledPlaylists = merged.playlists.map { p ->
             val cached = preservedTracks[p.id]
             val cachedSize = cached?.size ?: 0
             when {
-                p.trackCount > 0 && cachedSize == 0 -> {
+                p.trackCount > 0 && cachedSize == 0 &&
+                    (p.thumbUrl.isNullOrBlank() || p.isLikedSongsPlaylist()) -> {
                     staleForRefetch += p
                     p
                 }
