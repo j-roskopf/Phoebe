@@ -1,5 +1,7 @@
 package com.phoebe.app.player
 
+import android.net.Uri
+import com.phoebe.app.AndroidContextHolder
 import com.phoebe.app.data.ArtworkOriginHolder
 import com.phoebe.app.domain.Track
 import com.phoebe.app.domain.canTogglePlexLike
@@ -35,11 +37,21 @@ object AndroidPlaybackRuntime {
 
     fun install(dependencies: PlaybackRuntimeDependencies) {
         this.dependencies = dependencies
+        val context = AndroidContextHolder.applicationOrNull
+        val fallbackArt = context?.resources?.getIdentifier("ic_aa_tab_radio", "drawable", context.packageName)
+            ?.takeIf { it != 0 }
+            ?.let { Uri.parse("android.resource://${context.packageName}/$it") }
+            ?: Uri.parse("android.resource://android/${android.R.drawable.ic_menu_compass}")
         catalogBrowseSource = CatalogBrowseSourceImpl(
             database = dependencies.database,
             catalogRepository = dependencies.catalogRepository,
             sessionRepository = dependencies.sessionRepository,
+            radioRepository = dependencies.radioRepository,
+            radioFallbackArtworkUri = fallbackArt,
         )
+        installScope.launch {
+            runCatching { dependencies.radioRepository.restore() }
+        }
     }
 
     /** Warm the browse tree before Compose starts (Android Auto can connect first). */
@@ -142,4 +154,6 @@ object AndroidPlaybackRuntime {
             runCatching { deps.catalogRepository.syncLikedTrackChange(session, track, liked) }
         }
     }
+
+    fun radioNowPlayingRepository() = dependencies?.radioNowPlayingRepository
 }

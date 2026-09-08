@@ -763,6 +763,8 @@ class AndroidAudioPlayer(
 
     private fun hasNextTrack(): Boolean {
         val current = state.value
+        val track = current.currentTrack
+        if (track?.id?.startsWith("radio:") == true) return false
         if (current.currentIndex !in current.queue.indices) return false
         return when (current.repeat) {
             RepeatMode.One,
@@ -772,8 +774,11 @@ class AndroidAudioPlayer(
         }
     }
 
-    private fun hasPreviousTrack(): Boolean =
-        state.value.currentIndex in state.value.queue.indices
+    private fun hasPreviousTrack(): Boolean {
+        val current = state.value
+        if (current.currentTrack?.id?.startsWith("radio:") == true) return false
+        return current.currentIndex in current.queue.indices
+    }
 
     private fun handlePlatformPlaybackEnded() {
         if (shouldIgnoreAndroidServiceEndedCallback(crossfadeOwnedTrackId, crossfadePlayer != null)) return

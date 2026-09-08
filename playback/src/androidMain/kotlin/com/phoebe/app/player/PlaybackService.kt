@@ -28,19 +28,26 @@ import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PhoebeLog
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
+import androidx.media3.common.PlaybackException
+import com.phoebe.app.domain.RadioNowPlayingMetadata
 
 class PlaybackService : MediaLibraryService() {
 
     private var mediaLibrarySession: MediaLibrarySession? = null
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var radioNowPlayingJob: Job? = null
+    private var radioStartupTimeoutJob: Job? = null
 
     /** Browse parents served before an origin existed, so their artwork came back empty. */
     private val unboundBrowseParents: MutableSet<String> = ConcurrentHashMap.newKeySet()
@@ -51,6 +58,23 @@ class PlaybackService : MediaLibraryService() {
             AndroidPlaybackBridge.onServicePlayerChanged?.invoke()
         }
 
+        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+            AndroidPlaybackBridge.updateServicePlayerState()
+            AndroidPlaybackBridge.onServicePlayerChanged?.invoke()
+            lastLikeButtonTrackId = null
+            lastLikeButtonLiked = null
+            val track = mediaItem?.let(::trackFromMediaItemForLike)
+            updateLikeButton(track)
+            updateSessionTransportExtras(track)
+            syncRadioNowPlaying(track)
+            armRadioStartupTimeout(track)
+        }
+
+        override fun onPlayerError(error: PlaybackException) {
+            AndroidPlaybackBridge.updateServicePlayerState()
+            clearRadioStartupTimeout()
+        }
+
         override fun onPlaybackStateChanged(playbackState: Int) {
             AndroidPlaybackBridge.updateServicePlayerState()
             if (playbackState == Player.STATE_ENDED) {
@@ -59,19 +83,14 @@ class PlaybackService : MediaLibraryService() {
             } else {
                 AndroidPlaybackBridge.onServicePlayerChanged?.invoke()
             }
+            if (playbackState == Player.STATE_READY || playbackState == Player.STATE_IDLE) {
+                clearRadioStartupTimeout()
+            }
         }
 
         override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
             AndroidPlaybackBridge.updateServicePlayerState()
             AndroidPlaybackBridge.onServicePlayerChanged?.invoke()
-        }
-
-        override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-            AndroidPlaybackBridge.updateServicePlayerState()
-            AndroidPlaybackBridge.onServicePlayerChanged?.invoke()
-            lastLikeButtonTrackId = null
-            lastLikeButtonLiked = null
-            updateLikeButton(mediaItem?.let(::trackFromMediaItemForLike))
         }
     }
 
@@ -345,6 +364,9 @@ class PlaybackService : MediaLibraryService() {
             lastLikeButtonTrackId = null
             lastLikeButtonLiked = null
             updateLikeButton(track)
+            updateSessionTransportExtras(track)
+            syncRadioNowPlaying(track)
+            armRadioStartupTimeout(track)
         }
         AndroidPlaybackBridge.attachServicePlayer(player, servicePlayerListener)
 
@@ -525,6 +547,101 @@ class PlaybackService : MediaLibraryService() {
         }
     }
 
+    private fun updateSessionTransportExtras(track: Track?) {
+        val session = mediaLibrarySession ?: return
+        val isRadio = track?.id?.startsWith("radio:") == true
+        session.setSessionExtras(
+            Bundle().apply {
+                // Catalog tracks reserve skip slots so the heart does not steal them.
+                // Radio hides skip entirely — do not reserve empty chrome.
+                if (!isRadio) {
+                    putBoolean(MediaConstants.EXTRAS_KEY_SLOT_RESERVATION_SEEK_TO_PREV, true)
+                    putBoolean(MediaConstants.EXTRAS_KEY_SLOT_RESERVATION_SEEK_TO_NEXT, true)
+                }
+            },
+        )
+    }
+
+    private fun syncRadioNowPlaying(track: Track?) {
+        radioNowPlayingJob?.cancel()
+        if (track?.id?.startsWith("radio:") != true) return
+        // Prefer the full app-queue track, which retains the station's configured metadata source
+        // (BBC RMS / KEXP / ICY). The MediaItem hint rebuilt from session metadata drops it, which
+        // would otherwise fall back to default ICY/HLS probing for stations with a custom endpoint.
+        val authoritative = AndroidPlaybackBridge.currentTrack?.invoke()
+            ?.takeIf { it.id == track.id }
+            ?: track
+        val stationName = authoritative.album.ifBlank { authoritative.title }
+        radioNowPlayingJob = serviceScope.launch {
+            while (isActive) {
+                val deps = runCatching {
+                    AndroidPlaybackRuntime.ensureInstalledNow()
+                    AndroidPlaybackRuntime.radioNowPlayingRepository()
+                }.getOrNull()
+                val metadata = deps?.let { repo ->
+                    runCatching { repo.resolve(authoritative) }.getOrNull()
+                }
+                if (metadata != null && metadata.hasTrack) {
+                    applyRadioNowPlayingMetadata(authoritative, stationName, metadata)
+                }
+                delay(RadioNowPlayingRefreshMs)
+            }
+        }
+    }
+
+    private fun applyRadioNowPlayingMetadata(
+        stationTrack: Track,
+        stationName: String,
+        metadata: RadioNowPlayingMetadata,
+    ) {
+        val player = mediaLibrarySession?.player ?: return
+        val index = player.currentMediaItemIndex
+        val current = player.currentMediaItem ?: return
+        if (current.mediaId != stationTrack.id && !current.mediaId.startsWith("radio:")) return
+        val title = metadata.title.ifBlank { metadata.rawTitle ?: stationTrack.title }
+        val artist = metadata.artist.ifBlank { stationTrack.artist }
+        val updated = current.buildUpon()
+            .setMediaMetadata(
+                current.mediaMetadata.buildUpon()
+                    .setTitle(title)
+                    .setDisplayTitle(title)
+                    .setArtist(artist)
+                    .setAlbumArtist(artist)
+                    .setSubtitle(artist)
+                    .setAlbumTitle(stationName)
+                    .setDescription(listOf(artist, stationName).filter { it.isNotBlank() }.distinct().joinToString(" - "))
+                    .build(),
+            )
+            .build()
+        if (index in 0 until player.mediaItemCount) {
+            player.replaceMediaItem(index, updated)
+        }
+    }
+
+    private fun armRadioStartupTimeout(track: Track?) {
+        clearRadioStartupTimeout()
+        if (track?.id?.startsWith("radio:") != true) return
+        val trackId = track.id
+        radioStartupTimeoutJob = serviceScope.launch {
+            delay(InternetRadioStartupTimeoutMs)
+            val player = mediaLibrarySession?.player ?: return@launch
+            val currentId = player.currentMediaItem?.mediaId
+            if (currentId != trackId && AndroidPlaybackBridge.currentTrack?.invoke()?.id != trackId) {
+                return@launch
+            }
+            if (player.playbackState == Player.STATE_READY && player.playWhenReady) return@launch
+            if (player.playbackState != Player.STATE_BUFFERING && !player.isLoading) return@launch
+            PhoebeLog.d(TAG) { "radio startup timeout for $trackId" }
+            player.stop()
+            player.clearMediaItems()
+        }
+    }
+
+    private fun clearRadioStartupTimeout() {
+        radioStartupTimeoutJob?.cancel()
+        radioStartupTimeoutJob = null
+    }
+
     private fun publishLikeButtonLayout(session: MediaLibrarySession, layout: List<CommandButton>) {
         session.setCustomLayout(layout)
         session.setMediaButtonPreferences(layout)
@@ -603,6 +720,8 @@ class PlaybackService : MediaLibraryService() {
     private companion object {
         private const val TAG = "PlaybackService"
         private const val NOTIFICATION_ID = 1001
+        private const val InternetRadioStartupTimeoutMs = 30_000L
+        private const val RadioNowPlayingRefreshMs = 30_000L
         private val LikeTrackCommand = SessionCommand(LikeTrackAction, Bundle.EMPTY)
         private val UnlikeTrackCommand = SessionCommand(UnlikeTrackAction, Bundle.EMPTY)
 
@@ -637,6 +756,8 @@ internal fun androidAutoLikeButtonLayout(
     track: Track? = null,
     liked: Boolean? = null,
 ): List<CommandButton> {
+    // Product: hide the heart entirely while internet radio is playing.
+    if (track?.id?.startsWith("radio:") == true) return emptyList()
     val isLiked = liked ?: (track?.let { AndroidPlaybackRuntime.isTrackLiked(it) } == true)
     // Liked vs unliked use *different* session commands. Android Auto keys legacy custom actions
     // by action string and often keeps the previous icon when only ICON_HEART_* changes.
@@ -706,7 +827,8 @@ private fun String.shouldExpandFromPagedBrowseSelection(): Boolean =
     BrowseMediaIds.parseTrackId(this) != null ||
         BrowseMediaIds.parseAlbumPlayId(this) != null ||
         BrowseMediaIds.parsePlaylistPlayId(this) != null ||
-        BrowseMediaIds.parsePlaylistShuffleId(this) != null
+        BrowseMediaIds.parsePlaylistShuffleId(this) != null ||
+        BrowseMediaIds.parseRadioStationId(this) != null
 
 private fun PlaybackService.resolvePhoebeNotificationIcon(): Int {
     val notificationIcon = resources.getIdentifier("ic_notification", "drawable", packageName)
