@@ -110,7 +110,7 @@ internal fun SmartPlaylistTemplateDialog(
                     item(key = "section-${section.title}", contentType = "section") {
                         Text(section.title, color = PhoebeUi.secondaryText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
-                    items(section.templates, key = { "${section.title}-${it.id}" }) { template ->
+                    items(section.templates, key = { "${section.title}-${it.title}" }) { template ->
                         SmartPlaylistTemplateRow(
                             template = template,
                             onClick = {
@@ -146,10 +146,9 @@ private fun smartPlaylistTemplateSections(
         SmartPlaylistTemplate.NotPlayedRecently,
     )
     val decades = catalog.smartPlaylistDecades().map(SmartPlaylistTemplate::byDecade)
-    // Genre labels like "Hip Hop" / "Hip-Hop" share a slug id; LazyColumn keys require uniqueness.
-    val genres = catalog.smartPlaylistGenres()
-        .map(SmartPlaylistTemplate::byGenre)
-        .distinctBy { it.id }
+    // Genre labels like "Hip Hop" / "Hip-Hop" share a slug id but match distinct spellings,
+    // so keep every punctuation variant and key the list by the original title instead of the id.
+    val genres = catalog.smartPlaylistGenres().map(SmartPlaylistTemplate::byGenre)
     val starter = defaults.filterNot { template ->
         template.id in setOf(
             SmartPlaylistTemplate.RecentlyPlayed.id,
@@ -185,8 +184,9 @@ private fun CatalogSnapshot.smartPlaylistGenres(): List<String> {
         .flatMap { genre -> genre.split(',', ';', '/') }
         .map { it.trim() }
         .filter { it.length >= 2 }
-        // Punctuation collapses in SmartPlaylistTemplate.byGenre ids ("Hip Hop" == "Hip-Hop").
-        .distinctBy { SmartPlaylistTemplate.byGenre(it).id }
+        // Collapse exact duplicates (same spelling/casing) but keep punctuation variants like
+        // "Hip Hop" vs "Hip-Hop"; their byGenre ids collide but they match distinct track tags.
+        .distinctBy { it.lowercase() }
         .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
         .toList()
 }

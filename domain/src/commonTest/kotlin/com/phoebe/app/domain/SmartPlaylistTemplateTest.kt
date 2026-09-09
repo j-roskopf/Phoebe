@@ -2,6 +2,7 @@ package com.phoebe.app.domain
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class SmartPlaylistTemplateTest {
@@ -57,5 +58,16 @@ class SmartPlaylistTemplateTest {
 
         val deduped = listOf(spaced, hyphenated, ampersand, spacedRb).distinctBy { it.id }
         assertEquals(2, deduped.size)
+    }
+
+    @Test
+    fun byGenreKeepsPunctuationDistinctInFilter() {
+        val spaced = SmartPlaylistTemplate.byGenre("Hip Hop")
+        val hyphenated = SmartPlaylistTemplate.byGenre("Hip-Hop")
+
+        assertEquals(spaced.id, hyphenated.id)
+        assertNotEquals(spaced.filter.rules.single().value, hyphenated.filter.rules.single().value)
+        assertEquals("Hip Hop", spaced.filter.rules.single().value)
+        assertEquals("Hip-Hop", hyphenated.filter.rules.single().value)
     }
 }
