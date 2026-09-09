@@ -42,4 +42,20 @@ class SmartPlaylistTemplateTest {
         assertEquals("1980s", decade.title)
         assertEquals("1980..1989", decade.filter.rules.single().value)
     }
+
+    @Test
+    fun byGenreCollapsesPunctuationVariantsToSameId() {
+        val spaced = SmartPlaylistTemplate.byGenre("Hip Hop")
+        val hyphenated = SmartPlaylistTemplate.byGenre("Hip-Hop")
+        val ampersand = SmartPlaylistTemplate.byGenre("R&B")
+        val spacedRb = SmartPlaylistTemplate.byGenre("R B")
+
+        assertEquals("genre-hip-hop", spaced.id)
+        assertEquals(spaced.id, hyphenated.id)
+        assertEquals("genre-r-b", ampersand.id)
+        assertEquals(ampersand.id, spacedRb.id)
+
+        val deduped = listOf(spaced, hyphenated, ampersand, spacedRb).distinctBy { it.id }
+        assertEquals(2, deduped.size)
+    }
 }

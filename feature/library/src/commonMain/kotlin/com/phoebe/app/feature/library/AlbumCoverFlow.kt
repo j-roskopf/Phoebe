@@ -193,10 +193,10 @@ fun LibraryCoverFlow(
 
     LaunchedEffect(scrollPosition, items, interactionActive) {
         snapshotFlow {
-            if (interactionActive) {
-                -1
-            } else {
-                scrollPosition.floatValue.roundToInt().coerceIn(0, latestItems.lastIndex)
+            when {
+                interactionActive -> -1
+                latestItems.isEmpty() -> -1
+                else -> scrollPosition.floatValue.roundToInt().coerceIn(0, latestItems.lastIndex)
             }
         }
             .distinctUntilChanged()
@@ -224,6 +224,9 @@ fun LibraryCoverFlow(
         return -(next - previous) * spacing
     }
 
+    fun safeItemIndex(raw: Int): Int =
+        if (latestItems.isEmpty()) -1 else raw.coerceIn(0, latestItems.lastIndex)
+
     val scrollableState = rememberScrollableState { deltaPx -> applyScrollDelta(deltaPx) }
 
     // Single shared Animatable so a new settle animation cancels any in-flight one instead of
@@ -238,15 +241,14 @@ fun LibraryCoverFlow(
             override suspend fun ScrollScope.performFling(initialVelocity: Float): Float {
                 val final = with(baseFling) { performFling(initialVelocity) }
                 scrollPosition.floatValue = final
-                val target = scrollPosition.floatValue.roundToInt()
-                    .coerceIn(0, latestItems.lastIndex)
-                    .toFloat()
+                val targetIndex = safeItemIndex(scrollPosition.floatValue.roundToInt())
+                if (targetIndex < 0) return scrollPosition.floatValue
+                val target = targetIndex.toFloat()
                 if (target != scrollPosition.floatValue) {
                     animateCoverFlowTo(coverFlowAnimator, scrollPosition, target)
                 }
                 CoverFlowScrollStore.set(kind, scrollPosition.floatValue)
-                latestItems
-                    .getOrNull(scrollPosition.floatValue.roundToInt().coerceIn(0, latestItems.lastIndex))
+                latestItems.getOrNull(safeItemIndex(scrollPosition.floatValue.roundToInt()))
                     ?.let(latestOnSelect)
                 return scrollPosition.floatValue
             }
@@ -341,10 +343,7 @@ fun LibraryCoverFlow(
                                                 )
                                                 CoverFlowScrollStore.set(kind, scrollPosition.floatValue)
                                                 latestItems
-                                                    .getOrNull(
-                                                        scrollPosition.floatValue.roundToInt()
-                                                            .coerceIn(0, latestItems.lastIndex),
-                                                    )
+                                                    .getOrNull(safeItemIndex(scrollPosition.floatValue.roundToInt()))
                                                     ?.let(latestOnSelect)
                                             } finally {
                                                 interactionActive = false
@@ -363,8 +362,9 @@ fun LibraryCoverFlow(
                                                 (sign(dx) * (1 + (beyond / side).toInt())).toInt()
                                             }
                                         }
-                                        val targetIndex = (scrollPosition.floatValue.roundToInt() + indexOffset)
-                                            .coerceIn(0, latestItems.lastIndex)
+                                        val targetIndex = safeItemIndex(
+                                            scrollPosition.floatValue.roundToInt() + indexOffset,
+                                        )
                                         val targetItem = latestItems.getOrNull(targetIndex)
                                         if (targetItem != null) {
                                             if (indexOffset == 0) {

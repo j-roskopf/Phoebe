@@ -2567,7 +2567,7 @@ fun ArtistDetailPanel(
                                 SongsTableHeader(libraryUi.columns, showLeadingHandle = false)
                             }
                         }
-                        itemsIndexed(visibleTracks, key = { _, t -> t.id }, contentType = { _, _ -> "artist-song" }) { index, track ->
+                        itemsIndexed(visibleTracks, key = { index, t -> "${t.id}#$index" }, contentType = { _, _ -> "artist-song" }) { index, track ->
                             SongRow(
                                 track = track,
                                 selected = false,
@@ -2582,7 +2582,7 @@ fun ArtistDetailPanel(
                             )
                         }
                     } else {
-                        itemsIndexed(visibleTracks, key = { _, t -> t.id }, contentType = { _, _ -> "artist-song" }) { index, track ->
+                        itemsIndexed(visibleTracks, key = { index, t -> "${t.id}#$index" }, contentType = { _, _ -> "artist-song" }) { index, track ->
                             val isNowPlaying = track.id == nowPlaying.trackId
                             MobileSongRow(
                                 track = track,
@@ -3971,7 +3971,8 @@ fun AlbumDetailPanel(
                     SongsTableHeader(libraryUi.columns)
                 }
             }
-            itemsIndexed(visibleTracks, key = { _, t -> t.id }, contentType = { _, _ -> "album-track" }) { index, track ->
+            // Index-suffixed keys: Emby/Jellyfin albums can surface the same track id twice.
+            itemsIndexed(visibleTracks, key = { index, t -> "${t.id}#$index" }, contentType = { _, _ -> "album-track" }) { index, track ->
                 SongRow(
                     track = track,
                     selected = false,
@@ -3985,7 +3986,7 @@ fun AlbumDetailPanel(
                 )
             }
         } else {
-            itemsIndexed(visibleTracks, key = { _, t -> t.id }, contentType = { _, _ -> "album-track" }) { index, track ->
+            itemsIndexed(visibleTracks, key = { index, t -> "${t.id}#$index" }, contentType = { _, _ -> "album-track" }) { index, track ->
                 val isNowPlaying = track.id == nowPlaying.trackId
                 MobileSongRow(
                     track = track,

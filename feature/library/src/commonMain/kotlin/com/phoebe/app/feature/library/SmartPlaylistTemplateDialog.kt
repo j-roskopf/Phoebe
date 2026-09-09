@@ -146,7 +146,10 @@ private fun smartPlaylistTemplateSections(
         SmartPlaylistTemplate.NotPlayedRecently,
     )
     val decades = catalog.smartPlaylistDecades().map(SmartPlaylistTemplate::byDecade)
-    val genres = catalog.smartPlaylistGenres().map(SmartPlaylistTemplate::byGenre)
+    // Genre labels like "Hip Hop" / "Hip-Hop" share a slug id; LazyColumn keys require uniqueness.
+    val genres = catalog.smartPlaylistGenres()
+        .map(SmartPlaylistTemplate::byGenre)
+        .distinctBy { it.id }
     val starter = defaults.filterNot { template ->
         template.id in setOf(
             SmartPlaylistTemplate.RecentlyPlayed.id,
@@ -182,7 +185,8 @@ private fun CatalogSnapshot.smartPlaylistGenres(): List<String> {
         .flatMap { genre -> genre.split(',', ';', '/') }
         .map { it.trim() }
         .filter { it.length >= 2 }
-        .distinctBy { it.lowercase() }
+        // Punctuation collapses in SmartPlaylistTemplate.byGenre ids ("Hip Hop" == "Hip-Hop").
+        .distinctBy { SmartPlaylistTemplate.byGenre(it).id }
         .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it })
         .toList()
 }

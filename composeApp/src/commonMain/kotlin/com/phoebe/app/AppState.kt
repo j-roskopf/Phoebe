@@ -3319,6 +3319,7 @@ class AppState(
     fun next() {
         val remote = mutableMusicAssistantRemotePlayback.value
         if (remote != null) {
+            if (remote.tracks.isEmpty()) return
             playTracks(remote.tracks, (remote.index + 1).coerceIn(0, remote.tracks.lastIndex), preserveQueueContext = true)
         } else if (requestKeepPlayingForQueueTailNext()) {
             // Keep Playing will advance to the first appended track if related songs are found.
@@ -3347,6 +3348,7 @@ class AppState(
     fun previous() {
         val remote = mutableMusicAssistantRemotePlayback.value
         if (remote != null) {
+            if (remote.tracks.isEmpty()) return
             playTracks(remote.tracks, (remote.index - 1).coerceIn(0, remote.tracks.lastIndex), preserveQueueContext = true)
         } else {
             dependencies.playbackTransportService.previous()
@@ -3356,6 +3358,7 @@ class AppState(
         if (delta == 0) return
         val remote = mutableMusicAssistantRemotePlayback.value
         if (remote != null) {
+            if (remote.tracks.isEmpty()) return
             val target = (remote.index + delta).coerceIn(0, remote.tracks.lastIndex)
             if (target == remote.index) return
             playTracks(remote.tracks, target, preserveQueueContext = true)
