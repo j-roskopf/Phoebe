@@ -342,6 +342,7 @@ abstract class SimpleAudioPlayer(
         origin: String?,
     ) {
         if (!isPlayRequestCurrent(generation) || !playWhenReady) return
+        if (queue.isEmpty()) return
         val index = startIndex.coerceIn(queue.indices)
         val track = queue.getOrNull(index) ?: return
         if (origin != null) {
@@ -441,7 +442,7 @@ abstract class SimpleAudioPlayer(
 
     override fun prepare(queue: List<Track>, startIndex: Int, positionMs: Long) {
         val previous = mutableState.value
-        val index = startIndex.coerceIn(queue.indices)
+        val index = if (queue.isEmpty()) -1 else startIndex.coerceIn(queue.indices)
         val track = queue.getOrNull(index)
         val generation = ++playGeneration
         clearCrossfadeRequestState()
@@ -792,7 +793,7 @@ abstract class SimpleAudioPlayer(
 
     /** Adopt queue state without touching platform output (Android Auto / MediaSession playlist). */
     protected fun adoptQueueState(queue: List<Track>, startIndex: Int, isPlaying: Boolean) {
-        val index = startIndex.coerceIn(queue.indices)
+        val index = if (queue.isEmpty()) -1 else startIndex.coerceIn(queue.indices)
         val track = queue.getOrNull(index)
         mutableState.value = mutableState.value.copy(
             queue = queue,

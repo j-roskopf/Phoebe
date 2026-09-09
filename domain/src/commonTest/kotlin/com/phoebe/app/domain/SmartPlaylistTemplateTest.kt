@@ -2,6 +2,7 @@ package com.phoebe.app.domain
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
 class SmartPlaylistTemplateTest {
@@ -41,5 +42,32 @@ class SmartPlaylistTemplateTest {
         assertEquals("Dream Pop", genre.filter.rules.single().value)
         assertEquals("1980s", decade.title)
         assertEquals("1980..1989", decade.filter.rules.single().value)
+    }
+
+    @Test
+    fun byGenreCollapsesPunctuationVariantsToSameId() {
+        val spaced = SmartPlaylistTemplate.byGenre("Hip Hop")
+        val hyphenated = SmartPlaylistTemplate.byGenre("Hip-Hop")
+        val ampersand = SmartPlaylistTemplate.byGenre("R&B")
+        val spacedRb = SmartPlaylistTemplate.byGenre("R B")
+
+        assertEquals("genre-hip-hop", spaced.id)
+        assertEquals(spaced.id, hyphenated.id)
+        assertEquals("genre-r-b", ampersand.id)
+        assertEquals(ampersand.id, spacedRb.id)
+
+        val deduped = listOf(spaced, hyphenated, ampersand, spacedRb).distinctBy { it.id }
+        assertEquals(2, deduped.size)
+    }
+
+    @Test
+    fun byGenreKeepsPunctuationDistinctInFilter() {
+        val spaced = SmartPlaylistTemplate.byGenre("Hip Hop")
+        val hyphenated = SmartPlaylistTemplate.byGenre("Hip-Hop")
+
+        assertEquals(spaced.id, hyphenated.id)
+        assertNotEquals(spaced.filter.rules.single().value, hyphenated.filter.rules.single().value)
+        assertEquals("Hip Hop", spaced.filter.rules.single().value)
+        assertEquals("Hip-Hop", hyphenated.filter.rules.single().value)
     }
 }
