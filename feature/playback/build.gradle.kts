@@ -33,6 +33,8 @@ kotlin {
             resources.srcDir(linuxLibcxxResources)
             dependencies {
                 implementation(libs.jnativehook)
+                implementation(libs.dbus.java.core)
+                implementation(libs.dbus.java.transport.native.unixsocket)
             }
         }
         androidMain {
