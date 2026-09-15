@@ -296,6 +296,7 @@ class AppState(
     val playCountsByTrack = dependencies.playHistoryRepository.playCountsByTrack
     val playEventsByTrack = dependencies.playHistoryRepository.playEventsByTrack
     val topMostPlayed = dependencies.playHistoryRepository.topMostPlayed
+    val topArtists = dependencies.playHistoryRepository.topArtists
     val topRecentlyPlayed = dependencies.playHistoryRepository.topRecentlyPlayed
     val recentSearchItems = dependencies.searchHistoryRepository.items
     val defaultDownloadDirectoryLabel: String = dependencies.platformStorage.defaultDownloadDirectoryLabel()

@@ -264,4 +264,27 @@ class PlayHistoryRepositoryDesktopTest {
         assertEquals(PlayHistoryTopListCapacity + 25, recentlyPlayed.totalCount)
         assertEquals(PlayHistoryTopListCapacity + 25, recentlyPlayed.recentlyPlayed.size)
     }
+
+    @Test
+    fun topArtistsAggregatesBeyondTheTopSongCapacity() = runBlocking {
+        val (db, d) = newInMemoryPhoebeDatabase()
+        driver = d
+        val repo = PlayHistoryRepository(db)
+        repository = repo
+
+        val trackCount = PlayHistoryTopListCapacity + 25
+        repeat(trackCount) { index ->
+            repo.recordPlay(
+                Track("deep-$index", "Song $index", "Deep Artist", "Alb", 30_000L, "", ""),
+                index.toLong(),
+            )
+        }
+
+        val artist = repo.topArtists
+            .first { rows -> rows.any { it.title == "Deep Artist" } }
+            .single { it.title == "Deep Artist" }
+
+        assertEquals(trackCount.toLong(), artist.playCount)
+        assertEquals(trackCount, artist.trackCount)
+    }
 }

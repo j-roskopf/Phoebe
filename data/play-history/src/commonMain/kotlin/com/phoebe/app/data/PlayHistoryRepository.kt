@@ -7,6 +7,7 @@ import app.cash.sqldelight.async.coroutines.awaitAsOneOrNull
 import app.cash.sqldelight.coroutines.mapToList
 import com.phoebe.app.db.PhoebeDatabase
 import com.phoebe.app.domain.MostPlayedEntry
+import com.phoebe.app.domain.MostPlayedArtist
 import com.phoebe.app.domain.PlayHistoryKind
 import com.phoebe.app.domain.RecentlyPlayedEntry
 import com.phoebe.app.domain.Track
@@ -104,6 +105,24 @@ class PlayHistoryRepository(
                     lastPlayedMs = row.lastPlayedMs,
                     artist = row.artist,
                     album = row.album,
+                )
+            }
+        }
+        .stateIn(scope, sharingStarted, emptyList())
+
+    val topArtists: StateFlow<List<MostPlayedArtist>> = database.playHistoryQueries
+        .selectMostPlayedArtistCounts(PlayHistoryTopListCapacity.toLong())
+        .asFlow()
+        .mapToList(databaseDispatcher)
+        .map { rows ->
+            rows.map { row ->
+                MostPlayedArtist(
+                    id = null,
+                    title = row.artist,
+                    playCount = row.playCount ?: 0L,
+                    thumbUrl = null,
+                    lastPlayedMs = row.lastPlayedMs ?: 0L,
+                    trackCount = row.trackCount.toInt(),
                 )
             }
         }

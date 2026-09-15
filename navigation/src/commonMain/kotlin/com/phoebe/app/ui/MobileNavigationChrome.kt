@@ -34,6 +34,7 @@ fun MobileBottomTab.browseSection(): BrowseSection = when (this) {
     MobileBottomTab.Home -> BrowseSection.Home
     MobileBottomTab.Search -> BrowseSection.Search
     MobileBottomTab.Library -> BrowseSection.Library
+    MobileBottomTab.Charts -> BrowseSection.Charts
     MobileBottomTab.Playlists -> BrowseSection.Playlists
     MobileBottomTab.Radio -> BrowseSection.Radio
 }
@@ -44,6 +45,7 @@ fun BrowseSection.mobileBottomTab(): MobileBottomTab? = when (this) {
     BrowseSection.Library -> MobileBottomTab.Library
     BrowseSection.Playlists -> MobileBottomTab.Playlists
     BrowseSection.Radio -> MobileBottomTab.Radio
+    BrowseSection.Charts,
     BrowseSection.Lyrics,
     BrowseSection.Downloads,
     BrowseSection.Settings,
@@ -54,6 +56,7 @@ fun MobileBottomTab.iconLabel(): Pair<PhoebeIcon, String> = when (this) {
     MobileBottomTab.Home -> PhoebeIcon.Home to "Home"
     MobileBottomTab.Search -> PhoebeIcon.Search to "Search"
     MobileBottomTab.Library -> PhoebeIcon.Library to "Library"
+    MobileBottomTab.Charts -> PhoebeIcon.Equalizer to "Charts"
     MobileBottomTab.Playlists -> PhoebeIcon.PlaylistPlay to "Playlists"
     MobileBottomTab.Radio -> PhoebeIcon.Radio to "Radio"
 }
@@ -120,6 +123,7 @@ fun mobileSectionTitle(section: BrowseSection): String = when (section) {
     BrowseSection.Home -> "Home"
     BrowseSection.Search -> "Search"
     BrowseSection.Library -> "Library"
+    BrowseSection.Charts -> "Charts"
     BrowseSection.Radio -> "Radio"
     BrowseSection.Lyrics -> "Lyrics"
     BrowseSection.Playlists -> "Playlists"

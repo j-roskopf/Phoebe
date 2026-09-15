@@ -252,6 +252,54 @@ FROM play_counts
 ORDER BY play_counts.playCount DESC, lastPlayedMs DESC, play_counts.track_id
 LIMIT ?;
 
+selectMostPlayedArtistCounts:
+WITH track_counts AS (
+    SELECT track_id, MAX(playCount) AS playCount
+    FROM (
+        SELECT track_id, COUNT(*) AS playCount
+        FROM PlayHistoryRow
+        GROUP BY track_id
+        UNION ALL
+        SELECT
+            aggregate.track_id,
+            aggregate.play_count + (
+                SELECT COUNT(*)
+                FROM PlayHistoryRow local_play
+                WHERE local_play.track_id = aggregate.track_id
+                AND local_play.played_at_ms > aggregate.last_played_at_ms
+            ) AS playCount
+        FROM PlayCountAggregateRow aggregate
+    )
+    GROUP BY track_id
+    HAVING playCount > 0
+),
+track_rows AS (
+    SELECT
+        track_counts.track_id,
+        track_counts.playCount,
+        COALESCE(
+            (SELECT artist FROM PlayHistoryRow p WHERE p.track_id = track_counts.track_id ORDER BY played_at_ms DESC LIMIT 1),
+            (SELECT artist FROM PlayCountAggregateRow a WHERE a.track_id = track_counts.track_id),
+            ''
+        ) AS artist,
+        COALESCE(
+            (SELECT MAX(played_at_ms) FROM PlayHistoryRow p WHERE p.track_id = track_counts.track_id),
+            (SELECT last_played_at_ms FROM PlayCountAggregateRow a WHERE a.track_id = track_counts.track_id),
+            0
+        ) AS lastPlayedMs
+    FROM track_counts
+)
+SELECT
+    artist,
+    CAST(SUM(playCount) AS INTEGER) AS playCount,
+    MAX(lastPlayedMs) AS lastPlayedMs,
+    COUNT(*) AS trackCount
+FROM track_rows
+WHERE artist != ''
+GROUP BY artist
+ORDER BY playCount DESC, lastPlayedMs DESC, artist
+LIMIT ?;
+
 selectMostPlayedTrackCount:
 WITH play_counts AS (
     SELECT track_id, MAX(playCount) AS playCount

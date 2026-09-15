@@ -29,6 +29,7 @@ import phoebe.composeapp.generated.resources.phoebe_bird
 import phoebe.composeapp.generated.resources.phoebe_icon_rounded
 import org.jetbrains.compose.resources.painterResource
 import com.phoebe.app.feature.home.*
+import com.phoebe.app.feature.history.ChartsScreen
 import com.phoebe.app.feature.library.LibraryFilterTab
 import com.phoebe.app.feature.library.LibraryFilterOptionsMenuItems
 import com.phoebe.app.feature.library.LibraryMobileRoute
@@ -269,6 +270,7 @@ internal fun MobileBrowseShell(
     libraryUi: LibraryUiPreferences,
     currentTrack: Track?,
     homeUiState: HomeUiState,
+    resolvedTracksById: Map<String, Track> = emptyMap(),
     isPlaying: Boolean,
     isBuffering: Boolean = false,
     onNavigate: (BrowseSection) -> Unit,
@@ -465,6 +467,7 @@ internal fun MobileBrowseShell(
         (section == BrowseSection.Home ||
             section == BrowseSection.Search ||
             section == BrowseSection.Library ||
+            section == BrowseSection.Charts ||
             section == BrowseSection.Playlists ||
             section == BrowseSection.Radio)
     val browseTopBar: @Composable () -> Unit = {
@@ -473,7 +476,10 @@ internal fun MobileBrowseShell(
         }
         MobileScreenToolbar(
             title = toolbarTitle,
-            onBack = if (section == BrowseSection.Settings && selectedPlaylistId == null) {
+            onBack = if (
+                (section == BrowseSection.Settings || section == BrowseSection.Charts) &&
+                selectedPlaylistId == null
+            ) {
                 { onNavigate(BrowseSection.Home) }
             } else if (section == BrowseSection.Radio && internetRadioRouteMode != RadioRouteMode.Home) {
                 onInternetRadioRoot
@@ -841,6 +847,25 @@ internal fun MobileBrowseShell(
                     libraryViewMode = mobileLibraryViewMode,
                     topBar = browseTopBar,
                 )
+                section == BrowseSection.Charts && selectedPlaylistId == null -> {
+                    val chartsState = rememberChartsUiState(catalog, resolvedTracksById)
+                    ChartsScreen(
+                        state = chartsState,
+                        modifier = Modifier.fillMaxSize(),
+                        topBar = browseTopBar,
+                        onArtistClick = { rank ->
+                            catalog.artists.firstOrNull {
+                                it.id == rank.id || it.title.equals(rank.name, ignoreCase = true)
+                            }?.let(onArtist)
+                        },
+                        onSongClick = { rank ->
+                            chartTrackForRank(catalog, rank, resolvedTracksById)?.let(onSong)
+                        },
+                        onPlaySong = { rank ->
+                            chartTrackForRank(catalog, rank, resolvedTracksById)?.let { onPlayTracks(listOf(it), 0) }
+                        },
+                    )
+                }
                 section == BrowseSection.Search && selectedPlaylistId == null -> SearchMobileRoute(
                     viewModel = remember(routeViewModelFactory) { routeViewModelFactory.search() },
                     catalog = catalog,
@@ -920,6 +945,7 @@ internal fun MobileBrowseShell(
                     libraryFilter = libraryFilter,
                     libraryUi = libraryUi,
                     modifier = Modifier.fillMaxSize().padding(top = chromePadding.top, bottom = chromePadding.bottom),
+                    resolvedTracksById = resolvedTracksById,
                     onSearchQuery = onSearchQuery,
                     onLibraryFilter = onLibraryFilter,
                     onPlaylist = onPlaylist,

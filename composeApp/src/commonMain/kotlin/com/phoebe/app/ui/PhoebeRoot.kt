@@ -438,6 +438,7 @@ private fun PhoebeRootStateHolder(
     val playCountsByTrack by state.playCountsByTrack.collectAsState()
     val playEventsByTrack by state.playEventsByTrack.collectAsState()
     val topMostPlayed by state.topMostPlayed.collectAsState()
+    val topArtists by state.topArtists.collectAsState()
     val topRecentlyPlayed by state.topRecentlyPlayed.collectAsState()
     val pairedDevices by state.pairedDevices.pairedDevices.collectAsState()
     val pendingPairings by state.remoteHost.pendingPairings.collectAsState()
@@ -826,6 +827,7 @@ private fun PhoebeRootStateHolder(
         playEventsByTrack,
         topMostPlayed,
         topRecentlyPlayed,
+        topArtists,
     ) {
         PlayHistorySnapshot(
             byArtist = lastPlayedByArtist,
@@ -835,6 +837,7 @@ private fun PhoebeRootStateHolder(
             playEventsByTrack = playEventsByTrack,
             topMostPlayed = topMostPlayed,
             topRecentlyPlayed = topRecentlyPlayed,
+            topArtists = topArtists,
         )
     }
     // Re-tick "now" every minute so relative timestamps in the library refresh
@@ -1122,10 +1125,13 @@ private fun PhoebeRootStateHolder(
         }
     }
     LaunchedEffect(screen, browseSection, topMostPlayed, topRecentlyPlayed, session?.selectedServer) {
-        if (screen == AppScreen.Home && browseSection == BrowseSection.Home &&
-            (topMostPlayed.isNotEmpty() || topRecentlyPlayed.isNotEmpty())
-        ) {
+        val hasPlayHistory = topMostPlayed.isNotEmpty() || topRecentlyPlayed.isNotEmpty()
+        if (screen == AppScreen.Home && browseSection == BrowseSection.Home && hasPlayHistory) {
             state.warmTracksForMostPlayed()
+        }
+        // Charts ranks the same history entries, so hydrate them when the screen opens.
+        if (screen == AppScreen.Home && browseSection == BrowseSection.Charts && hasPlayHistory) {
+            state.warmTracksForMostPlayed(maxTracks = 50)
         }
     }
     LaunchedEffect(screen, topMostPlayed, topRecentlyPlayed, session?.selectedServer) {
@@ -1167,8 +1173,7 @@ private fun PhoebeRootStateHolder(
     }
     val openMostPlayed: () -> Unit = {
         selectedPlaylistId = null
-        navigator.openBrowse(BrowseSection.Home)
-        navigator.open(PhoebeRoute.PlayHistory(PlayHistoryKind.MostPlayed))
+        navigator.openBrowse(BrowseSection.Charts)
     }
     val openFavoritePlaylists: () -> Unit = {
         selectedPlaylistId = null
@@ -1941,6 +1946,7 @@ private fun PhoebeRootStateHolder(
                         libraryUi = libraryUi,
                         currentTrack = currentTrack,
                         homeUiState = homeUiState,
+                        resolvedTracksById = resolvedTracksById,
                         isPlaying = shellPlayback.isPlaying,
                         isBuffering = shellPlayback.isBuffering,
                         onNavigate = {
@@ -2962,6 +2968,7 @@ private fun catalogHasContentForSurface(
                 LibraryFilterTab.Albums -> catalog.albums.isNotEmpty()
                 LibraryFilterTab.Songs -> catalog.tracksByParent.values.any { it.isNotEmpty() }
             }
+            BrowseSection.Charts -> true
             BrowseSection.Radio -> true
             BrowseSection.Lyrics -> true
             BrowseSection.Playlists -> catalog.playlists.isNotEmpty()

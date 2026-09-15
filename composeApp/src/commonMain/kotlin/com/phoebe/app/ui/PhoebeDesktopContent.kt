@@ -1,6 +1,11 @@
 package com.phoebe.app.ui
 
 import com.phoebe.app.feature.library.*
+import com.phoebe.app.feature.history.ChartsArtistRank
+import com.phoebe.app.feature.history.ChartsScreen
+import com.phoebe.app.feature.history.ChartsSongRank
+import com.phoebe.app.feature.history.ChartsUiState
+import com.phoebe.app.feature.history.buildChartsSongRanks
 import com.phoebe.app.feature.radio.RadioRoute
 import com.phoebe.app.feature.radio.RadioRouteActions
 import com.phoebe.app.feature.radio.RadioRouteMode
@@ -182,6 +187,9 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlin.math.max
+import com.phoebe.app.data.lookupTracksByIds
+import com.phoebe.app.data.topMostPlayedArtists
+import com.phoebe.app.data.topMostPlayedSongs
 
 @Composable
 internal fun DesktopContent(
@@ -194,11 +202,13 @@ internal fun DesktopContent(
     libraryFilter: LibraryFilterTab,
     libraryUi: LibraryUiPreferences,
     modifier: Modifier,
+    resolvedTracksById: Map<String, Track> = emptyMap(),
     onSearchQuery: (String) -> Unit,
     onLibraryFilter: (LibraryFilterTab) -> Unit,
     onPlaylist: (Playlist) -> Unit,
     onArtist: (Artist) -> Unit,
     onAlbum: (Album) -> Unit,
+    onSong: (Track) -> Unit = {},
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
@@ -305,6 +315,23 @@ internal fun DesktopContent(
         return
     }
 
+    if (section == BrowseSection.Charts) {
+        val chartsState = rememberChartsUiState(catalog, resolvedTracksById)
+        ChartsScreen(
+            state = chartsState,
+            modifier = modifier,
+            onArtistClick = { rank ->
+                catalog.artists.firstOrNull { it.id == rank.id || it.title.equals(rank.name, ignoreCase = true) }
+                    ?.let(onArtist)
+            },
+            onSongClick = { rank -> chartTrackForRank(catalog, rank, resolvedTracksById)?.let(onSong) },
+            onPlaySong = { rank ->
+                chartTrackForRank(catalog, rank, resolvedTracksById)?.let { onPlayTracks(listOf(it), 0) }
+            },
+        )
+        return
+    }
+
     Column(
         modifier.padding(
             start = edgePadding,
@@ -318,6 +345,7 @@ internal fun DesktopContent(
             val sectionLabel = when (section) {
                 BrowseSection.Search -> "Search"
                 BrowseSection.Library -> "Your Library"
+                BrowseSection.Charts -> "Charts"
                 BrowseSection.Lyrics -> "Lyrics"
                 BrowseSection.Downloads -> "Downloads"
                 BrowseSection.Settings -> "Settings"
@@ -327,6 +355,7 @@ internal fun DesktopContent(
             val headline = when (section) {
                 BrowseSection.Search -> "Find your sound"
                 BrowseSection.Library -> "Albums, artists, and songs"
+                BrowseSection.Charts -> "Most-played artists and songs"
                 BrowseSection.Lyrics -> "Follow along"
                 BrowseSection.Downloads -> "Offline songs"
                 BrowseSection.Settings -> "Customize your listening experience"
@@ -386,3 +415,41 @@ internal fun DesktopContent(
         }
     }
 }
+
+@Composable
+internal fun rememberChartsUiState(
+    catalog: CatalogSnapshot,
+    resolvedTracksById: Map<String, Track> = emptyMap(),
+): ChartsUiState {
+    val playHistory = LocalPlayHistory.current
+    return remember(catalog, playHistory, resolvedTracksById) {
+        ChartsUiState(
+            topArtists = playHistory.topMostPlayedArtists(catalog).map { artist ->
+                ChartsArtistRank(
+                    id = artist.id ?: artist.title,
+                    name = artist.title,
+                    thumbUrl = artist.thumbUrl,
+                    playCount = artist.playCount,
+                    trackCount = artist.trackCount,
+                )
+            },
+            topSongs = buildChartsSongRanks(playHistory.topMostPlayedSongs()) { trackId ->
+                chartTrackForId(catalog, trackId, resolvedTracksById)
+            },
+        )
+    }
+}
+
+internal fun chartTrackForRank(
+    catalog: CatalogSnapshot,
+    rank: ChartsSongRank,
+    resolvedTracksById: Map<String, Track> = emptyMap(),
+): Track? =
+    chartTrackForId(catalog, rank.id, resolvedTracksById)
+
+private fun chartTrackForId(
+    catalog: CatalogSnapshot,
+    id: String,
+    resolvedTracksById: Map<String, Track> = emptyMap(),
+): Track? =
+    lookupTracksByIds(catalog, setOf(id), resolvedTracksById)[id]

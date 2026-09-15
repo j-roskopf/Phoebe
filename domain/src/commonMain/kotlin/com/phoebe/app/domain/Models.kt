@@ -494,6 +494,7 @@ enum class MobileBottomTab {
     Home,
     Search,
     Library,
+    Charts,
     Playlists,
     Radio,
     ;
