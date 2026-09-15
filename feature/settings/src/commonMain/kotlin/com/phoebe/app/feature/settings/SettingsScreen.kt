@@ -2152,6 +2152,7 @@ private val MobileBottomTab.label: String
         MobileBottomTab.Home -> "Home"
         MobileBottomTab.Search -> "Search"
         MobileBottomTab.Library -> "Library"
+        MobileBottomTab.Charts -> "Charts"
         MobileBottomTab.Playlists -> "Playlists"
         MobileBottomTab.Radio -> "Radio"
     }
@@ -2161,6 +2162,7 @@ private val MobileBottomTab.icon: PhoebeIcon
         MobileBottomTab.Home -> PhoebeIcon.Home
         MobileBottomTab.Search -> PhoebeIcon.Search
         MobileBottomTab.Library -> PhoebeIcon.Library
+        MobileBottomTab.Charts -> PhoebeIcon.Grid
         MobileBottomTab.Playlists -> PhoebeIcon.PlaylistPlay
         MobileBottomTab.Radio -> PhoebeIcon.Radio
     }

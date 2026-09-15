@@ -465,6 +465,7 @@ internal fun MobileBrowseShell(
         (section == BrowseSection.Home ||
             section == BrowseSection.Search ||
             section == BrowseSection.Library ||
+            section == BrowseSection.Charts ||
             section == BrowseSection.Playlists ||
             section == BrowseSection.Radio)
     val browseTopBar: @Composable () -> Unit = {
@@ -839,6 +840,10 @@ internal fun MobileBrowseShell(
                     ),
                     modifier = Modifier.fillMaxSize(),
                     libraryViewMode = mobileLibraryViewMode,
+                    topBar = browseTopBar,
+                )
+                section == BrowseSection.Charts && selectedPlaylistId == null -> ChartsPlaceholder(
+                    modifier = Modifier.fillMaxSize(),
                     topBar = browseTopBar,
                 )
                 section == BrowseSection.Search && selectedPlaylistId == null -> SearchMobileRoute(

@@ -2962,6 +2962,7 @@ private fun catalogHasContentForSurface(
                 LibraryFilterTab.Albums -> catalog.albums.isNotEmpty()
                 LibraryFilterTab.Songs -> catalog.tracksByParent.values.any { it.isNotEmpty() }
             }
+            BrowseSection.Charts -> true
             BrowseSection.Radio -> true
             BrowseSection.Lyrics -> true
             BrowseSection.Playlists -> catalog.playlists.isNotEmpty()
