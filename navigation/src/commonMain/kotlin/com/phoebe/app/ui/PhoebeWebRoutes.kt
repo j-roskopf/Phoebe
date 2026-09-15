@@ -23,6 +23,7 @@ fun phoebeWebRoutesForPath(path: String?): List<PhoebeRoute> {
     return when (segments.first()) {
         "search" -> listOf(PhoebeRoute.Browse(BrowseSection.Search))
         "library" -> listOf(PhoebeRoute.Browse(BrowseSection.Library))
+        "charts" -> listOf(PhoebeRoute.Browse(BrowseSection.Charts))
         "radio" -> parseRadioPath(segments)
         "lyrics" -> parseLyricsPath(segments)
         "playlists" -> parsePlaylistsPath(segments)
@@ -102,6 +103,7 @@ fun PhoebeRoute.toPhoebeWebPath(
         BrowseSection.Home -> "/"
         BrowseSection.Search -> "/search"
         BrowseSection.Library -> "/library"
+        BrowseSection.Charts -> "/charts"
         BrowseSection.Radio -> "/radio"
         BrowseSection.Lyrics -> "/lyrics"
         BrowseSection.Playlists -> "/playlists"

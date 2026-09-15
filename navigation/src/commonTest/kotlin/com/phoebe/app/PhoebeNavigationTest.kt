@@ -44,6 +44,7 @@ class PhoebeNavigationTest {
             PhoebeRoute.LibraryPicker,
             PhoebeRoute.Browse(BrowseSection.Home),
             PhoebeRoute.Browse(BrowseSection.Search),
+            PhoebeRoute.Browse(BrowseSection.Charts),
             PhoebeRoute.RadioCountries,
             PhoebeRoute.RadioGlobe,
             PhoebeRoute.RadioMap,
@@ -149,6 +150,14 @@ class PhoebeNavigationTest {
             routes,
         )
         assertEquals("/radio/recommended%3Abbc-radio-6-music", route.toPhoebeWebPath())
+    }
+
+    @Test
+    fun chartsWebRouteRoundTrips() {
+        val route = PhoebeRoute.Browse(BrowseSection.Charts)
+
+        assertEquals(listOf(route), phoebeWebRoutesForPath("/charts"))
+        assertEquals("/charts", route.toPhoebeWebPath())
     }
 
     @Test
