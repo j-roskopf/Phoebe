@@ -1,7 +1,9 @@
 package com.phoebe.app.data
 
 import com.phoebe.app.domain.CatalogSnapshot
+import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.MediaProviderType
+import com.phoebe.app.domain.MostPlayedArtist
 import com.phoebe.app.domain.MostPlayedEntry
 import com.phoebe.app.domain.PlayHistoryKind
 import com.phoebe.app.domain.RecentlyPlayedEntry
@@ -42,6 +44,99 @@ data class HomePlayedTrack(
      * real, catalog-backed track — including artwork — replaces it on the next recomposition.
      */
     val isPlaceholder: Boolean = false,
+)
+
+/** Returns the song ranking exposed by play history, bounded to [limit]. */
+fun PlayHistorySnapshot.topMostPlayedSongs(limit: Int = PlayHistoryTopListCapacity): List<MostPlayedEntry> {
+    val boundedLimit = limit.coerceAtLeast(0)
+    return topMostPlayed.ifEmpty {
+        playCountByTrack.asSequence()
+            .filter { it.value > 0L }
+            .sortedWith(
+                compareByDescending<Map.Entry<String, Long>> { it.value }
+                    .thenByDescending { byTrack[it.key] ?: 0L }
+                    .thenBy { it.key },
+            )
+            .map { (trackId, playCount) ->
+                MostPlayedEntry(
+                    trackId = trackId,
+                    playCount = playCount,
+                    lastPlayedMs = byTrack[trackId] ?: 0L,
+                    artist = "",
+                    album = "",
+                )
+            }
+            .toList()
+    }.take(boundedLimit)
+}
+
+/**
+ * Aggregates song plays by catalog artist. Entries whose track is not in the
+ * catalog still participate when the history row contains an artist title.
+ */
+fun PlayHistorySnapshot.topMostPlayedArtists(
+    catalog: CatalogSnapshot,
+    limit: Int = PlayHistoryTopListCapacity,
+): List<MostPlayedArtist> {
+    val boundedLimit = limit.coerceAtLeast(0)
+    if (boundedLimit == 0) return emptyList()
+
+    val songs = topMostPlayedSongs()
+    if (songs.isEmpty()) return emptyList()
+    val tracks = lookupTracksByIds(catalog, songs.map { it.trackId }.toSet())
+    val artistsByTitle = catalog.artists.groupBy { it.title.trim().lowercase() }
+    val aggregates = LinkedHashMap<String, ArtistPlayAggregate>()
+
+    songs.forEach { entry ->
+        val track = tracks[entry.trackId]
+        val title = (track?.artist?.ifBlank { entry.artist } ?: entry.artist).trim()
+        if (title.isBlank()) return@forEach
+        val catalogArtist = artistsByTitle[title.lowercase()]?.firstOrNull()
+        val key = catalogArtist?.id ?: "title:${title.lowercase()}"
+        val current = aggregates[key]
+        val representativeThumb = track?.thumbUrl
+        aggregates[key] = if (current == null) {
+            ArtistPlayAggregate(
+                artist = catalogArtist,
+                title = catalogArtist?.title ?: title,
+                playCount = entry.playCount,
+                lastPlayedMs = entry.lastPlayedMs,
+                thumbUrl = representativeThumb,
+            )
+        } else {
+            current.copy(
+                playCount = current.playCount + entry.playCount,
+                lastPlayedMs = maxOf(current.lastPlayedMs, entry.lastPlayedMs),
+                thumbUrl = current.thumbUrl ?: representativeThumb,
+            )
+        }
+    }
+
+    return aggregates.values
+        .sortedWith(
+            compareByDescending<ArtistPlayAggregate> { it.playCount }
+                .thenByDescending { it.lastPlayedMs }
+                .thenBy { it.title.lowercase() }
+                .thenBy { it.artist?.id.orEmpty() },
+        )
+        .take(boundedLimit)
+        .map { aggregate ->
+            MostPlayedArtist(
+                id = aggregate.artist?.id,
+                title = aggregate.title,
+                playCount = aggregate.playCount,
+                thumbUrl = aggregate.artist?.thumbUrl ?: aggregate.thumbUrl,
+                lastPlayedMs = aggregate.lastPlayedMs,
+            )
+        }
+}
+
+private data class ArtistPlayAggregate(
+    val artist: Artist?,
+    val title: String,
+    val playCount: Long,
+    val lastPlayedMs: Long,
+    val thumbUrl: String?,
 )
 
 private data class MostPlayedScore(
