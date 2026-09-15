@@ -1167,8 +1167,7 @@ private fun PhoebeRootStateHolder(
     }
     val openMostPlayed: () -> Unit = {
         selectedPlaylistId = null
-        navigator.openBrowse(BrowseSection.Home)
-        navigator.open(PhoebeRoute.PlayHistory(PlayHistoryKind.MostPlayed))
+        navigator.openBrowse(BrowseSection.Charts)
     }
     val openFavoritePlaylists: () -> Unit = {
         selectedPlaylistId = null

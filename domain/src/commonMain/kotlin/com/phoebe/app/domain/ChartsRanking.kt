@@ -7,4 +7,6 @@ data class MostPlayedArtist(
     val playCount: Long,
     val thumbUrl: String? = null,
     val lastPlayedMs: Long = 0L,
+    /** Distinct played songs that contributed to [playCount]. */
+    val trackCount: Int = 0,
 )

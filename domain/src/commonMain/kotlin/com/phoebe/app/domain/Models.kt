@@ -501,7 +501,7 @@ enum class MobileBottomTab {
 
     companion object {
         val defaultOrder: List<MobileBottomTab> =
-            listOf(Home, Search, Library, Charts, Playlists, Radio)
+            listOf(Home, Search, Library, Playlists, Radio)
         const val MinVisibleTabs = 2
     }
 }

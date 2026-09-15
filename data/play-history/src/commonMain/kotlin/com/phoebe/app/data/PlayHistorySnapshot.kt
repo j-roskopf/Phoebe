@@ -102,12 +102,14 @@ fun PlayHistorySnapshot.topMostPlayedArtists(
                 playCount = entry.playCount,
                 lastPlayedMs = entry.lastPlayedMs,
                 thumbUrl = representativeThumb,
+                trackCount = 1,
             )
         } else {
             current.copy(
                 playCount = current.playCount + entry.playCount,
                 lastPlayedMs = maxOf(current.lastPlayedMs, entry.lastPlayedMs),
                 thumbUrl = current.thumbUrl ?: representativeThumb,
+                trackCount = current.trackCount + 1,
             )
         }
     }
@@ -127,6 +129,7 @@ fun PlayHistorySnapshot.topMostPlayedArtists(
                 playCount = aggregate.playCount,
                 thumbUrl = aggregate.artist?.thumbUrl ?: aggregate.thumbUrl,
                 lastPlayedMs = aggregate.lastPlayedMs,
+                trackCount = aggregate.trackCount,
             )
         }
 }
@@ -137,6 +140,7 @@ private data class ArtistPlayAggregate(
     val playCount: Long,
     val lastPlayedMs: Long,
     val thumbUrl: String?,
+    val trackCount: Int,
 )
 
 private data class MostPlayedScore(

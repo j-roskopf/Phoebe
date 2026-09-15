@@ -50,6 +50,7 @@ class PlayHistoryRankingTest {
 
         assertEquals(listOf("Artist One", "Artist Three", "Artist Two"), result.map { it.title })
         assertEquals(listOf(7L, 6L, 6L), result.map { it.playCount })
+        assertEquals(listOf(2, 1, 1), result.map { it.trackCount })
         assertEquals("a1", result[0].id)
         assertEquals("artist-thumb", result[0].thumbUrl)
     }

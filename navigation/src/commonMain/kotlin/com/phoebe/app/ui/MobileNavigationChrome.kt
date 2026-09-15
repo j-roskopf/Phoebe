@@ -43,9 +43,9 @@ fun BrowseSection.mobileBottomTab(): MobileBottomTab? = when (this) {
     BrowseSection.Home -> MobileBottomTab.Home
     BrowseSection.Search -> MobileBottomTab.Search
     BrowseSection.Library -> MobileBottomTab.Library
-    BrowseSection.Charts -> MobileBottomTab.Charts
     BrowseSection.Playlists -> MobileBottomTab.Playlists
     BrowseSection.Radio -> MobileBottomTab.Radio
+    BrowseSection.Charts,
     BrowseSection.Lyrics,
     BrowseSection.Downloads,
     BrowseSection.Settings,

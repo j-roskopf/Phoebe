@@ -424,6 +424,7 @@ internal fun rememberChartsUiState(catalog: CatalogSnapshot): ChartsUiState {
                     name = artist.title,
                     thumbUrl = artist.thumbUrl,
                     playCount = artist.playCount,
+                    trackCount = artist.trackCount,
                 )
             },
             topSongs = songs.map { entry ->

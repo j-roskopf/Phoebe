@@ -44,11 +44,17 @@ class LibraryUiRepository(
             null
         }
         if (row != null) {
-            val prefs = row.toPreferences()
+            val prefs = row.toPreferences().normalized()
             val viewMode = withContext(Dispatchers.Default) {
                 storage.readText(ViewModeFile)
             }?.takeIf { it in setOf("Grid", "List", "Flow") } ?: prefs.viewMode
-            mutableState.value = prefs.copy(viewMode = viewMode)
+            val resolved = prefs.copy(viewMode = viewMode)
+            mutableState.value = resolved
+            // Persist migrations (e.g. Charts tab inserted into legacy defaults).
+            val desiredTabs = resolved.mobileBottomTabs.joinToString(",") { it.name }
+            if (row.mobileBottomTabs != desiredTabs) {
+                withContext(Dispatchers.Default) { persist(resolved) }
+            }
             return
         }
         val legacy = storage.readText(LegacyPrefsFile) ?: return

@@ -475,7 +475,10 @@ internal fun MobileBrowseShell(
         }
         MobileScreenToolbar(
             title = toolbarTitle,
-            onBack = if (section == BrowseSection.Settings && selectedPlaylistId == null) {
+            onBack = if (
+                (section == BrowseSection.Settings || section == BrowseSection.Charts) &&
+                selectedPlaylistId == null
+            ) {
                 { onNavigate(BrowseSection.Home) }
             } else if (section == BrowseSection.Radio && internetRadioRouteMode != RadioRouteMode.Home) {
                 onInternetRadioRoot
@@ -845,22 +848,20 @@ internal fun MobileBrowseShell(
                 )
                 section == BrowseSection.Charts && selectedPlaylistId == null -> {
                     val chartsState = rememberChartsUiState(catalog)
-                    Column(Modifier.fillMaxSize()) {
-                        browseTopBar()
-                        ChartsScreen(
-                            state = chartsState,
-                            modifier = Modifier.weight(1f),
-                            onArtistClick = { rank ->
-                                catalog.artists.firstOrNull {
-                                    it.id == rank.id || it.title.equals(rank.name, ignoreCase = true)
-                                }?.let(onArtist)
-                            },
-                            onSongClick = { rank -> chartTrackForRank(catalog, rank)?.let(onSong) },
-                            onPlaySong = { rank ->
-                                chartTrackForRank(catalog, rank)?.let { onPlayTracks(listOf(it), 0) }
-                            },
-                        )
-                    }
+                    ChartsScreen(
+                        state = chartsState,
+                        modifier = Modifier.fillMaxSize(),
+                        topBar = browseTopBar,
+                        onArtistClick = { rank ->
+                            catalog.artists.firstOrNull {
+                                it.id == rank.id || it.title.equals(rank.name, ignoreCase = true)
+                            }?.let(onArtist)
+                        },
+                        onSongClick = { rank -> chartTrackForRank(catalog, rank)?.let(onSong) },
+                        onPlaySong = { rank ->
+                            chartTrackForRank(catalog, rank)?.let { onPlayTracks(listOf(it), 0) }
+                        },
+                    )
                 }
                 section == BrowseSection.Search && selectedPlaylistId == null -> SearchMobileRoute(
                     viewModel = remember(routeViewModelFactory) { routeViewModelFactory.search() },

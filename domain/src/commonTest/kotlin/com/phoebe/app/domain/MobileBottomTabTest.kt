@@ -22,4 +22,41 @@ class MobileBottomTabTest {
             listOf(MobileBottomTab.Radio, MobileBottomTab.Home).normalizedMobileBottomTabs(),
         )
     }
+
+    @Test
+    fun stripsChartsFromPersistedTabSets() {
+        assertEquals(
+            listOf(
+                MobileBottomTab.Home,
+                MobileBottomTab.Search,
+                MobileBottomTab.Library,
+                MobileBottomTab.Playlists,
+                MobileBottomTab.Radio,
+            ),
+            listOf(
+                MobileBottomTab.Home,
+                MobileBottomTab.Search,
+                MobileBottomTab.Library,
+                MobileBottomTab.Charts,
+                MobileBottomTab.Playlists,
+                MobileBottomTab.Radio,
+            ).normalizedMobileBottomTabs(),
+        )
+    }
+
+    @Test
+    fun doesNotForceExtraTabsOntoCustomSets() {
+        assertEquals(
+            listOf(
+                MobileBottomTab.Home,
+                MobileBottomTab.Library,
+                MobileBottomTab.Radio,
+            ),
+            listOf(
+                MobileBottomTab.Home,
+                MobileBottomTab.Library,
+                MobileBottomTab.Radio,
+            ).normalizedMobileBottomTabs(),
+        )
+    }
 }

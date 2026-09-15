@@ -11,18 +11,26 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -35,41 +43,54 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phoebe.app.ui.ArtworkImage
+import com.phoebe.app.ui.LocalMobileChromePadding
 import com.phoebe.app.ui.PhoebeIcon
 import com.phoebe.app.ui.PhoebeIconView
 import com.phoebe.app.ui.PhoebeUi
 import com.phoebe.app.ui.SectionLabel
-import com.phoebe.app.ui.mobileContentTopPadding
 
 private const val ChartsWideLayoutBreakpointDp = 700
-private const val ChartsMaxRowsPerSection = 9
+private const val ChartsInitialVisibleCount = 10
+private const val ChartsLoadMorePageSize = 10
 
 @Composable
 fun ChartsScreen(
     state: ChartsUiState,
     modifier: Modifier = Modifier,
     bottomContentPadding: Dp = 0.dp,
+    topBar: (@Composable () -> Unit)? = null,
     onArtistClick: (ChartsArtistRank) -> Unit = {},
     onSongClick: (ChartsSongRank) -> Unit = {},
     onPlaySong: (ChartsSongRank) -> Unit = {},
 ) {
+    val chromePadding = LocalMobileChromePadding.current
+    val listBottomPadding = bottomContentPadding.takeIf { it > 0.dp } ?: (chromePadding.bottom + 10.dp)
     BoxWithConstraints(
         modifier
             .fillMaxSize()
-            .padding(
-                start = 16.dp,
-                end = 16.dp,
-                top = mobileContentTopPadding(12.dp),
-                bottom = 12.dp + bottomContentPadding,
-            ),
+            .padding(horizontal = 16.dp),
     ) {
         val wideLayout = maxWidth >= ChartsWideLayoutBreakpointDp.dp
         when {
-            state.isLoading -> ChartsLoading(Modifier.fillMaxSize())
-            state.isEmpty -> ChartsEmpty(Modifier.fillMaxSize())
+            state.isLoading -> ChartsScaffold(
+                topBar = topBar,
+                bottomPadding = listBottomPadding,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                ChartsLoading(Modifier.fillMaxSize())
+            }
+            state.isEmpty -> ChartsScaffold(
+                topBar = topBar,
+                bottomPadding = listBottomPadding,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                ChartsEmpty(Modifier.fillMaxSize())
+            }
             else -> ChartsContent(
                 state = state,
                 wideLayout = wideLayout,
+                topBar = topBar,
+                bottomPadding = listBottomPadding,
                 onArtistClick = onArtistClick,
                 onSongClick = onSongClick,
                 onPlaySong = onPlaySong,
@@ -80,9 +101,33 @@ fun ChartsScreen(
 }
 
 @Composable
+private fun ChartsScaffold(
+    topBar: (@Composable () -> Unit)?,
+    bottomPadding: Dp,
+    modifier: Modifier = Modifier,
+    content: @Composable () -> Unit,
+) {
+    LazyColumn(
+        modifier = modifier,
+        contentPadding = PaddingValues(
+            top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 10.dp,
+            bottom = bottomPadding,
+        ),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
+    ) {
+        topBar?.let { header ->
+            item(key = "top-bar", contentType = "top-bar") { header() }
+        }
+        item(key = "body", contentType = "body") { content() }
+    }
+}
+
+@Composable
 private fun ChartsContent(
     state: ChartsUiState,
     wideLayout: Boolean,
+    topBar: (@Composable () -> Unit)?,
+    bottomPadding: Dp,
     onArtistClick: (ChartsArtistRank) -> Unit,
     onSongClick: (ChartsSongRank) -> Unit,
     onPlaySong: (ChartsSongRank) -> Unit,
@@ -90,49 +135,75 @@ private fun ChartsContent(
 ) {
     val artists = state.topArtists.orEmpty()
     val songs = state.topSongs.orEmpty()
+    var artistVisibleCount by remember(artists.size) { mutableIntStateOf(ChartsInitialVisibleCount) }
+    var songVisibleCount by remember(songs.size) { mutableIntStateOf(ChartsInitialVisibleCount) }
     LazyColumn(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(22.dp),
-        contentPadding = PaddingValues(bottom = 12.dp),
+        contentPadding = PaddingValues(
+            top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 10.dp,
+            bottom = bottomPadding,
+        ),
     ) {
-        item(contentType = "charts-header") { ChartsHeader(state.periodLabel) }
+        topBar?.let { header ->
+            item(key = "top-bar", contentType = "top-bar") { header() }
+        }
         if (wideLayout) {
             item(contentType = "charts-wide-row") {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(24.dp)) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         ChartsSectionHeader("Top Artists", "Ranked by total plays")
-                        ArtistsSectionBody(artists, onArtistClick)
+                        ArtistsSectionBody(
+                            artists = artists,
+                            visibleCount = artistVisibleCount,
+                            onArtistClick = onArtistClick,
+                            onLoadMore = {
+                                artistVisibleCount = (artistVisibleCount + ChartsLoadMorePageSize)
+                                    .coerceAtMost(artists.size)
+                            },
+                        )
                     }
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(14.dp)) {
                         ChartsSectionHeader("Top Songs", "Your most replayed tracks")
-                        SongsSectionBody(songs, onSongClick, onPlaySong)
+                        SongsSectionBody(
+                            songs = songs,
+                            visibleCount = songVisibleCount,
+                            onSongClick = onSongClick,
+                            onPlaySong = onPlaySong,
+                            onLoadMore = {
+                                songVisibleCount = (songVisibleCount + ChartsLoadMorePageSize)
+                                    .coerceAtMost(songs.size)
+                            },
+                        )
                     }
                 }
             }
         } else {
             item(contentType = "artists-header") { ChartsSectionHeader("Top Artists", "Ranked by total plays") }
-            item(contentType = "artists-body") { ArtistsSectionBody(artists, onArtistClick) }
+            item(contentType = "artists-body") {
+                ArtistsSectionBody(
+                    artists = artists,
+                    visibleCount = artistVisibleCount,
+                    onArtistClick = onArtistClick,
+                    onLoadMore = {
+                        artistVisibleCount = (artistVisibleCount + ChartsLoadMorePageSize)
+                            .coerceAtMost(artists.size)
+                    },
+                )
+            }
             item(contentType = "songs-header") { ChartsSectionHeader("Top Songs", "Your most replayed tracks") }
-            item(contentType = "songs-body") { SongsSectionBody(songs, onSongClick, onPlaySong) }
-        }
-    }
-}
-
-@Composable
-private fun ChartsHeader(periodLabel: String, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            SectionLabel("Charts", PhoebeUi.mutedText)
-            Text("Your Top Sounds", color = PhoebeUi.primaryText, fontSize = 26.sp, fontWeight = FontWeight.Black)
-        }
-        Box(
-            Modifier
-                .clip(RoundedCornerShape(PhoebeUi.shapes.buttonRadius))
-                .background(PhoebeUi.subtleFill)
-                .border(BorderStroke(1.dp, PhoebeUi.border), RoundedCornerShape(PhoebeUi.shapes.buttonRadius))
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-        ) {
-            Text(periodLabel, color = PhoebeUi.secondaryText, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            item(contentType = "songs-body") {
+                SongsSectionBody(
+                    songs = songs,
+                    visibleCount = songVisibleCount,
+                    onSongClick = onSongClick,
+                    onPlaySong = onPlaySong,
+                    onLoadMore = {
+                        songVisibleCount = (songVisibleCount + ChartsLoadMorePageSize)
+                            .coerceAtMost(songs.size)
+                    },
+                )
+            }
         }
     }
 }
@@ -148,19 +219,25 @@ private fun ChartsSectionHeader(title: String, subtitle: String, modifier: Modif
 @Composable
 private fun ArtistsSectionBody(
     artists: List<ChartsArtistRank>,
+    visibleCount: Int,
     onArtistClick: (ChartsArtistRank) -> Unit,
+    onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (artists.isEmpty()) {
         ChartsSectionEmpty("Play some artists and they'll show up here.", modifier)
         return
     }
+    val visible = artists.take(visibleCount.coerceAtLeast(1))
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        val hero = artists.first()
+        val hero = visible.first()
         ChartsArtistHero(hero, onClick = { onArtistClick(hero) })
-        if (artists.size > 1) Spacer(Modifier.height(6.dp))
-        artists.drop(1).take(ChartsMaxRowsPerSection).forEachIndexed { index, artist ->
+        if (visible.size > 1) Spacer(Modifier.height(6.dp))
+        visible.drop(1).forEachIndexed { index, artist ->
             ChartsArtistRow(rank = index + 2, artist = artist, onClick = { onArtistClick(artist) })
+        }
+        if (visibleCount < artists.size) {
+            ChartsLoadMoreButton(remaining = artists.size - visibleCount, onClick = onLoadMore)
         }
     }
 }
@@ -168,19 +245,22 @@ private fun ArtistsSectionBody(
 @Composable
 private fun SongsSectionBody(
     songs: List<ChartsSongRank>,
+    visibleCount: Int,
     onSongClick: (ChartsSongRank) -> Unit,
     onPlaySong: (ChartsSongRank) -> Unit,
+    onLoadMore: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     if (songs.isEmpty()) {
         ChartsSectionEmpty("Play some songs and they'll show up here.", modifier)
         return
     }
+    val visible = songs.take(visibleCount.coerceAtLeast(1))
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        val hero = songs.first()
+        val hero = visible.first()
         ChartsSongHero(hero, onClick = { onSongClick(hero) }, onPlay = { onPlaySong(hero) })
-        if (songs.size > 1) Spacer(Modifier.height(6.dp))
-        songs.drop(1).take(ChartsMaxRowsPerSection).forEachIndexed { index, song ->
+        if (visible.size > 1) Spacer(Modifier.height(6.dp))
+        visible.drop(1).forEachIndexed { index, song ->
             ChartsSongRow(
                 rank = index + 2,
                 song = song,
@@ -188,6 +268,26 @@ private fun SongsSectionBody(
                 onPlay = { onPlaySong(song) },
             )
         }
+        if (visibleCount < songs.size) {
+            ChartsLoadMoreButton(remaining = songs.size - visibleCount, onClick = onLoadMore)
+        }
+    }
+}
+
+@Composable
+private fun ChartsLoadMoreButton(remaining: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    TextButton(
+        onClick = onClick,
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp),
+    ) {
+        Text(
+            "Load more ($remaining)",
+            color = PhoebeUi.accentLight,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.SemiBold,
+        )
     }
 }
 
@@ -225,7 +325,7 @@ private fun ChartsArtistHero(artist: ChartsArtistRank, onClick: () -> Unit, modi
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                "${formatPlayCount(artist.playCount)} · ${pluralize(artist.trackCount, "track")}",
+                artistHeroSubtitle(artist),
                 color = PhoebeUi.secondaryText,
                 fontSize = 12.sp,
                 maxLines = 1,
@@ -270,7 +370,9 @@ private fun ChartsArtistRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(pluralize(artist.trackCount, "track"), color = PhoebeUi.mutedText, fontSize = 11.sp)
+            if (artist.trackCount > 0) {
+                Text(pluralize(artist.trackCount, "track"), color = PhoebeUi.mutedText, fontSize = 11.sp)
+            }
         }
         Text(
             formatPlayCount(artist.playCount),
@@ -358,7 +460,6 @@ private fun ChartsSongRow(
             thumbUrl = song.localArtworkUri ?: song.thumbUrl,
             modifier = Modifier.size(44.dp),
             radius = PhoebeUi.shapes.mediaRadius,
-            elevated = false,
             maxDecodeDimension = 128,
         )
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -370,20 +471,20 @@ private fun ChartsSongRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(song.artist, color = PhoebeUi.secondaryText, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(song.artist, color = PhoebeUi.mutedText, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+        Text(
+            formatPlayCount(song.playCount),
+            color = PhoebeUi.secondaryText,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+        )
         Box(
             Modifier
-                .clip(RoundedCornerShape(999.dp))
-                .background(PhoebeUi.accent.copy(alpha = 0.12f))
-                .padding(horizontal = 8.dp, vertical = 3.dp),
-        ) {
-            Text(formatPlayCount(song.playCount), color = PhoebeUi.accentLight, fontSize = 10.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-        }
-        Box(
-            Modifier
-                .size(30.dp)
+                .size(32.dp)
                 .clip(CircleShape)
+                .background(PhoebeUi.subtleFill)
                 .clickable(onClick = onPlay),
             contentAlignment = Alignment.Center,
         ) {
@@ -475,6 +576,15 @@ private fun ChartsLoading(modifier: Modifier = Modifier) {
             )
             Text("Crunching your listening history...", color = PhoebeUi.secondaryText, fontSize = 14.sp)
         }
+    }
+}
+
+private fun artistHeroSubtitle(artist: ChartsArtistRank): String {
+    val plays = formatPlayCount(artist.playCount)
+    return if (artist.trackCount > 0) {
+        "$plays · ${pluralize(artist.trackCount, "track")}"
+    } else {
+        plays
     }
 }
 
