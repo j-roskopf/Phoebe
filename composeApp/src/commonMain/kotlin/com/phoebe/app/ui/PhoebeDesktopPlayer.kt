@@ -1021,6 +1021,7 @@ internal fun DesktopPlayer(
                                         libraryFilter = libraryFilter,
                                         libraryUi = libraryUi,
                                         modifier = Modifier.fillMaxSize(),
+                                        resolvedTracksById = browseState.resolvedTracksById,
                                         onSearchQuery = onSearchQuery,
                                         onLibraryFilter = onLibraryFilter,
                                         onPlaylist = onPlaylist,

@@ -19,6 +19,12 @@ data class PlayHistorySnapshot(
     val playEventsByTrack: Map<String, List<Long>> = emptyMap(),
     val topMostPlayed: List<MostPlayedEntry> = emptyList(),
     val topRecentlyPlayed: List<RecentlyPlayedEntry> = emptyList(),
+    /**
+     * Complete per-artist play totals derived from the full play-count history (not the
+     * capped [topMostPlayed] page). Ids/artwork are filled in when the artist resolves in
+     * the catalog; see [topMostPlayedArtists].
+     */
+    val topArtists: List<MostPlayedArtist> = emptyList(),
 )
 
 data class PlayHistoryRankedEntries(
@@ -81,10 +87,23 @@ fun PlayHistorySnapshot.topMostPlayedArtists(
     val boundedLimit = limit.coerceAtLeast(0)
     if (boundedLimit == 0) return emptyList()
 
+    val artistsByTitle = catalog.artists.groupBy { it.title.trim().lowercase() }
+    // Prefer the complete per-artist totals; fall back to aggregating the capped top-song
+    // page for callers that don't supply [topArtists].
+    if (topArtists.isNotEmpty()) {
+        return topArtists.take(boundedLimit).map { entry ->
+            val catalogArtist = artistsByTitle[entry.title.trim().lowercase()]?.firstOrNull()
+            entry.copy(
+                id = catalogArtist?.id,
+                title = catalogArtist?.title ?: entry.title,
+                thumbUrl = catalogArtist?.thumbUrl ?: entry.thumbUrl,
+            )
+        }
+    }
+
     val songs = topMostPlayedSongs()
     if (songs.isEmpty()) return emptyList()
     val tracks = lookupTracksByIds(catalog, songs.map { it.trackId }.toSet())
-    val artistsByTitle = catalog.artists.groupBy { it.title.trim().lowercase() }
     val aggregates = LinkedHashMap<String, ArtistPlayAggregate>()
 
     songs.forEach { entry ->

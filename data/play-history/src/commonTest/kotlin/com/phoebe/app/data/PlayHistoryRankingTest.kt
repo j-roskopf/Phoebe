@@ -2,6 +2,7 @@ package com.phoebe.app.data
 
 import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.CatalogSnapshot
+import com.phoebe.app.domain.MostPlayedArtist
 import com.phoebe.app.domain.MostPlayedEntry
 import com.phoebe.app.domain.Track
 import kotlin.test.Test
@@ -67,6 +68,33 @@ class PlayHistoryRankingTest {
         assertEquals("Unknown Artist", result.single().title)
         assertNull(result.single().id)
         assertEquals(4L, result.single().playCount)
+    }
+
+    @Test
+    fun topMostPlayedArtistsPrefersCompleteTotalsOverTopSongPage() {
+        val history = PlayHistorySnapshot(
+            // Only two songs make the capped top-song page, but the complete artist totals
+            // (which include songs outside that page) must win.
+            topMostPlayed = listOf(
+                MostPlayedEntry("t1", 3L, 100L, "Artist One", "Album"),
+                MostPlayedEntry("t2", 2L, 90L, "Artist Two", "Album"),
+            ),
+            topArtists = listOf(
+                MostPlayedArtist(id = null, title = "Artist One", playCount = 40L, lastPlayedMs = 500L, trackCount = 12),
+                MostPlayedArtist(id = null, title = "Artist Two", playCount = 10L, lastPlayedMs = 100L, trackCount = 2),
+            ),
+        )
+        val catalog = CatalogSnapshot(
+            artists = listOf(Artist("a1", "Artist One", thumbUrl = "artist-thumb")),
+        )
+
+        val result = history.topMostPlayedArtists(catalog)
+
+        assertEquals(listOf("Artist One", "Artist Two"), result.map { it.title })
+        assertEquals(listOf(40L, 10L), result.map { it.playCount })
+        assertEquals(listOf(12, 2), result.map { it.trackCount })
+        assertEquals("a1", result[0].id)
+        assertEquals("artist-thumb", result[0].thumbUrl)
     }
 
     private fun track(id: String, artist: String, thumbUrl: String?) = Track(

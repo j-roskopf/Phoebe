@@ -270,6 +270,7 @@ internal fun MobileBrowseShell(
     libraryUi: LibraryUiPreferences,
     currentTrack: Track?,
     homeUiState: HomeUiState,
+    resolvedTracksById: Map<String, Track> = emptyMap(),
     isPlaying: Boolean,
     isBuffering: Boolean = false,
     onNavigate: (BrowseSection) -> Unit,
@@ -847,7 +848,7 @@ internal fun MobileBrowseShell(
                     topBar = browseTopBar,
                 )
                 section == BrowseSection.Charts && selectedPlaylistId == null -> {
-                    val chartsState = rememberChartsUiState(catalog)
+                    val chartsState = rememberChartsUiState(catalog, resolvedTracksById)
                     ChartsScreen(
                         state = chartsState,
                         modifier = Modifier.fillMaxSize(),
@@ -857,9 +858,11 @@ internal fun MobileBrowseShell(
                                 it.id == rank.id || it.title.equals(rank.name, ignoreCase = true)
                             }?.let(onArtist)
                         },
-                        onSongClick = { rank -> chartTrackForRank(catalog, rank)?.let(onSong) },
+                        onSongClick = { rank ->
+                            chartTrackForRank(catalog, rank, resolvedTracksById)?.let(onSong)
+                        },
                         onPlaySong = { rank ->
-                            chartTrackForRank(catalog, rank)?.let { onPlayTracks(listOf(it), 0) }
+                            chartTrackForRank(catalog, rank, resolvedTracksById)?.let { onPlayTracks(listOf(it), 0) }
                         },
                     )
                 }
@@ -942,6 +945,7 @@ internal fun MobileBrowseShell(
                     libraryFilter = libraryFilter,
                     libraryUi = libraryUi,
                     modifier = Modifier.fillMaxSize().padding(top = chromePadding.top, bottom = chromePadding.bottom),
+                    resolvedTracksById = resolvedTracksById,
                     onSearchQuery = onSearchQuery,
                     onLibraryFilter = onLibraryFilter,
                     onPlaylist = onPlaylist,

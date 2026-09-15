@@ -5,6 +5,7 @@ import com.phoebe.app.feature.history.ChartsArtistRank
 import com.phoebe.app.feature.history.ChartsScreen
 import com.phoebe.app.feature.history.ChartsSongRank
 import com.phoebe.app.feature.history.ChartsUiState
+import com.phoebe.app.feature.history.buildChartsSongRanks
 import com.phoebe.app.feature.radio.RadioRoute
 import com.phoebe.app.feature.radio.RadioRouteActions
 import com.phoebe.app.feature.radio.RadioRouteMode
@@ -201,6 +202,7 @@ internal fun DesktopContent(
     libraryFilter: LibraryFilterTab,
     libraryUi: LibraryUiPreferences,
     modifier: Modifier,
+    resolvedTracksById: Map<String, Track> = emptyMap(),
     onSearchQuery: (String) -> Unit,
     onLibraryFilter: (LibraryFilterTab) -> Unit,
     onPlaylist: (Playlist) -> Unit,
@@ -314,7 +316,7 @@ internal fun DesktopContent(
     }
 
     if (section == BrowseSection.Charts) {
-        val chartsState = rememberChartsUiState(catalog)
+        val chartsState = rememberChartsUiState(catalog, resolvedTracksById)
         ChartsScreen(
             state = chartsState,
             modifier = modifier,
@@ -322,8 +324,10 @@ internal fun DesktopContent(
                 catalog.artists.firstOrNull { it.id == rank.id || it.title.equals(rank.name, ignoreCase = true) }
                     ?.let(onArtist)
             },
-            onSongClick = { rank -> chartTrackForRank(catalog, rank)?.let(onSong) },
-            onPlaySong = { rank -> chartTrackForRank(catalog, rank)?.let { onPlayTracks(listOf(it), 0) } },
+            onSongClick = { rank -> chartTrackForRank(catalog, rank, resolvedTracksById)?.let(onSong) },
+            onPlaySong = { rank ->
+                chartTrackForRank(catalog, rank, resolvedTracksById)?.let { onPlayTracks(listOf(it), 0) }
+            },
         )
         return
     }
@@ -413,10 +417,12 @@ internal fun DesktopContent(
 }
 
 @Composable
-internal fun rememberChartsUiState(catalog: CatalogSnapshot): ChartsUiState {
+internal fun rememberChartsUiState(
+    catalog: CatalogSnapshot,
+    resolvedTracksById: Map<String, Track> = emptyMap(),
+): ChartsUiState {
     val playHistory = LocalPlayHistory.current
-    return remember(catalog, playHistory) {
-        val songs = playHistory.topMostPlayedSongs()
+    return remember(catalog, playHistory, resolvedTracksById) {
         ChartsUiState(
             topArtists = playHistory.topMostPlayedArtists(catalog).map { artist ->
                 ChartsArtistRank(
@@ -427,24 +433,23 @@ internal fun rememberChartsUiState(catalog: CatalogSnapshot): ChartsUiState {
                     trackCount = artist.trackCount,
                 )
             },
-            topSongs = songs.map { entry ->
-                val track = chartTrackForId(catalog, entry.trackId)
-                ChartsSongRank(
-                    id = entry.trackId,
-                    title = track?.title ?: entry.trackId,
-                    artist = track?.artist ?: entry.artist,
-                    album = track?.album ?: entry.album,
-                    thumbUrl = track?.thumbUrl,
-                    localArtworkUri = track?.localArtworkUri,
-                    playCount = entry.playCount,
-                )
+            topSongs = buildChartsSongRanks(playHistory.topMostPlayedSongs()) { trackId ->
+                chartTrackForId(catalog, trackId, resolvedTracksById)
             },
         )
     }
 }
 
-internal fun chartTrackForRank(catalog: CatalogSnapshot, rank: ChartsSongRank): Track? =
-    chartTrackForId(catalog, rank.id)
+internal fun chartTrackForRank(
+    catalog: CatalogSnapshot,
+    rank: ChartsSongRank,
+    resolvedTracksById: Map<String, Track> = emptyMap(),
+): Track? =
+    chartTrackForId(catalog, rank.id, resolvedTracksById)
 
-private fun chartTrackForId(catalog: CatalogSnapshot, id: String): Track? =
-    lookupTracksByIds(catalog, setOf(id))[id]
+private fun chartTrackForId(
+    catalog: CatalogSnapshot,
+    id: String,
+    resolvedTracksById: Map<String, Track> = emptyMap(),
+): Track? =
+    lookupTracksByIds(catalog, setOf(id), resolvedTracksById)[id]

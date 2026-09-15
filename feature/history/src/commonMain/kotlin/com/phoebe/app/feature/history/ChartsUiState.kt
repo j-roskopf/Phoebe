@@ -1,6 +1,9 @@
 package com.phoebe.app.feature.history
 
 import androidx.compose.runtime.Immutable
+import com.phoebe.app.domain.MostPlayedEntry
+import com.phoebe.app.domain.Track
+import com.phoebe.app.domain.playHistoryIdentityKey
 
 /**
  * Local UI model for a ranked artist on the Charts screen. Deliberately independent of any
@@ -45,6 +48,34 @@ data class ChartsUiState(
     companion object {
         val Loading = ChartsUiState()
     }
+}
+
+/**
+ * Maps ranked play-history entries to [ChartsSongRank], resolving each id to a catalog track
+ * (including DB-resolved fallbacks) and collapsing equivalent recordings — the same title,
+ * artist, and duration arriving under multiple provider ids — so one song doesn't rank twice.
+ */
+fun buildChartsSongRanks(
+    entries: List<MostPlayedEntry>,
+    resolveTrack: (String) -> Track?,
+): List<ChartsSongRank> {
+    val seenIdentityKeys = HashSet<String>()
+    val ranks = ArrayList<ChartsSongRank>(entries.size)
+    entries.forEach { entry ->
+        val track = resolveTrack(entry.trackId)
+        val identityKey = track?.playHistoryIdentityKey() ?: entry.trackId
+        if (!seenIdentityKeys.add(identityKey)) return@forEach
+        ranks += ChartsSongRank(
+            id = entry.trackId,
+            title = track?.title ?: entry.trackId,
+            artist = track?.artist ?: entry.artist,
+            album = track?.album ?: entry.album,
+            thumbUrl = track?.thumbUrl,
+            localArtworkUri = track?.localArtworkUri,
+            playCount = entry.playCount,
+        )
+    }
+    return ranks
 }
 
 /**
