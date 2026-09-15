@@ -305,6 +305,11 @@ internal fun DesktopContent(
         return
     }
 
+    if (section == BrowseSection.Charts) {
+        ChartsPlaceholder(modifier = modifier)
+        return
+    }
+
     Column(
         modifier.padding(
             start = edgePadding,
@@ -318,6 +323,7 @@ internal fun DesktopContent(
             val sectionLabel = when (section) {
                 BrowseSection.Search -> "Search"
                 BrowseSection.Library -> "Your Library"
+                BrowseSection.Charts -> "Charts"
                 BrowseSection.Lyrics -> "Lyrics"
                 BrowseSection.Downloads -> "Downloads"
                 BrowseSection.Settings -> "Settings"
@@ -327,6 +333,7 @@ internal fun DesktopContent(
             val headline = when (section) {
                 BrowseSection.Search -> "Find your sound"
                 BrowseSection.Library -> "Albums, artists, and songs"
+                BrowseSection.Charts -> "Most-played artists and songs"
                 BrowseSection.Lyrics -> "Follow along"
                 BrowseSection.Downloads -> "Offline songs"
                 BrowseSection.Settings -> "Customize your listening experience"
@@ -382,6 +389,39 @@ internal fun DesktopContent(
                 onDownload,
                 onAddToEndOfQueue = onAddToEndOfQueue,
                 libraryColumns = libraryUi.columns,
+            )
+        }
+    }
+}
+
+/** Temporary shell content until feature/history exposes the Charts screen. */
+@Composable
+internal fun ChartsPlaceholder(
+    modifier: Modifier = Modifier,
+    topBar: (@Composable () -> Unit)? = null,
+) {
+    Column(modifier.fillMaxSize()) {
+        topBar?.invoke()
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(horizontal = 24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            PhoebeIconView(PhoebeIcon.Grid, tint = PhoebeUi.accentLight, modifier = Modifier.size(32.dp))
+            Text(
+                "Charts are coming soon",
+                color = PhoebeUi.primaryText,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                "Most-played artists and songs will appear here.",
+                color = PhoebeUi.mutedText,
+                fontSize = 14.sp,
+                textAlign = TextAlign.Center,
             )
         }
     }

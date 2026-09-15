@@ -288,6 +288,13 @@ internal fun Sidebar(
                 onClick = { onNavigate(BrowseSection.Library) },
             )
             NavRow(
+                PhoebeIcon.Grid,
+                "Charts",
+                active = activeSection == BrowseSection.Charts && selectedPlaylistId == null,
+                enabled = mainNavEnabled,
+                onClick = { onNavigate(BrowseSection.Charts) },
+            )
+            NavRow(
                 PhoebeIcon.PlaylistPlay,
                 "Playlists",
                 active = activeSection == BrowseSection.Playlists && selectedPlaylistId == null,
