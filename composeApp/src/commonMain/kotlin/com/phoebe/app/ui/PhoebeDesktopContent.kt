@@ -1,6 +1,10 @@
 package com.phoebe.app.ui
 
 import com.phoebe.app.feature.library.*
+import com.phoebe.app.feature.history.ChartsArtistRank
+import com.phoebe.app.feature.history.ChartsScreen
+import com.phoebe.app.feature.history.ChartsSongRank
+import com.phoebe.app.feature.history.ChartsUiState
 import com.phoebe.app.feature.radio.RadioRoute
 import com.phoebe.app.feature.radio.RadioRouteActions
 import com.phoebe.app.feature.radio.RadioRouteMode
@@ -182,6 +186,9 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import kotlin.math.max
+import com.phoebe.app.data.lookupTracksByIds
+import com.phoebe.app.data.topMostPlayedArtists
+import com.phoebe.app.data.topMostPlayedSongs
 
 @Composable
 internal fun DesktopContent(
@@ -199,6 +206,7 @@ internal fun DesktopContent(
     onPlaylist: (Playlist) -> Unit,
     onArtist: (Artist) -> Unit,
     onAlbum: (Album) -> Unit,
+    onSong: (Track) -> Unit = {},
     onPlayTracks: (List<Track>, Int) -> Unit,
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
@@ -306,7 +314,17 @@ internal fun DesktopContent(
     }
 
     if (section == BrowseSection.Charts) {
-        ChartsPlaceholder(modifier = modifier)
+        val chartsState = rememberChartsUiState(catalog)
+        ChartsScreen(
+            state = chartsState,
+            modifier = modifier,
+            onArtistClick = { rank ->
+                catalog.artists.firstOrNull { it.id == rank.id || it.title.equals(rank.name, ignoreCase = true) }
+                    ?.let(onArtist)
+            },
+            onSongClick = { rank -> chartTrackForRank(catalog, rank)?.let(onSong) },
+            onPlaySong = { rank -> chartTrackForRank(catalog, rank)?.let { onPlayTracks(listOf(it), 0) } },
+        )
         return
     }
 
@@ -394,35 +412,38 @@ internal fun DesktopContent(
     }
 }
 
-/** Temporary shell content until feature/history exposes the Charts screen. */
 @Composable
-internal fun ChartsPlaceholder(
-    modifier: Modifier = Modifier,
-    topBar: (@Composable () -> Unit)? = null,
-) {
-    Column(modifier.fillMaxSize()) {
-        topBar?.invoke()
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
-                .padding(horizontal = 24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
-        ) {
-            PhoebeIconView(PhoebeIcon.Grid, tint = PhoebeUi.accentLight, modifier = Modifier.size(32.dp))
-            Text(
-                "Charts are coming soon",
-                color = PhoebeUi.primaryText,
-                fontSize = 20.sp,
-                fontWeight = FontWeight.Bold,
-            )
-            Text(
-                "Most-played artists and songs will appear here.",
-                color = PhoebeUi.mutedText,
-                fontSize = 14.sp,
-                textAlign = TextAlign.Center,
-            )
-        }
+internal fun rememberChartsUiState(catalog: CatalogSnapshot): ChartsUiState {
+    val playHistory = LocalPlayHistory.current
+    return remember(catalog, playHistory) {
+        val songs = playHistory.topMostPlayedSongs()
+        ChartsUiState(
+            topArtists = playHistory.topMostPlayedArtists(catalog).map { artist ->
+                ChartsArtistRank(
+                    id = artist.id ?: artist.title,
+                    name = artist.title,
+                    thumbUrl = artist.thumbUrl,
+                    playCount = artist.playCount,
+                )
+            },
+            topSongs = songs.map { entry ->
+                val track = chartTrackForId(catalog, entry.trackId)
+                ChartsSongRank(
+                    id = entry.trackId,
+                    title = track?.title ?: entry.trackId,
+                    artist = track?.artist ?: entry.artist,
+                    album = track?.album ?: entry.album,
+                    thumbUrl = track?.thumbUrl,
+                    localArtworkUri = track?.localArtworkUri,
+                    playCount = entry.playCount,
+                )
+            },
+        )
     }
 }
+
+internal fun chartTrackForRank(catalog: CatalogSnapshot, rank: ChartsSongRank): Track? =
+    chartTrackForId(catalog, rank.id)
+
+private fun chartTrackForId(catalog: CatalogSnapshot, id: String): Track? =
+    lookupTracksByIds(catalog, setOf(id))[id]

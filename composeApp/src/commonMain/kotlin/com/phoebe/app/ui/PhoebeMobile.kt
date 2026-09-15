@@ -29,6 +29,7 @@ import phoebe.composeapp.generated.resources.phoebe_bird
 import phoebe.composeapp.generated.resources.phoebe_icon_rounded
 import org.jetbrains.compose.resources.painterResource
 import com.phoebe.app.feature.home.*
+import com.phoebe.app.feature.history.ChartsScreen
 import com.phoebe.app.feature.library.LibraryFilterTab
 import com.phoebe.app.feature.library.LibraryFilterOptionsMenuItems
 import com.phoebe.app.feature.library.LibraryMobileRoute
@@ -842,10 +843,25 @@ internal fun MobileBrowseShell(
                     libraryViewMode = mobileLibraryViewMode,
                     topBar = browseTopBar,
                 )
-                section == BrowseSection.Charts && selectedPlaylistId == null -> ChartsPlaceholder(
-                    modifier = Modifier.fillMaxSize(),
-                    topBar = browseTopBar,
-                )
+                section == BrowseSection.Charts && selectedPlaylistId == null -> {
+                    val chartsState = rememberChartsUiState(catalog)
+                    Column(Modifier.fillMaxSize()) {
+                        browseTopBar()
+                        ChartsScreen(
+                            state = chartsState,
+                            modifier = Modifier.weight(1f),
+                            onArtistClick = { rank ->
+                                catalog.artists.firstOrNull {
+                                    it.id == rank.id || it.title.equals(rank.name, ignoreCase = true)
+                                }?.let(onArtist)
+                            },
+                            onSongClick = { rank -> chartTrackForRank(catalog, rank)?.let(onSong) },
+                            onPlaySong = { rank ->
+                                chartTrackForRank(catalog, rank)?.let { onPlayTracks(listOf(it), 0) }
+                            },
+                        )
+                    }
+                }
                 section == BrowseSection.Search && selectedPlaylistId == null -> SearchMobileRoute(
                     viewModel = remember(routeViewModelFactory) { routeViewModelFactory.search() },
                     catalog = catalog,
