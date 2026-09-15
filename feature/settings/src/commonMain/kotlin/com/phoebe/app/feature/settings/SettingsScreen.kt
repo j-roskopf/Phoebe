@@ -2162,7 +2162,7 @@ private val MobileBottomTab.icon: PhoebeIcon
         MobileBottomTab.Home -> PhoebeIcon.Home
         MobileBottomTab.Search -> PhoebeIcon.Search
         MobileBottomTab.Library -> PhoebeIcon.Library
-        MobileBottomTab.Charts -> PhoebeIcon.Grid
+        MobileBottomTab.Charts -> PhoebeIcon.Equalizer
         MobileBottomTab.Playlists -> PhoebeIcon.PlaylistPlay
         MobileBottomTab.Radio -> PhoebeIcon.Radio
     }
