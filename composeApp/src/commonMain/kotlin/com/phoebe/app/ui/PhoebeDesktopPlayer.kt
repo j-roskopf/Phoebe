@@ -1026,6 +1026,7 @@ internal fun DesktopPlayer(
                                         onPlaylist = onPlaylist,
                                         onArtist = onArtist,
                                         onAlbum = onAlbum,
+                                        onSong = onSong,
                                         onPlayTracks = onPlayTracks,
                                         onAddToUpNext = onAddToUpNext,
                                         onDownload = onDownload,
