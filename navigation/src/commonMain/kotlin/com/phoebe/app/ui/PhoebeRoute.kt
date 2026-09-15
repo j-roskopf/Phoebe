@@ -23,6 +23,7 @@ enum class BrowseSection {
     Home,
     Search,
     Library,
+    Charts,
     Radio,
     Lyrics,
     Playlists,
@@ -34,6 +35,7 @@ fun BrowseSection.isMainBrowseSection(): Boolean = when (this) {
     BrowseSection.Home,
     BrowseSection.Search,
     BrowseSection.Library,
+    BrowseSection.Charts,
     -> true
 
     BrowseSection.Radio,
@@ -48,6 +50,7 @@ fun BrowseSection.requiresBrowseSource(): Boolean = when (this) {
     BrowseSection.Home,
     BrowseSection.Search,
     BrowseSection.Library,
+    BrowseSection.Charts,
     BrowseSection.Playlists,
     -> true
 
@@ -320,6 +323,7 @@ val PhoebeRoute.telemetryName: String
             BrowseSection.Home -> "home"
             BrowseSection.Search -> "search"
             BrowseSection.Library -> "library"
+            BrowseSection.Charts -> "charts"
             BrowseSection.Radio -> "radio"
             BrowseSection.Lyrics -> "lyrics"
             BrowseSection.Playlists -> "playlists"
