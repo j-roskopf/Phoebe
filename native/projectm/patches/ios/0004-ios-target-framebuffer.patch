@@ -1,0 +1,39 @@
+diff --git a/src/libprojectM/ProjectM.cpp b/src/libprojectM/ProjectM.cpp
+index 88fa014..e6f87fb 100644
+--- a/src/libprojectM/ProjectM.cpp
++++ b/src/libprojectM/ProjectM.cpp
+@@ -98,6 +98,14 @@ void ProjectM::RenderFrame()
+         return;
+     }
+ 
++    // Remember the framebuffer the host had bound on entry so the final composite
++    // below can target it. iOS/CAEAGLLayer has no usable default framebuffer: FBO 0
++    // is permanently incomplete there, so compositing into it silently drops the
++    // frame and raises GL_INVALID_FRAMEBUFFER_OPERATION. Hosts that render to the
++    // window (desktop GL, Android EGL) have 0 bound here, so behaviour is unchanged.
++    GLint targetFramebuffer = 0;
++    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &targetFramebuffer);
++
+     // Update FPS and other timer values.
+     m_timeKeeper->UpdateTimers();
+ 
+@@ -166,15 +174,16 @@ void ProjectM::RenderFrame()
+     // ToDo: Call the to-be-implemented render method in Renderer
+     m_activePreset->RenderFrame(audioData, renderContext);
+ 
+-    // ToDo: Allow external apps to provide a custom target framebuffer.
+-    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
++    // Composite into whatever framebuffer the host bound on entry (0 = window).
++    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, static_cast<GLuint>(targetFramebuffer));
+     glViewport(0, 0, renderContext.viewportSizeX, renderContext.viewportSizeY);
+ 
+ #ifdef USE_GLES
+     // On WebGL2 / Chrome ANGLE, the default framebuffer's draw buffer must
+     // be explicitly set to GL_BACK after preset rendering, which may leave
+     // per-FBO draw buffer state that leaks into FBO 0 on some drivers.
+-    GLenum backBuf = GL_BACK;
++    // GL_BACK is only legal for FBO 0; user FBOs take GL_COLOR_ATTACHMENT0.
++    GLenum backBuf = targetFramebuffer == 0 ? GL_BACK : GL_COLOR_ATTACHMENT0;
+     glDrawBuffers(1, &backBuf);
+ #endif
+ 

@@ -16,6 +16,7 @@ struct iOSApp: App {
         if !isPlaybackSmoke {
             PlatformPlayback_iosKt.ensureIosPlaybackRuntime()
             IosCastCoordinator.shared.initialize()
+            IosProjectMNativeBridge.shared.factory = PhoebeProjectMNativeViewFactory()
             #if canImport(GoogleMaps)
             IosRadioMapNativeBridge.shared.factory = PhoebeRadioMapNativeViewFactory()
             #endif

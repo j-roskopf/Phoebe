@@ -1723,6 +1723,9 @@ private external fun setWebAudioCurrentTime(audio: HTMLAudioElement, seconds: Do
 @JsFun(
     """(audio, onFailure) => {
         try {
+            if (audio) {
+                globalThis.__phoebeActiveAudio = audio;
+            }
             const eq = globalThis.__phoebeEqualizer;
             if (eq && eq.audio === audio && eq.source) {
                 eq.context?.resume?.();

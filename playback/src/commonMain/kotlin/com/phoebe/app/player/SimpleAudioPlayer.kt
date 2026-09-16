@@ -10,6 +10,7 @@ import com.phoebe.app.domain.StreamingPolicySettings
 import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.currentTimeMs
+import kotlin.math.pow
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -52,7 +53,7 @@ abstract class SimpleAudioPlayer(
     override val state: StateFlow<PlayerState> = mutableState
     private val mutableAudioAnalysis = MutableStateFlow(AudioAnalysisFrame.Empty)
     override val audioAnalysis: StateFlow<AudioAnalysisFrame> = mutableAudioAnalysis
-    private val audioAnalysisAccumulator = AudioAnalysisAccumulator()
+    private val audioAnalysisThrottle = AudioAnalysisThrottle()
     private var progressJob: Job? = null
     private var playbackStartupJob: Job? = null
     private var preferUnityOutputVolume = false
@@ -872,7 +873,7 @@ abstract class SimpleAudioPlayer(
     }
 
     protected fun canPublishAudioAnalysis(timestampMs: Long = currentTimeMs()): Boolean =
-        audioAnalysisAccumulator.canPublish(timestampMs)
+        audioAnalysisThrottle.canPublish(timestampMs)
 
     protected fun publishAudioAnalysisPcm(
         samples: FloatArray,
@@ -880,9 +881,30 @@ abstract class SimpleAudioPlayer(
         source: AudioAnalysisSource = AudioAnalysisSource.Pcm,
         timestampMs: Long = currentTimeMs(),
     ) {
-        audioAnalysisAccumulator
-            .observePcm(samples, sampleRateHz, timestampMs, source)
-            ?.let(::publishAudioAnalysis)
+        // Unthrottled path for projectM / Butterchurn (Decision 10).
+        VisualizerPcmBus.publish(
+            samples = samples,
+            channels = if (samples.size >= 2) 2 else 1,
+            sampleRateHz = sampleRateHz,
+        )
+        // Keep a light amplitude frame for non-visualizer chrome; do not route PCM
+        // through Compose StateFlow at visualizer rates.
+        if (!canPublishAudioAnalysis(timestampMs)) return
+        var sumSquares = 0.0
+        val limit = samples.size.coerceAtMost(512)
+        for (index in 0 until limit) {
+            val sample = samples[index]
+            sumSquares += sample * sample
+        }
+        val amplitude = if (limit == 0) 0f else kotlin.math.sqrt(sumSquares / limit).toFloat()
+        publishAudioAnalysis(
+            AudioAnalysisFrame(
+                amplitude = amplitude.coerceIn(0f, 1f),
+                bands = emptyList(),
+                timestampMs = timestampMs,
+                source = source,
+            ),
+        )
     }
 
     protected fun publishAudioAnalysisMagnitudesDb(
@@ -890,13 +912,22 @@ abstract class SimpleAudioPlayer(
         source: AudioAnalysisSource = AudioAnalysisSource.Spectrum,
         timestampMs: Long = currentTimeMs(),
     ) {
-        audioAnalysisAccumulator
-            .observeMagnitudesDb(magnitudesDb, timestampMs, source)
-            ?.let(::publishAudioAnalysis)
+        // Spectrum path kept only for amplitude chrome; band FFT deleted (Decision 10).
+        if (!canPublishAudioAnalysis(timestampMs)) return
+        val maxMagnitude = magnitudesDb.maxOrNull() ?: return
+        val rms = 10.0.pow(maxMagnitude.toDouble() / 20.0).toFloat().coerceIn(0f, 1f)
+        publishAudioAnalysis(
+            AudioAnalysisFrame(
+                amplitude = rms,
+                bands = emptyList(),
+                timestampMs = timestampMs,
+                source = source,
+            ),
+        )
     }
 
     protected fun resetAudioAnalysis() {
-        audioAnalysisAccumulator.reset()
+        audioAnalysisThrottle.reset()
         mutableAudioAnalysis.value = AudioAnalysisFrame.Empty.copy(timestampMs = currentTimeMs())
     }
 

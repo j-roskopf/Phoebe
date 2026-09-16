@@ -68,6 +68,9 @@ fun EqualizerDialog(
     onPersistChange: (Boolean) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    // Pause / hide window-level visualizer overlays (iOS GL / web Butterchurn)
+    // so EQ gestures are not fighting main-thread GL present.
+    SuppressVisualizerHtmlOverlay(active = true)
     val normalized = profile.normalized()
     Dialog(
         onDismissRequest = onDismiss,

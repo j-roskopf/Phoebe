@@ -1,0 +1,46 @@
+{
+  "packs": [
+    {
+      "id": "bundled",
+      "name": "Phoebe bundled",
+      "version": "1",
+      "presets": [
+        {
+          "packId": "bundled",
+          "presetId": "geiss-swirlie-1",
+          "displayName": "Geiss — Swirlie 1",
+          "milkRelativePath": "projectm-presets/geiss-swirlie-1.milk",
+          "butterchurnRelativePath": "butterchurn-presets/geiss-swirlie-1.json"
+        },
+        {
+          "packId": "bundled",
+          "presetId": "geiss-swirlie-4",
+          "displayName": "Geiss — Swirlie 4",
+          "milkRelativePath": "projectm-presets/geiss-swirlie-4.milk",
+          "butterchurnRelativePath": "butterchurn-presets/geiss-swirlie-4.json"
+        },
+        {
+          "packId": "bundled",
+          "presetId": "aderrasi-agitator",
+          "displayName": "Aderrasi — Agitator",
+          "milkRelativePath": "projectm-presets/aderrasi-agitator.milk",
+          "butterchurnRelativePath": "butterchurn-presets/aderrasi-agitator.json"
+        },
+        {
+          "packId": "bundled",
+          "presetId": "aderrasi-blender",
+          "displayName": "Aderrasi — Blender",
+          "milkRelativePath": "projectm-presets/aderrasi-blender.milk",
+          "butterchurnRelativePath": "butterchurn-presets/aderrasi-blender.json"
+        },
+        {
+          "packId": "bundled",
+          "presetId": "phoebe-pulse",
+          "displayName": "Phoebe Pulse",
+          "milkRelativePath": "projectm-presets/phoebe-pulse.milk",
+          "butterchurnRelativePath": "butterchurn-presets/phoebe-pulse.json"
+        }
+      ]
+    }
+  ]
+}

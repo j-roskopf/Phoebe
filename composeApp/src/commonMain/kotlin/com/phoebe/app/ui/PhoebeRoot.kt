@@ -219,6 +219,9 @@ import com.phoebe.app.feature.playback.LocalVisualizerAudioAnalysis
 import com.phoebe.app.feature.playback.MobilePlaybackRoute
 import com.phoebe.app.feature.playback.MobilePlaybackRouteActions
 import com.phoebe.app.feature.playback.MobilePlaybackRouteState
+import com.phoebe.app.feature.playback.VisualizerPacks
+import com.phoebe.app.feature.playback.VisualizerPresetSentinel
+import com.phoebe.app.feature.playback.VisualizerSentinelBridge
 import com.phoebe.app.feature.search.LocalSearchHistory
 import com.phoebe.app.feature.search.LocalSavedSearchActions
 import com.phoebe.app.feature.search.SavedSearchActions
@@ -847,6 +850,8 @@ private fun PhoebeRootStateHolder(
     // briefly render as "Just now"… but only after the next 60s tick caught up.
     var nowMs by remember { mutableStateOf(currentTimeMs()) }
     LaunchedEffect(Unit) {
+        VisualizerPacks.restoreUserPacks()
+        VisualizerSentinelBridge.attach(VisualizerPresetSentinel(VisualizerPacks.store))
         while (true) {
             delay(60_000L)
             nowMs = currentTimeMs()
@@ -2348,7 +2353,6 @@ private fun PhoebeRootStateHolder(
                         persistEqualizerSettings = appSettings.persistEqualizerSettings,
                         equalizerRemoteUnavailable = equalizerRemoteUnavailable,
                         visualizerPreset = appSettings.nowPlayingVisualizerPreset,
-                        showVisualizerInTvFrame = appSettings.nowPlayingVisualizerInTvFrame,
                         showUltimateGuitarButton = appSettings.showUltimateGuitarButton,
                     ),
                     playbackActions = PlaybackActions(
@@ -2377,7 +2381,6 @@ private fun PhoebeRootStateHolder(
                                 }
                             }
                         },
-                        onShowVisualizerInTvFrame = state::setNowPlayingVisualizerInTvFrame,
                         onListenBrainzFeedback = state::submitListenBrainzFeedback,
                         onLyrics = {
                             selectedPlaylistId = null
@@ -2605,7 +2608,6 @@ private fun PhoebeRootStateHolder(
                         onAudioProcessingSettings = state::setAudioProcessingSettings,
                         audioProcessingCapabilities = state.audioProcessingCapabilities,
                         onVisualizerPreset = state::setNowPlayingVisualizerPreset,
-                        onShowVisualizerInTvFrame = state::setNowPlayingVisualizerInTvFrame,
                         onShowUltimateGuitarButton = state::setShowUltimateGuitarButton,
                         onBlurredArtworkAppearance = state::setBlurredArtworkAppearance,
                         onFullBleedDetailArtwork = state::setFullBleedDetailArtwork,
@@ -3072,7 +3074,6 @@ private fun MobilePlayerHost(
             persistEqualizerSettings = appSettings.persistEqualizerSettings,
             equalizerRemoteUnavailable = equalizerRemoteUnavailable,
             visualizerPreset = appSettings.nowPlayingVisualizerPreset,
-            showVisualizerInTvFrame = appSettings.nowPlayingVisualizerInTvFrame,
             showUltimateGuitarButton = appSettings.showUltimateGuitarButton,
             blurredArtworkAppearance = appSettings.blurredArtworkAppearance,
             tintedBackgroundGradient = appSettings.tintedBackgroundGradient,
@@ -3104,7 +3105,6 @@ private fun MobilePlayerHost(
             onEqualizerReset = appState::resetEqualizer,
             onPersistEqualizerSettings = appState::setPersistEqualizerSettings,
             onVisualizerPreset = appState::setNowPlayingVisualizerPreset,
-            onShowVisualizerInTvFrame = appState::setNowPlayingVisualizerInTvFrame,
             onListenBrainzFeedback = appState::submitListenBrainzFeedback,
             onBack = onBack,
             onSwipeDismiss = onSwipeDismiss,

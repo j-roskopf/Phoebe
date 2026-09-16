@@ -9,7 +9,7 @@ import com.sun.jna.ptr.IntByReference
 
 /**
  * In-process Pulse/PipeWire record of a sink monitor. Spawning parecord from the
- * JVM is unreliable (Filament `LD_LIBRARY_PATH`, closed stdin, sandbox PATH),
+ * JVM is unreliable (custom `LD_LIBRARY_PATH`, closed stdin, sandbox PATH),
  * which left Linux on JavaFX/GStreamer's 1–2 Hz spectrum.
  */
 internal object LinuxPulseSimple {

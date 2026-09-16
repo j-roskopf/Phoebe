@@ -1108,6 +1108,7 @@ data class AppSettings(
     val savedVolume: Float = DefaultSavedVolume,
     val equalizerProfile: EqualizerProfile = EqualizerProfile.Default,
     val nowPlayingVisualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
+    /** Unused: kept for backup/schema compatibility; always false after restore. */
     val nowPlayingVisualizerInTvFrame: Boolean = false,
     val showUltimateGuitarButton: Boolean = true,
     val blurredArtworkAppearance: Boolean = true,

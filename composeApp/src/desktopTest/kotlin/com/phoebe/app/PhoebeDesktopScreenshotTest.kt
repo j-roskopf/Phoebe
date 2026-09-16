@@ -50,7 +50,6 @@ class PhoebeDesktopScreenshotTest {
             PhoebeScreenshotScenario.Album,
             PhoebeScreenshotScenario.Search,
             PhoebeScreenshotScenario.Player,
-            PhoebeScreenshotScenario.PlayerVisualizer,
             PhoebeScreenshotScenario.Settings,
             PhoebeScreenshotScenario.SignIn,
         ).forEach { scenario ->
@@ -168,46 +167,6 @@ class PhoebeDesktopScreenshotTest {
                 filePath = "src/screenshotTest/roborazzi/desktop-${scenario.name.lowercase()}-light.png",
             )
         }
-    }
-
-    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
-    @Test
-    fun desktopVisualizerPresetsDark() = runDesktopComposeUiTest(width = 1365, height = 900) {
-        listOf(
-            PhoebeScreenshotScenario.PlayerVisualizerAlchemy to "alchemy",
-            PhoebeScreenshotScenario.PlayerVisualizerBattery to "battery",
-            PhoebeScreenshotScenario.PlayerVisualizerBarsAndWaves to "bars-and-waves",
-            PhoebeScreenshotScenario.PlayerVisualizerBlazingColors to "blazing-colors",
-            PhoebeScreenshotScenario.PlayerVisualizerPlenoptic to "plenoptic",
-            PhoebeScreenshotScenario.PlayerVisualizerVortexSpectrum to "vortex-spectrum",
-            PhoebeScreenshotScenario.PlayerVisualizerClassicEQ to "classic-eq",
-            PhoebeScreenshotScenario.PlayerVisualizerHaloSpectrum to "halo-spectrum",
-            PhoebeScreenshotScenario.PlayerVisualizerWireframeSpectrum3D to "wireframe-spectrum-3d",
-        ).forEach { (scenario, slug) ->
-            setContent {
-                Box(Modifier.size(1365.dp, 900.dp)) {
-                    PhoebeScreenshotApp(scenario = scenario)
-                }
-            }
-            waitForIdle()
-            onRoot().captureDesktopScreenshot(
-                filePath = "src/screenshotTest/roborazzi/desktop-player-visualizer-$slug-dark.png",
-            )
-        }
-    }
-
-    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
-    @Test
-    fun desktopVisualizerTvFrameDark() = runDesktopComposeUiTest(width = 1365, height = 900) {
-        setContent {
-            Box(Modifier.size(1365.dp, 900.dp)) {
-                PhoebeScreenshotApp(scenario = PhoebeScreenshotScenario.PlayerVisualizerTvFrame)
-            }
-        }
-        waitForIdle()
-        onRoot().captureDesktopScreenshot(
-            filePath = "src/screenshotTest/roborazzi/desktop-player-visualizer-tv-frame-dark.png",
-        )
     }
 
     @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)

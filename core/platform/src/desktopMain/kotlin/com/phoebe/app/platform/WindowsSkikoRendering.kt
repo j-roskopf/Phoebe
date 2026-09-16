@@ -5,8 +5,12 @@ package com.phoebe.app.platform
  *
  * Compose Desktop on Windows is sensitive to renderer choice and when system properties are
  * applied. Hover flicker is a known Skiko/Swing issue (especially with adaptive-sync displays);
- * ANGLE is usually the most stable GPU path. Override with `PHOEBE_SKIKO_RENDER_API` or
- * `-Dphoebe.skiko.renderApi` (`ANGLE`, `OPENGL`, `DIRECT3D`, `SOFTWARE`, `SOFTWARE_COMPAT`).
+ * ANGLE was historically the most stable GPU path.
+ *
+ * Decision 4 (projectM): `compose.interop.blending` requires Direct3D, so the default is now
+ * DIRECT3D. That knowingly reintroduces hover flicker on some adaptive-sync displays.
+ * Override with `PHOEBE_SKIKO_RENDER_API` or `-Dphoebe.skiko.renderApi`
+ * (`ANGLE`, `OPENGL`, `DIRECT3D`, `SOFTWARE`, `SOFTWARE_COMPAT`).
  */
 fun configureWindowsDesktopRendering() {
     if (!isWindowsDesktop()) return
@@ -24,7 +28,8 @@ fun configureWindowsDesktopRendering() {
             ?.takeIf { it.isNotEmpty() }
 
     when (renderApi?.uppercase()) {
-        "ANGLE", null -> System.setProperty("skiko.rendering.angle.enabled", "true")
+        "ANGLE" -> System.setProperty("skiko.rendering.angle.enabled", "true")
+        null -> System.setProperty("skiko.renderApi", "DIRECT3D")
         else -> System.setProperty("skiko.renderApi", renderApi.uppercase())
     }
 }

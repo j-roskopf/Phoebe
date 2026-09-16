@@ -52,8 +52,4 @@ class DesktopVisualizerViewModel : ViewModel() {
     fun onPreset(preset: NowPlayingVisualizerPreset) {
         mutableState.update { it?.copy(preset = preset) }
     }
-
-    fun onShowInTvFrameChange(enabled: Boolean) {
-        mutableState.update { it?.copy(showInTvFrame = enabled) }
-    }
 }

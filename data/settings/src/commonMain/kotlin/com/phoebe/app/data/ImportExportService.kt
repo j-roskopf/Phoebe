@@ -21,7 +21,7 @@ data class PhoebeBackupPackage(
     val localMetadataOverrides: List<LocalMetadataOverride> = emptyList(),
 ) {
     companion object {
-        const val CurrentVersion = 1
+        const val CurrentVersion = 3
     }
 }
 
@@ -78,7 +78,7 @@ class ImportExportService(
         appSettingsRepository.setScanLibraryOnLaunch(backup.settings.scanLibraryOnLaunch)
         appSettingsRepository.setNotifyWhenDownloadFinishes(backup.settings.notifyWhenDownloadFinishes)
         appSettingsRepository.setNowPlayingVisualizerPreset(backup.settings.nowPlayingVisualizerPreset)
-        appSettingsRepository.setNowPlayingVisualizerInTvFrame(backup.settings.nowPlayingVisualizerInTvFrame)
+        appSettingsRepository.setNowPlayingVisualizerInTvFrame(false)
         appSettingsRepository.setBlurredArtworkAppearance(backup.settings.blurredArtworkAppearance)
         appSettingsRepository.setFullBleedDetailArtwork(backup.settings.fullBleedDetailArtwork)
         appSettingsRepository.setTintedBackgroundGradient(backup.settings.tintedBackgroundGradient)

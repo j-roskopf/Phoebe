@@ -85,8 +85,31 @@ android {
             }
         }
     }
+
+    sourceSets.getByName("main").jniLibs.srcDir("src/main/jniLibs")
 }
 
 dependencies {
     implementation(project(":composeApp"))
+}
+
+val syncProjectMJniLibs = tasks.register<Sync>("syncProjectMJniLibs") {
+    val abis = listOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+    abis.forEach { abi ->
+        val src = rootProject.layout.projectDirectory.dir("native/projectm/android-$abi/lib")
+        from(src) {
+            include("*.so")
+            into(abi)
+        }
+    }
+    into(layout.projectDirectory.dir("src/main/jniLibs"))
+    onlyIf {
+        abis.any { abi ->
+            rootProject.file("native/projectm/android-$abi/lib").isDirectory
+        }
+    }
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.contains("JniLib", ignoreCase = true) }.configureEach {
+    dependsOn(syncProjectMJniLibs)
 }

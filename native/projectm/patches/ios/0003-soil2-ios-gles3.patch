@@ -1,0 +1,33 @@
+diff --git a/vendor/SOIL2/SOIL2.c b/vendor/SOIL2/SOIL2.c
+index 390d3d3..cd2af04 100644
+--- a/vendor/SOIL2/SOIL2.c
++++ b/vendor/SOIL2/SOIL2.c
+@@ -33,7 +33,7 @@
+ 	#define SOIL_X11_PLATFORM
+ #endif
+ 
+-#if ( defined( SOIL_PLATFORM_IOS ) || defined( SOIL_PLATFORM_ANDROID ) ) && ( !defined( SOIL_GLES1 ) && !defined( SOIL_GLES2 ) )
++#if ( defined( SOIL_PLATFORM_IOS ) || defined( SOIL_PLATFORM_ANDROID ) ) && ( !defined( SOIL_GLES1 ) && !defined( SOIL_GLES2 ) && !defined( SOIL_GLES3 ) )
+ 	#define SOIL_GLES2
+ #endif
+ 
+@@ -42,12 +42,15 @@
+ #endif
+ 
+ #if defined( SOIL_GLES3 )
+-    #include <GLES3/gl3.h>
++	#ifdef SOIL_PLATFORM_IOS
++		#include <OpenGLES/ES3/gl.h>
++		#include <OpenGLES/ES3/glext.h>
++	#else
++		#include <GLES3/gl3.h>
++	#endif
+ 
+ 	#define APIENTRY GL_APIENTRY
+-#endif
+-
+-#if defined( SOIL_GLES2 )
++#elif defined( SOIL_GLES2 )
+ 	#ifdef SOIL_PLATFORM_IOS
+ 		#include <OpenGLES/ES2/gl.h>
+ 		#include <OpenGLES/ES2/glext.h>

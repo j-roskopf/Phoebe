@@ -23,6 +23,17 @@ node_modules/
 playwright-report/
 test-results/
 iosApp/Vendor/GoogleCastSDK/
+iosApp/Configuration/GoogleCast.xcconfig
 .vercel
 .env*
 .andy
+# projectM source checkouts + CMake build trees (CI builds these)
+third_party/projectm/
+third_party/projectm-*/
+native/projectm/*/
+!native/projectm/.gitkeep
+!native/projectm/patches/
+!native/projectm/patches/**
+hs_err_pid*.log
+replay_pid*.log
+androidApp/src/main/jniLibs/

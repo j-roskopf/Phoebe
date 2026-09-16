@@ -144,14 +144,12 @@ private fun MobileExpandedUtilityControls(
     castState: CastState,
     equalizerActive: Boolean,
     visualizerPreset: NowPlayingVisualizerPreset,
-    showVisualizerInTvFrame: Boolean,
     onCast: () -> Unit,
     onEqualizer: () -> Unit,
     onLyrics: () -> Unit,
     onUltimateGuitar: (Track) -> Unit,
     ultimateGuitarTrack: Track?,
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit,
-    onShowVisualizerInTvFrame: (Boolean) -> Unit,
     showLikeControl: Boolean = false,
     liked: Boolean = false,
     onToggleLiked: () -> Unit = {},
@@ -200,8 +198,6 @@ private fun MobileExpandedUtilityControls(
             VisualizerPresetButton(
                 selected = visualizerPreset,
                 onSelected = onVisualizerPreset,
-                showInTvFrame = showVisualizerInTvFrame,
-                onShowInTvFrameChange = onShowVisualizerInTvFrame,
             )
         }
     }
@@ -241,11 +237,9 @@ fun MobilePlayer(
     persistEqualizerSettings: Boolean = false,
     equalizerRemoteUnavailable: Boolean = false,
     visualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
-    showVisualizerInTvFrame: Boolean = false,
     showUltimateGuitarButton: Boolean = true,
     blurredArtworkAppearance: Boolean = true,
     tintedBackgroundGradient: Boolean = false,
-    useFilamentVisualizers: Boolean = true,
     onToggle: () -> Unit,
     onPrevious: () -> Unit,
     onNext: () -> Unit,
@@ -267,7 +261,6 @@ fun MobilePlayer(
     onEqualizerReset: () -> Unit = {},
     onPersistEqualizerSettings: (Boolean) -> Unit = {},
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
-    onShowVisualizerInTvFrame: (Boolean) -> Unit = {},
     onListenBrainzFeedback: (ListenBrainzFeedbackScore) -> Unit = {},
     onBack: () -> Unit,
     onSwipeDismiss: () -> Unit,
@@ -748,14 +741,12 @@ fun MobilePlayer(
                     castState = castState,
                     equalizerActive = equalizerProfile.enabled,
                     visualizerPreset = visualizerPreset,
-                    showVisualizerInTvFrame = showVisualizerInTvFrame,
                     onCast = onCast,
                     onEqualizer = { equalizerOpen = true },
                     onLyrics = onLyrics,
                     onUltimateGuitar = onUltimateGuitar,
                     ultimateGuitarTrack = utilityTrack?.takeIf { showUltimateGuitarButton && it.title.isNotBlank() },
                     onVisualizerPreset = onVisualizerPreset,
-                    onShowVisualizerInTvFrame = onShowVisualizerInTvFrame,
                     showLikeControl = utilityShowLike,
                     liked = utilityTrack?.let(likeActions::isLiked) == true,
                     onToggleLiked = { utilityTrack?.let(likeActions.onToggleLiked) },
@@ -797,7 +788,15 @@ fun MobilePlayer(
                     swipeOffset = currentSwipeOffset / artworkLayerScaleX,
                     modifier = Modifier.fillMaxSize(),
                 ) { t ->
-                    if (visualizerPreset == NowPlayingVisualizerPreset.Artwork) {
+                    // UIKitView/native GL hosts use layout size, not graphicsLayer scale.
+                    // Keep artwork in the collapsed/animating sheet; only mount the
+                    // visualizer once the sheet is stably expanded.
+                    // Swipe neighbors stay on artwork — three live GL hosts freezes the UI.
+                    val showLiveVisualizer = visualizerPreset != NowPlayingVisualizerPreset.Artwork &&
+                        clampedExpansionFraction >= 0.96f &&
+                        !equalizerOpen &&
+                        t.id == track.id
+                    if (!showLiveVisualizer) {
                         FlippableSongArtwork(
                             track = t,
                             modifier = Modifier.fillMaxSize(),
@@ -833,8 +832,7 @@ fun MobilePlayer(
                                 positionMs = positionMs,
                                 modifier = Modifier.fillMaxSize(),
                                 fullscreenButtonAlpha = fullPlayerElementsAlpha,
-                                useFilamentVisualizers = useFilamentVisualizers,
-                                showInTvFrame = showVisualizerInTvFrame,
+                                suspendRendering = false,
                             )
                         }
                     }
