@@ -170,8 +170,12 @@ static void PhoebeClearGlErrors(const char *tag) {
 
 - (void)addPcmSamples:(const float *)samples count:(NSInteger)count channels:(NSInteger)channels {
     if (!self.playing || samples == NULL || count <= 0) return;
-    _pendingChannels = (int)MAX(1, MIN(2, channels));
-    _pendingPcm.assign(samples, samples + count);
+    // Called from the audio processing tap; serialize against drainPcm on the
+    // CADisplayLink/render thread so the pending buffer can't be mutated mid-read.
+    @synchronized (self) {
+        _pendingChannels = (int)MAX(1, MIN(2, channels));
+        _pendingPcm.assign(samples, samples + count);
+    }
 }
 
 - (void)applyPaused {
@@ -362,17 +366,20 @@ static void PhoebeClearGlErrors(const char *tag) {
 }
 
 - (void)drainPcm {
-    if (!self.projectM || _pendingPcm.empty()) return;
-    const auto channels = _pendingChannels >= 2 ? PROJECTM_STEREO : PROJECTM_MONO;
-    unsigned int frames = channels == PROJECTM_STEREO
-        ? (unsigned int)(_pendingPcm.size() / 2)
-        : (unsigned int)_pendingPcm.size();
-    if (frames == 0) {
-        _pendingPcm.clear();
-        return;
+    if (!self.projectM) return;
+    std::vector<float> pcm;
+    int pendingChannels = 1;
+    @synchronized (self) {
+        if (_pendingPcm.empty()) return;
+        pcm.swap(_pendingPcm);
+        pendingChannels = _pendingChannels;
     }
-    projectm_pcm_add_float(self.projectM, _pendingPcm.data(), frames, channels);
-    _pendingPcm.clear();
+    const auto channels = pendingChannels >= 2 ? PROJECTM_STEREO : PROJECTM_MONO;
+    unsigned int frames = channels == PROJECTM_STEREO
+        ? (unsigned int)(pcm.size() / 2)
+        : (unsigned int)pcm.size();
+    if (frames == 0) return;
+    projectm_pcm_add_float(self.projectM, pcm.data(), frames, channels);
 }
 
 - (void)renderFrame {
