@@ -222,6 +222,11 @@ case "$TARGET" in
     ;;
   windows-x64)
     CMAKE_ARGS+=(-DENABLE_GLES=OFF)
+    # projectM's Windows OpenGL Core build requires GLEW. CI installs it with
+    # vcpkg and hands CMake the toolchain so find_package(GLEW) resolves.
+    if [[ -n "${VCPKG_INSTALLATION_ROOT:-}" && -f "${VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake" ]]; then
+      CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${VCPKG_INSTALLATION_ROOT}/scripts/buildsystems/vcpkg.cmake")
+    fi
     ;;
   *)
     CMAKE_ARGS+=(-DENABLE_GLES=OFF)

@@ -30,6 +30,9 @@ class LinuxVisualizerLiveAnalysisDesktopTest {
         val diagnostics = RecordingPlaybackDiagnostics()
         val player = DesktopAudioPlayer(diagnostics)
         val frames = Collections.synchronizedList(ArrayList<AudioAnalysisFrame>(512))
+        val pcmFrames = Collections.synchronizedList(ArrayList<FloatArray>(512))
+        val pcmSink = VisualizerPcmSink { samples, _, _ -> pcmFrames += samples.copyOf() }
+        VisualizerPcmBus.addSink(pcmSink)
         val collecting = AtomicBoolean(true)
         val collector = Thread(
             {
@@ -59,9 +62,14 @@ class LinuxVisualizerLiveAnalysisDesktopTest {
             collecting.set(false)
             collector.join(2_000L)
 
-            val live = frames.filter { frame ->
-                frame.source != AudioAnalysisSource.None && frame.bands.isNotEmpty()
+            // The visualizer feed is now the unthrottled PCM bus (Decision 10);
+            // `audioAnalysis` only carries reduced-rate amplitude chrome.
+            val pcmBlocks = pcmFrames.size
+            val pcmChanging = pcmFrames.zipWithNext().count { (left, right) ->
+                !left.contentEquals(right)
             }
+
+            val live = frames.filter { frame -> frame.source != AudioAnalysisSource.None }
             val uniqueTimestamps = live.map { it.timestampMs }.distinct()
             val peaks = live.map { frame -> frame.bands.maxOrNull() ?: frame.amplitude }
             val peakRange = (peaks.maxOrNull() ?: 0f) - (peaks.minOrNull() ?: 0f)
@@ -72,6 +80,13 @@ class LinuxVisualizerLiveAnalysisDesktopTest {
                     left.bands != right.bands
             }
 
+            assertTrue(
+                pcmBlocks >= MinDistinctFrames || pcmChanging >= MinChangingSamples,
+                "visualizer PCM bus only published $pcmBlocks blocks " +
+                    "and $pcmChanging changing blocks while playing " +
+                    "(need >= $MinDistinctFrames blocks or >= $MinChangingSamples changes). " +
+                    "engines=${diagnostics.engineEvents()} errors=${diagnostics.errorEvents()}",
+            )
             assertTrue(
                 uniqueTimestamps.size >= MinDistinctFrames || changingSamples >= MinChangingSamples,
                 "visualizer analysis only updated ${uniqueTimestamps.size} distinct timestamps " +
@@ -86,11 +101,12 @@ class LinuxVisualizerLiveAnalysisDesktopTest {
             )
             assertTrue(
                 peakRange > 0.12f,
-                "bands did not track the pulsing fixture (range=$peakRange); engines=${diagnostics.engineEvents()}",
+                "amplitude did not track the pulsing fixture (range=$peakRange); engines=${diagnostics.engineEvents()}",
             )
         } finally {
             collecting.set(false)
             collector.join(500L)
+            VisualizerPcmBus.removeSink(pcmSink)
             player.releaseForTests()
             work.deleteRecursively()
         }

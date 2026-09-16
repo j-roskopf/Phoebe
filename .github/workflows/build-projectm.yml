@@ -65,6 +65,12 @@ jobs:
         if: startsWith(matrix.target, 'macos-')
         run: brew install cmake glm
 
+      - name: Install Windows build deps
+        if: startsWith(matrix.target, 'windows-')
+        shell: pwsh
+        run: |
+          & "${env:VCPKG_INSTALLATION_ROOT}\vcpkg.exe" install glew:x64-windows
+
       - name: Build projectM
         shell: bash
         run: ./scripts/build-projectm.sh "${{ matrix.target }}"
