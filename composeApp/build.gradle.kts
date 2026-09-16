@@ -206,6 +206,13 @@ kotlin {
             isStatic = true
             export(project(":playback"))
             transitiveExport = true
+            // The release LTO step for this framework exceeds the 6 GB heap the
+            // standard macOS CI runner can give the Kotlin/Native compiler and
+            // OOMs inside RemoveRedundantCallsToStaticInitializersPhase. That
+            // phase is a pure optimization (dropping redundant static-init
+            // calls), so skip it; full-LTO cost is not worth an unbuildable
+            // release.
+            freeCompilerArgs += "-Xdisable-phases=RemoveRedundantCallsToStaticInitializersPhase"
             linkerOpts(
                 "-L$projectMLibDir",
                 "-lprojectM-4",
