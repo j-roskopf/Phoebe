@@ -291,6 +291,12 @@ jobs:
       - name: Fetch test audio fixtures
         run: ./scripts/fetch-test-audio.sh
 
+      - name: Install projectM build deps
+        run: brew install cmake glm
+
+      - name: Build projectM for iOS simulator
+        run: ./scripts/build-projectm.sh ios-sim
+
       - name: Select iOS simulator
         shell: bash
         run: |

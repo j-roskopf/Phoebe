@@ -753,6 +753,14 @@ jobs:
         shell: bash
         run: ./scripts/install-ios-google-cast-sdk.sh
 
+      - name: Install projectM build deps
+        shell: bash
+        run: brew install cmake glm
+
+      - name: Build projectM for iOS device
+        shell: bash
+        run: ./scripts/build-projectm.sh ios-device
+
       - name: Update iOS version info
         shell: bash
         run: |
