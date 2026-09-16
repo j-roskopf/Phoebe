@@ -130,9 +130,10 @@ fun windowsSkikoJvmArgs(): List<String> {
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
     return when (renderApi?.uppercase()) {
-        "OPENGL", "DIRECT3D", "SOFTWARE", "SOFTWARE_COMPAT" -> listOf("-Dskiko.renderApi=${renderApi.uppercase()}")
-        "ANGLE", null -> listOf("-Dskiko.rendering.angle.enabled=true")
-        else -> listOf("-Dskiko.rendering.angle.enabled=true")
+        "OPENGL", "SOFTWARE", "SOFTWARE_COMPAT" -> listOf("-Dskiko.renderApi=${renderApi.uppercase()}")
+        "ANGLE" -> listOf("-Dskiko.rendering.angle.enabled=true")
+        "DIRECT3D", null -> listOf("-Dskiko.renderApi=DIRECT3D")
+        else -> listOf("-Dskiko.renderApi=DIRECT3D")
     }
 }
 
@@ -190,12 +191,28 @@ kotlin {
     }
 
     listOf(iosArm64(), iosSimulatorArm64()).forEach { iosTarget ->
+        val installName = if (iosTarget.name.contains("Simulator", ignoreCase = true)) {
+            "ios-sim"
+        } else {
+            "ios-device"
+        }
+        val projectMLibDir = rootProject.layout.projectDirectory
+            .dir("native/projectm/$installName/lib")
+            .asFile
+            .absolutePath
         iosTarget.binaries.framework {
             baseName = "ComposeApp"
             binaryOption("bundleId", "com.joetr.phoebe.ComposeApp")
             isStatic = true
             export(project(":playback"))
             transitiveExport = true
+            linkerOpts(
+                "-L$projectMLibDir",
+                "-lprojectM-4",
+                "-lc++",
+                "-framework", "OpenGLES",
+                "-framework", "GLKit",
+            )
         }
     }
 
@@ -566,10 +583,18 @@ val compileMacMediaKeysNative = tasks.register<Exec>("compileMacMediaKeysNative"
     doFirst { outDir.mkdirs() }
     doFirst {
         val javaHome = desktopJavaHome.get()
+        // Resolve the SDK explicitly: a bare `clang` relies on ambient xcrun/SDKROOT state,
+        // which the Gradle daemon does not always inherit, and then fails to find
+        // Foundation/Foundation.h because it searched /System/Library/Frameworks directly.
+        val sdkPath = providers.exec {
+            commandLine("xcrun", "--sdk", "macosx", "--show-sdk-path")
+        }.standardOutput.asText.get().trim()
         commandLine(
             "clang",
             "-dynamiclib",
             "-fobjc-arc",
+            "-isysroot",
+            sdkPath,
             "-framework",
             "Foundation",
             "-framework",
@@ -593,17 +618,6 @@ val syncMacMediaKeyResources = tasks.register<Sync>("syncMacMediaKeyResources") 
     into(macMediaKeysAppResources.map { it.dir(macMediaKeysResourceDirName.get()) })
 }
 
-val syncLinuxFilamentLibcxxResources = tasks.register<Sync>("syncLinuxFilamentLibcxxResources") {
-    onlyIf { System.getProperty("os.name").lowercase().contains("linux") }
-    dependsOn(":feature:playback:fetchLinuxFilamentLibcxx")
-    from(
-        rootProject.layout.projectDirectory.dir(
-            "feature/playback/build/generated/filament-linux-libcxx-resources/filament-linux-libcxx",
-        ),
-    )
-    into(macMediaKeysAppResources.map { it.dir("linux-x64") })
-}
-
 tasks.named("compileKotlinDesktop") { dependsOn(compileMacMediaKeysNative) }
 tasks.matching {
     it.name in setOf(
@@ -616,7 +630,6 @@ tasks.matching {
     )
 }.configureEach {
     dependsOn(syncMacMediaKeyResources)
-    dependsOn(syncLinuxFilamentLibcxxResources)
 }
 
 val desktopDevRunTaskNames = setOf("run", "hotRunDesktop", "hotDevDesktop", "desktopRunHot")
@@ -627,8 +640,31 @@ tasks.withType<JavaExec>().configureEach {
     javaLauncher.set(desktopJavaLauncher)
     doFirst {
         setExecutable(desktopJavaExecutable.get())
-        prependLinuxFilamentLibcxxToLdLibraryPath()
+        val projectMLib = rootProject.layout.projectDirectory
+            .dir("native/projectm/$composeDesktopTarget/lib")
+            .asFile
+        if (projectMLib.isDirectory) {
+            systemProperty("phoebe.projectm.libraryDir", projectMLib.absolutePath)
+            val existing = environment["DYLD_LIBRARY_PATH"] as String?
+                ?: System.getenv("DYLD_LIBRARY_PATH")
+            val existingLd = environment["LD_LIBRARY_PATH"] as String?
+                ?: System.getenv("LD_LIBRARY_PATH")
+            if (System.getProperty("os.name").lowercase().contains("mac")) {
+                environment(
+                    "DYLD_LIBRARY_PATH",
+                    if (existing.isNullOrBlank()) projectMLib.absolutePath
+                    else "${projectMLib.absolutePath}:$existing",
+                )
+            } else if (System.getProperty("os.name").lowercase().contains("linux")) {
+                environment(
+                    "LD_LIBRARY_PATH",
+                    if (existingLd.isNullOrBlank()) projectMLib.absolutePath
+                    else "${projectMLib.absolutePath}:$existingLd",
+                )
+            }
+        }
     }
+    systemProperty("compose.interop.blending", "true")
     systemProperty("phoebe.debug", "true")
     System.getProperty("phoebe.desktop.navigationPath")
         ?.takeIf { it.isNotBlank() }
@@ -666,7 +702,6 @@ tasks.withType<Test>().configureEach {
         javaLauncher.set(desktopJavaLauncher)
         systemProperty("phoebe.debug", "true")
         jvmArgs(linuxX64SuperWordWorkaroundJvmArgs)
-        doFirst { prependLinuxFilamentLibcxxToLdLibraryPath() }
     }
     systemProperty("phoebe.realAudioTests", phoebeRealAudioTests.get().toString())
     if (phoebeRealAudioTests.get() && name.contains("desktop", ignoreCase = true)) {
@@ -690,22 +725,4 @@ tasks.withType<Test>().configureEach {
             includeTestsMatching("com.phoebe.app.PhoebeDesktopScreenshotTest")
         }
     }
-}
-
-tasks.matching { it.name in desktopDevRunTaskNames }.configureEach {
-    dependsOn(":feature:playback:fetchLinuxFilamentLibcxx")
-}
-
-private fun org.gradle.process.ProcessForkOptions.prependLinuxFilamentLibcxxToLdLibraryPath() {
-    if (!System.getProperty("os.name").lowercase().contains("linux")) return
-    val libcxx = rootProject.layout.projectDirectory
-        .dir("feature/playback/build/generated/filament-linux-libcxx-resources/filament-linux-libcxx")
-        .asFile
-    if (!libcxx.isDirectory) return
-    val existing = environment["LD_LIBRARY_PATH"] as String?
-        ?: System.getenv("LD_LIBRARY_PATH")
-    environment(
-        "LD_LIBRARY_PATH",
-        if (existing.isNullOrBlank()) libcxx.absolutePath else "${libcxx.absolutePath}:$existing",
-    )
 }

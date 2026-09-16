@@ -17,7 +17,6 @@ import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.WindowScope
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
-import com.phoebe.app.feature.playback.prepareDesktopFilamentNativeRuntime
 import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.configureWindowsDesktopRendering
 import com.phoebe.app.platform.WindowsUndecoratedWindowSupport
@@ -55,13 +54,22 @@ private val desktopShutdownStarted = AtomicBoolean(false)
 private val desktopProcessExitScheduled = AtomicBoolean(false)
 
 fun main(args: Array<String>) {
-    prepareDesktopFilamentNativeRuntime()
     configureDesktopApplicationName()
     configureDesktopChromecastNetworking()
     configureDesktopApplicationIcon(isDebugBuild())
     configureSkiaGpuResourceCache()
+    // Decision 4: interop blending for Compose overlays above the projectM GL surface.
+    // Forces Direct3D on Windows (ANGLE escape hatch remains PHOEBE_SKIKO_RENDER_API).
+    System.setProperty("compose.interop.blending", "true")
+    if (System.getProperty("os.name").orEmpty().lowercase().contains("win") &&
+        System.getenv("PHOEBE_SKIKO_RENDER_API").isNullOrBlank() &&
+        System.getProperty("phoebe.skiko.renderApi").isNullOrBlank()
+    ) {
+        System.setProperty("skiko.renderApi", "DIRECT3D")
+    }
     configureWindowsDesktopRendering()
     configureSandboxedNativeLibraries()
+    if (runPhase0InteropGateIfRequested(args)) return
     if (runDesktopPlaybackSmokeIfRequested(args)) return
 
     installMacQuitHandler()

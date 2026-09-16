@@ -171,7 +171,6 @@ internal fun DesktopPlayer(
     val persistEqualizerSettings = playbackState.persistEqualizerSettings
     val equalizerRemoteUnavailable = playbackState.equalizerRemoteUnavailable
     val visualizerPreset = playbackState.visualizerPreset
-    val showVisualizerInTvFrame = playbackState.showVisualizerInTvFrame
     val homeUiState = browseState.homeUiState
     val playHistory = browseState.playHistory
     val searchQuery = browseState.searchQuery
@@ -293,7 +292,6 @@ internal fun DesktopPlayer(
     val onEqualizerReset = playbackActions.onEqualizerReset
     val onPersistEqualizerSettings = playbackActions.onPersistEqualizerSettings
     val onVisualizerPreset = playbackActions.onVisualizerPreset
-    val onShowVisualizerInTvFrame = playbackActions.onShowVisualizerInTvFrame
     val onListenBrainzFeedback = playbackActions.onListenBrainzFeedback
     val onPlayQueue = playbackActions.onPlayQueue
     val onClearQueue = playbackActions.onClearQueue
@@ -339,7 +337,6 @@ internal fun DesktopPlayer(
     val onPersistEqualizerSettingsFromSettings = settingsActions.onPersistEqualizerSettings
     val onPersistVolumeSettingsFromSettings = settingsActions.onPersistVolumeSettings
     val onVisualizerPresetFromSettings = settingsActions.onVisualizerPreset
-    val onShowVisualizerInTvFrameFromSettings = settingsActions.onShowVisualizerInTvFrame
     val onShowUltimateGuitarButtonFromSettings = settingsActions.onShowUltimateGuitarButton
     val onBlurredArtworkAppearance = settingsActions.onBlurredArtworkAppearance
     val onFullBleedDetailArtwork = settingsActions.onFullBleedDetailArtwork
@@ -796,13 +793,10 @@ internal fun DesktopPlayer(
                                         state = DesktopVisualizerRouteState(
                                             track = track,
                                             preset = visualizerPreset,
-                                            showInTvFrame = showVisualizerInTvFrame,
                                             isPlaying = isPlaying,
                                             positionMs = positionMs,
-                                            useFilamentVisualizers = playbackState.useFilamentVisualizers,
                                         ),
                                         onPreset = onVisualizerPreset,
-                                        onShowInTvFrameChange = onShowVisualizerInTvFrame,
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }
@@ -971,7 +965,6 @@ internal fun DesktopPlayer(
                                             onPersistVolumeSettings = onPersistVolumeSettingsFromSettings,
                                             onAudioProcessingSettings = settingsActions.onAudioProcessingSettings,
                                             onVisualizerPreset = onVisualizerPresetFromSettings,
-                                            onShowVisualizerInTvFrame = onShowVisualizerInTvFrameFromSettings,
                                             onShowUltimateGuitarButton = onShowUltimateGuitarButtonFromSettings,
                                             onBlurredArtworkAppearance = onBlurredArtworkAppearance,
                                             onFullBleedDetailArtwork = onFullBleedDetailArtwork,
@@ -1108,7 +1101,6 @@ internal fun DesktopPlayer(
                                 persistEqualizerSettings = persistEqualizerSettings,
                                 equalizerRemoteUnavailable = equalizerRemoteUnavailable,
                                 visualizerPreset = visualizerPreset,
-                                showVisualizerInTvFrame = showVisualizerInTvFrame,
                                 showUltimateGuitarButton = playbackState.showUltimateGuitarButton,
                                 compact = compact,
                                 lyricsVisible = section == BrowseSection.Lyrics && selectedPlaylistId == null,
@@ -1129,7 +1121,6 @@ internal fun DesktopPlayer(
                                 onEqualizerReset = onEqualizerReset,
                                 onPersistEqualizerSettings = onPersistEqualizerSettings,
                                 onVisualizerPreset = onVisualizerPreset,
-                                onShowVisualizerInTvFrame = onShowVisualizerInTvFrame,
                                 onListenBrainzFeedback = onListenBrainzFeedback,
                                 onToggleUpNext = { desktopUpNextExpanded = !desktopUpNextExpanded },
                                 onCast = onCast,

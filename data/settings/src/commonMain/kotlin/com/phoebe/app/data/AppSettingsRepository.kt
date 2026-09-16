@@ -124,8 +124,11 @@ class AppSettingsRepository(
     }
 
     suspend fun setNowPlayingVisualizerInTvFrame(enabled: Boolean) {
+        // Unused: TV-frame visualizers were removed. Keep the setter for backup/compat paths.
+        @Suppress("UNUSED_PARAMETER")
+        val ignored = enabled
         updateAndSave { current ->
-            current.copy(nowPlayingVisualizerInTvFrame = enabled)
+            current.copy(nowPlayingVisualizerInTvFrame = false)
         }
     }
 
@@ -238,7 +241,7 @@ class AppSettingsRepository(
                         persistVolumeSettings = persisted.persistVolumeSettings.toDb(),
                         savedVolume = persisted.savedVolume.toDouble(),
                         equalizerProfile = json.encodeToString(persisted.equalizerProfile),
-                        nowPlayingVisualizerPreset = persisted.nowPlayingVisualizerPreset.name,
+                        nowPlayingVisualizerPreset = persisted.nowPlayingVisualizerPreset.toStoredName(),
                         nowPlayingVisualizerInTvFrame = persisted.nowPlayingVisualizerInTvFrame.toDb(),
                         showUltimateGuitarButton = persisted.showUltimateGuitarButton.toDb(),
                         blurredArtworkAppearance = persisted.blurredArtworkAppearance.toDb(),

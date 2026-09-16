@@ -4,6 +4,7 @@
 
 Pull requests targeting `main` run:
 
+- `./scripts/build-projectm.sh host` on Linux/macOS desktop test jobs (Decision 7), plus the dedicated `build-projectm.yml` matrix (desktop hosts, Android ABIs, iOS device/sim)
 - `./gradlew desktopTest` across Linux, macOS, and Windows, covering every module with a desktop target. Linux and macOS enable `-Pphoebe.realAudioTests=true`; Linux runs under `xvfb-run` with a PulseAudio null sink, while Windows keeps real-audio tests skipped.
 - `./gradlew :composeApp:wasmJsTest :playback:wasmJsTest`
 - `./gradlew :composeApp:verifyRoborazziAndroidHostTest`

@@ -95,9 +95,7 @@ internal data class PlaybackUiState(
     val persistEqualizerSettings: Boolean = false,
     val equalizerRemoteUnavailable: Boolean = false,
     val visualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
-    val showVisualizerInTvFrame: Boolean = false,
     val showUltimateGuitarButton: Boolean = true,
-    val useFilamentVisualizers: Boolean = true,
 )
 
 internal data class PlaybackActions(
@@ -118,7 +116,6 @@ internal data class PlaybackActions(
     val onPersistEqualizerSettings: (Boolean) -> Unit = {},
     val onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
     val onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
-    val onShowVisualizerInTvFrame: (Boolean) -> Unit = {},
     val onListenBrainzFeedback: (ListenBrainzFeedbackScore) -> Unit = {},
     val onPlayQueue: (Int) -> Unit,
     val onClearQueue: () -> Unit,
@@ -300,7 +297,6 @@ internal data class SettingsActions(
     val onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
     val audioProcessingCapabilities: AudioProcessingCapabilities = AudioProcessingCapabilities(),
     val onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
-    val onShowVisualizerInTvFrame: (Boolean) -> Unit = {},
     val onShowUltimateGuitarButton: (Boolean) -> Unit = {},
     val onBlurredArtworkAppearance: (Boolean) -> Unit = {},
     val onFullBleedDetailArtwork: (Boolean) -> Unit = {},

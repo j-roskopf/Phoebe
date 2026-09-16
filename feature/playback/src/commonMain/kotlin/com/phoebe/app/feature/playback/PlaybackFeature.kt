@@ -35,11 +35,9 @@ data class MobilePlaybackRouteState(
     val persistEqualizerSettings: Boolean = false,
     val equalizerRemoteUnavailable: Boolean = false,
     val visualizerPreset: NowPlayingVisualizerPreset = NowPlayingVisualizerPreset.Default,
-    val showVisualizerInTvFrame: Boolean = false,
     val showUltimateGuitarButton: Boolean = true,
     val blurredArtworkAppearance: Boolean = true,
     val tintedBackgroundGradient: Boolean = false,
-    val useFilamentVisualizers: Boolean = true,
     val handleSystemBack: Boolean = true,
     val initialUpNextExpanded: Boolean = false,
     val expansionFraction: Float = 0f,
@@ -70,7 +68,6 @@ class MobilePlaybackRouteActions(
     val onEqualizerReset: () -> Unit = {},
     val onPersistEqualizerSettings: (Boolean) -> Unit = {},
     val onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
-    val onShowVisualizerInTvFrame: (Boolean) -> Unit = {},
     val onListenBrainzFeedback: (ListenBrainzFeedbackScore) -> Unit = {},
     val onDragStart: () -> Unit = {},
     val onDrag: (Float) -> Unit = {},
@@ -102,10 +99,8 @@ class QueueRouteActions(
 data class DesktopVisualizerRouteState(
     val track: Track?,
     val preset: NowPlayingVisualizerPreset,
-    val showInTvFrame: Boolean = false,
     val isPlaying: Boolean,
     val positionMs: Long,
-    val useFilamentVisualizers: Boolean = true,
 )
 
 @Composable
@@ -134,11 +129,9 @@ fun MobilePlaybackRoute(
         persistEqualizerSettings = state.persistEqualizerSettings,
         equalizerRemoteUnavailable = state.equalizerRemoteUnavailable,
         visualizerPreset = state.visualizerPreset,
-        showVisualizerInTvFrame = state.showVisualizerInTvFrame,
         showUltimateGuitarButton = state.showUltimateGuitarButton,
         blurredArtworkAppearance = state.blurredArtworkAppearance,
         tintedBackgroundGradient = state.tintedBackgroundGradient,
-        useFilamentVisualizers = state.useFilamentVisualizers,
         onToggle = actions.onToggle,
         onPrevious = actions.onPrevious,
         onNext = actions.onNext,
@@ -160,7 +153,6 @@ fun MobilePlaybackRoute(
         onEqualizerReset = actions.onEqualizerReset,
         onPersistEqualizerSettings = actions.onPersistEqualizerSettings,
         onVisualizerPreset = actions.onVisualizerPreset,
-        onShowVisualizerInTvFrame = actions.onShowVisualizerInTvFrame,
         onListenBrainzFeedback = actions.onListenBrainzFeedback,
         onBack = actions.onBack,
         onSwipeDismiss = actions.onSwipeDismiss,
@@ -206,7 +198,6 @@ fun QueueRoute(
 fun DesktopVisualizerRoute(
     state: DesktopVisualizerRouteState,
     onPreset: (NowPlayingVisualizerPreset) -> Unit,
-    onShowInTvFrameChange: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     DesktopNowPlayingVisualizerView(
@@ -216,8 +207,5 @@ fun DesktopVisualizerRoute(
         positionMs = state.positionMs,
         onPreset = onPreset,
         modifier = modifier,
-        useFilamentVisualizers = state.useFilamentVisualizers,
-        showInTvFrame = state.showInTvFrame,
-        onShowInTvFrameChange = onShowInTvFrameChange,
     )
 }

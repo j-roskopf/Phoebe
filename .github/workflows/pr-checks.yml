@@ -60,14 +60,23 @@ jobs:
           gstreamer1.0-plugins-bad
           gstreamer1.0-plugins-ugly
           gstreamer1.0-libav
+          cmake
+          ninja-build
+          libgl1-mesa-dev
+          libglm-dev
 
       - name: Start Linux virtual audio sink
         if: matrix.os == 'linux'
         run: bash ./scripts/setup-linux-audio-ci.sh
 
-      - name: Install macOS ffmpeg
+      - name: Install macOS ffmpeg and projectM deps
         if: matrix.os == 'macos'
-        run: brew install ffmpeg
+        run: brew install ffmpeg cmake glm
+
+      - name: Build host projectM (Decision 7)
+        if: matrix.os != 'windows'
+        shell: bash
+        run: ./scripts/build-projectm.sh host
 
       - name: Fetch test audio fixtures
         if: matrix.os != 'windows'
@@ -209,6 +218,12 @@ jobs:
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: '26'
+
+      - name: Install projectM deps
+        run: brew install cmake glm
+
+      - name: Build projectM for iOS simulator
+        run: ./scripts/build-projectm.sh ios-sim
 
       - name: Set up JDK
         uses: actions/setup-java@v4

@@ -3477,10 +3477,9 @@ class DesktopAudioPlayer(
     }
 
     private fun applyJavaFxSpectrumSettings(mediaPlayer: MediaPlayer) {
-        mediaPlayer.audioSpectrumNumBands = AudioAnalysisAccumulator.DefaultBandCount
+        mediaPlayer.audioSpectrumNumBands = 32
         mediaPlayer.audioSpectrumThreshold = -80
-        mediaPlayer.audioSpectrumInterval =
-            AudioAnalysisAccumulator.DefaultPublishIntervalMs / 1_000.0
+        mediaPlayer.audioSpectrumInterval = AudioAnalysisThrottle.DefaultPublishIntervalMs / 1_000.0
     }
 
     private fun attachJavaFxSpectrumListener(mediaPlayer: MediaPlayer) {
@@ -4112,7 +4111,7 @@ private fun pcmFloatSamples(
     bytes: ByteArray,
     length: Int,
     format: AudioFormat,
-    maxSamples: Int = AudioAnalysisAccumulator.AnalysisSampleLimit,
+    maxSamples: Int = 4_096,
 ): FloatArray? {
     val safeLength = length.coerceIn(0, bytes.size)
     val frameSize = format.frameSize.takeIf { it > 0 } ?: return null

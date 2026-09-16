@@ -7,3 +7,11 @@ IPHONEOS_DEPLOYMENT_TARGET = 26.0
 
 EXCLUDED_ARCHS[sdk=iphonesimulator*] = i386 x86_64
 ARCHS[sdk=iphonesimulator*] = arm64
+
+// libprojectM static installs from scripts/build-projectm.sh ios-sim / ios-device.
+LIBRARY_SEARCH_PATHS[sdk=iphonesimulator*] = $(inherited) $(SRCROOT)/../native/projectm/ios-sim/lib
+LIBRARY_SEARCH_PATHS[sdk=iphoneos*] = $(inherited) $(SRCROOT)/../native/projectm/ios-device/lib
+HEADER_SEARCH_PATHS[sdk=iphonesimulator*] = $(inherited) $(SRCROOT)/../native/projectm/ios-sim/include
+HEADER_SEARCH_PATHS[sdk=iphoneos*] = $(inherited) $(SRCROOT)/../native/projectm/ios-device/include
+OTHER_LDFLAGS = $(inherited) -lprojectM-4 -lc++ -framework OpenGLES -framework GLKit -framework CoreVideo
+SWIFT_OBJC_BRIDGING_HEADER = iosApp/iosApp-Bridging-Header.h

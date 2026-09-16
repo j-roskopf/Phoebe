@@ -1,0 +1,6 @@
+# Kotlin/Native cinterop for libprojectM (static, OpenGLES).
+# Install paths and -DPROJECTM_STATIC_DEFINE are supplied per-target in build.gradle.kts.
+headers = projectM-4/projectM.h
+headerFilter = projectM-4/**
+package = projectm
+linkerOpts = -lprojectM-4 -lc++ -framework OpenGLES -framework GLKit -framework Foundation

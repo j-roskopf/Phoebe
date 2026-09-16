@@ -76,7 +76,7 @@ class AppSettingsRepositoryDesktopTest {
         assertTrue(restored.settings.value.persistVolumeSettings)
         assertEquals(0.42f, restored.settings.value.savedVolume)
         assertEquals(4.5f, restored.settings.value.equalizerProfile.gainsDb[7])
-        assertTrue(restored.settings.value.nowPlayingVisualizerInTvFrame)
+        assertFalse(restored.settings.value.nowPlayingVisualizerInTvFrame)
         assertFalse(restored.settings.value.showUltimateGuitarButton)
         assertFalse(restored.settings.value.blurredArtworkAppearance)
         assertFalse(restored.settings.value.fullBleedDetailArtwork)
@@ -106,10 +106,10 @@ class AppSettingsRepositoryDesktopTest {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d
 
-        AppSettingsRepository(db).setNowPlayingVisualizerPreset(NowPlayingVisualizerPreset.WireframeSpectrum3D)
+        AppSettingsRepository(db).setNowPlayingVisualizerPreset(NowPlayingVisualizerPreset.Shuffle())
         val restored = AppSettingsRepository(db).apply { restore() }
 
-        assertEquals(NowPlayingVisualizerPreset.WireframeSpectrum3D, restored.settings.value.nowPlayingVisualizerPreset)
+        assertEquals(NowPlayingVisualizerPreset.Shuffle(), restored.settings.value.nowPlayingVisualizerPreset)
     }
 
     @Test
@@ -117,7 +117,7 @@ class AppSettingsRepositoryDesktopTest {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d
 
-        AppSettingsRepository(db).setNowPlayingVisualizerPreset(NowPlayingVisualizerPreset.Plenoptic)
+        AppSettingsRepository(db).setNowPlayingVisualizerPreset(NowPlayingVisualizerPreset.Shuffle())
         d.execute(
             identifier = null,
             sql = "UPDATE AppSettingsRow SET nowPlayingVisualizerPreset = 'FuturePreset'",

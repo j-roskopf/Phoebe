@@ -24,11 +24,6 @@ const lightScenarios = ['Home', 'Library', 'Search', 'Player'] as const;
 const phoneLightScenarios = [
   ['PlayerBlurredArtworkOn', 'player-blurred-artwork-on'],
   ['PlayerBlurredArtworkOff', 'player-blurred-artwork-off'],
-  ['PlayerVisualizerAlchemy', 'player-visualizer-alchemy'],
-  ['PlayerVisualizerBattery', 'player-visualizer-battery'],
-  ['PlayerVisualizerBarsAndWaves', 'player-visualizer-bars-and-waves'],
-  ['PlayerVisualizerBlazingColors', 'player-visualizer-blazing-colors'],
-  ['PlayerVisualizerPlenoptic', 'player-visualizer-plenoptic'],
 ] as const;
 const phoneDarkScenarios = [
   ['LibraryFiveColumnGrid', 'library-five-column-grid'],

@@ -1,0 +1,151 @@
+name: Build projectM
+
+# Phase 1: CMake matrix for libprojectM (+ Phoebe JNI on JVM hosts).
+# Artifacts land under native/projectm/<target> and are uploaded for release jobs.
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "scripts/build-projectm.sh"
+      - "native/jni/**"
+      - "native/projectm/**"
+      - ".github/workflows/build-projectm.yml"
+      - "third_party/projectm/**"
+  push:
+    branches:
+      - main
+    paths:
+      - "scripts/build-projectm.sh"
+      - "native/jni/**"
+      - ".github/workflows/build-projectm.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: build-projectm-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-host:
+    name: projectM ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-latest
+          - target: macos-arm64
+            runner: macos-14
+          - target: windows-x64
+            runner: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install Linux build deps
+        if: matrix.target == 'linux-x64'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgl1-mesa-dev libglm-dev
+
+      - name: Install macOS build deps
+        if: startsWith(matrix.target, 'macos-')
+        run: brew install cmake glm
+
+      - name: Install Windows build deps
+        if: startsWith(matrix.target, 'windows-')
+        shell: pwsh
+        run: |
+          & "${env:VCPKG_INSTALLATION_ROOT}\vcpkg.exe" install glew:x64-windows
+
+      - name: Build projectM
+        shell: bash
+        run: ./scripts/build-projectm.sh "${{ matrix.target }}"
+
+      - name: Upload native libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: projectm-${{ matrix.target }}
+          if-no-files-found: error
+          path: native/projectm/${{ matrix.target }}/
+
+  android-abis:
+    name: projectM Android ${{ matrix.abi }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64, x86]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Build projectM
+        env:
+          ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: ./scripts/build-projectm.sh "android-${{ matrix.abi }}"
+
+      - name: Upload native libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: projectm-android-${{ matrix.abi }}
+          if-no-files-found: error
+          path: native/projectm/android-${{ matrix.abi }}/
+
+  ios:
+    name: projectM iOS ${{ matrix.target }}
+    runs-on: macos-14
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [ios-device, ios-sim]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: brew install cmake glm
+
+      - name: Build projectM
+        run: ./scripts/build-projectm.sh "${{ matrix.target }}"
+
+      - name: Upload native libraries
+        uses: actions/upload-artifact@v4
+        with:
+          name: projectm-${{ matrix.target }}
+          if-no-files-found: error
+          path: native/projectm/${{ matrix.target }}/
