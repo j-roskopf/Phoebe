@@ -618,7 +618,7 @@ val compileMacMediaKeysNative = tasks.register<Exec>("compileMacMediaKeysNative"
     }
 }
 
-val syncMacMediaKeyResources = tasks.register<Sync>("syncMacMediaKeyResources") {
+val syncMacMediaKeyResources = tasks.register<Copy>("syncMacMediaKeyResources") {
     onlyIf { System.getProperty("os.name").lowercase().contains("mac") }
     dependsOn(compileMacMediaKeysNative)
     from(layout.buildDirectory.file("native/macos/libPhoebeMediaKeys.dylib"))
@@ -626,17 +626,44 @@ val syncMacMediaKeyResources = tasks.register<Sync>("syncMacMediaKeyResources") 
 }
 
 tasks.named("compileKotlinDesktop") { dependsOn(compileMacMediaKeysNative) }
+
+// Bundle the projectM shared libraries (and the Phoebe JNI shim) into packaged
+// desktop apps. Dev runs point at native/projectm/<target>/lib directly; jpackage
+// builds have no such working directory, so without this the released app can't
+// find libprojectM and falls back to artwork.
+//
+// Compose copies a top-level `<os>-<arch>` resource directory flat into the app's
+// resources dir, next to libPhoebeMediaKeys.dylib, which is where the runtime
+// resolver looks.
+val syncProjectMResources = tasks.register<Copy>("syncProjectMResources") {
+    val projectMLib = rootProject.layout.projectDirectory
+        .dir("native/projectm/$composeDesktopTarget/lib")
+        .asFile
+    onlyIf { projectMLib.isDirectory }
+    from(projectMLib) {
+        include("*.dylib", "*.so", "*.dll")
+    }
+    into(macMediaKeysAppResources.map { it.dir(composeDesktopTarget) })
+}
+
 tasks.matching {
     it.name in setOf(
         "prepareAppResources",
         "createDistributable",
+        "createReleaseDistributable",
         "runDistributable",
         "packageDmg",
+        "packageReleaseDmg",
         "packagePkg",
+        "packageReleasePkg",
         "packageDeb",
+        "packageReleaseDeb",
+        "packageMsi",
+        "packageReleaseMsi",
     )
 }.configureEach {
     dependsOn(syncMacMediaKeyResources)
+    dependsOn(syncProjectMResources)
 }
 
 val desktopDevRunTaskNames = setOf("run", "hotRunDesktop", "hotDevDesktop", "desktopRunHot")

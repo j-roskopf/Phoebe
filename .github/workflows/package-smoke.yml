@@ -120,6 +120,35 @@ jobs:
           "PHOEBE_SMOKE_DIR=$smokeDir" >> $env:GITHUB_ENV
           "PHOEBE_SMOKE_FIXTURE=$smokeFixture" >> $env:GITHUB_ENV
 
+      - name: Install projectM build deps (Linux)
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgl1-mesa-dev libglm-dev
+
+      - name: Build projectM (Linux)
+        if: matrix.os == 'linux'
+        run: ./scripts/build-projectm.sh linux-x64
+
+      - name: Install projectM build deps (macOS)
+        if: matrix.os == 'macos'
+        run: brew install cmake glm
+
+      - name: Build projectM (macOS)
+        if: matrix.os == 'macos'
+        run: ./scripts/build-projectm.sh macos-arm64
+
+      - name: Install projectM build deps (Windows)
+        if: matrix.os == 'windows'
+        shell: pwsh
+        run: |
+          & "${env:VCPKG_INSTALLATION_ROOT}\vcpkg.exe" install glew:x64-windows
+
+      - name: Build projectM (Windows)
+        if: matrix.os == 'windows'
+        shell: bash
+        run: ./scripts/build-projectm.sh windows-x64
+
       - name: Build Unix release distributable
         if: matrix.os != 'windows'
         run: ./gradlew :composeApp:createReleaseDistributable
@@ -232,6 +261,23 @@ jobs:
 
       - name: Fetch test audio fixtures
         run: ./scripts/fetch-test-audio.sh
+
+      - name: Install projectM build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Build projectM for Android
+        shell: bash
+        env:
+          ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: ./scripts/build-projectm.sh android-x86_64
 
       - name: Build release APK
         run: ./gradlew :androidApp:assembleRelease

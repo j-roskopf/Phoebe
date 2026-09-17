@@ -137,6 +137,9 @@ class ProjectMGlPanel(
 
                 val buffer = pixelBuffer ?: return
                 buffer.clear()
+                // projectM only rebinds the draw target; make sure the read target is
+                // still our FBO before pulling the composited frame back out.
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo)
                 glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buffer)
                 glBindFramebuffer(GL_FRAMEBUFFER, 0)
                 // Keep the on-screen canvas black; Compose Image presents the frame.
@@ -323,6 +326,13 @@ class ProjectMGlPanel(
             val srcRow = (h - 1 - y) * stride
             val dstRow = y * stride
             System.arraycopy(src, srcRow, flipped, dstRow, stride)
+        }
+        // projectM's FBO leaves alpha undefined (often 0); force opaque so the
+        // Compose Image is visible instead of blending to transparent.
+        var i = 3
+        while (i < flipped.size) {
+            flipped[i] = 0xFF.toByte()
+            i += 4
         }
         val image = Image.makeRaster(
             imageInfo = ImageInfo(w, h, ColorType.RGBA_8888, ColorAlphaType.OPAQUE),

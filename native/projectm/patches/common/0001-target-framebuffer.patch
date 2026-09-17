@@ -2,15 +2,17 @@ diff --git a/src/libprojectM/ProjectM.cpp b/src/libprojectM/ProjectM.cpp
 index 88fa014..e6f87fb 100644
 --- a/src/libprojectM/ProjectM.cpp
 +++ b/src/libprojectM/ProjectM.cpp
-@@ -98,6 +98,14 @@ void ProjectM::RenderFrame()
+@@ -98,6 +98,16 @@ void ProjectM::RenderFrame()
          return;
      }
  
 +    // Remember the framebuffer the host had bound on entry so the final composite
 +    // below can target it. iOS/CAEAGLLayer has no usable default framebuffer: FBO 0
 +    // is permanently incomplete there, so compositing into it silently drops the
-+    // frame and raises GL_INVALID_FRAMEBUFFER_OPERATION. Hosts that render to the
-+    // window (desktop GL, Android EGL) have 0 bound here, so behaviour is unchanged.
++    // frame and raises GL_INVALID_FRAMEBUFFER_OPERATION. The desktop host also renders
++    // into a texture FBO and reads it back, so compositing into FBO 0 there yields a
++    // black surface. Hosts that draw straight to the window (Android EGL) bind FBO 0
++    // on entry, so their behaviour is unchanged.
 +    GLint targetFramebuffer = 0;
 +    glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &targetFramebuffer);
 +

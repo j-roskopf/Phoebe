@@ -36,25 +36,39 @@ ensure_sources() {
 }
 
 # v4.1.7 rejects iOS GLES at configure time and assumes Linux GLES headers.
-# Apply Phoebe overlays so ios-sim / ios-device can build static OpenGLES libs.
-apply_ios_patches() {
-  case "$TARGET" in
-    ios-*) ;;
-    *) return 0 ;;
-  esac
-  local patch_dir="${ROOT}/native/projectm/patches/ios"
-  if [[ ! -d "$patch_dir" ]]; then
-    echo "ERROR: missing iOS projectM patches at ${patch_dir}"
+# Apply Phoebe overlays so every host gets the target-framebuffer hook and
+# ios-sim / ios-device can build static OpenGLES libs.
+apply_patches() {
+  local common_dir="${ROOT}/native/projectm/patches/common"
+  local ios_dir="${ROOT}/native/projectm/patches/ios"
+  if [[ ! -d "$common_dir" ]]; then
+    echo "ERROR: missing projectM patches at ${common_dir}"
     exit 1
   fi
+
   # Reset patched files so re-runs stay idempotent when patches change.
   git -C "${SRC}" checkout -f -- \
     CMakeLists.txt \
     src/libprojectM/ProjectM.cpp \
     src/libprojectM/projectM-opengl.h \
     vendor/SOIL2/SOIL2.c
+
   local patch
-  for patch in "${patch_dir}"/*.patch; do
+  for patch in "${common_dir}"/*.patch; do
+    [[ -f "$patch" ]] || continue
+    echo "Applying projectM common patch: $(basename "$patch")"
+    git -C "${SRC}" apply "$patch"
+  done
+
+  case "$TARGET" in
+    ios-*) ;;
+    *) return 0 ;;
+  esac
+  if [[ ! -d "$ios_dir" ]]; then
+    echo "ERROR: missing iOS projectM patches at ${ios_dir}"
+    exit 1
+  fi
+  for patch in "${ios_dir}"/*.patch; do
     [[ -f "$patch" ]] || continue
     echo "Applying iOS GLES patch: $(basename "$patch")"
     git -C "${SRC}" apply "$patch"
@@ -104,6 +118,16 @@ compile_jni() {
         -L"${INSTALL}/lib" -lprojectM-4 \
         -o "${out_dir}/PhoebeProjectM.dll" \
         "${src}" || echo "WARN: Windows JNI compile skipped"
+      # projectM's OpenGL Core Windows build links GLEW dynamically; ship its
+      # runtime DLL beside the others so packaged apps can load projectM-4.dll.
+      local vcpkg_root="${VCPKG_INSTALLATION_ROOT:-}"
+      local vcpkg_triplet="${VCPKG_TARGET_TRIPLET:-x64-windows}"
+      if [[ -n "$vcpkg_root" && -d "${vcpkg_root}/installed/${vcpkg_triplet}/bin" ]]; then
+        for dll in "${vcpkg_root}/installed/${vcpkg_triplet}/bin/"*.dll; do
+          [[ -f "$dll" ]] || continue
+          cp -f "$dll" "${out_dir}/"
+        done
+      fi
       ;;
     android-*)
       compile_android_jni "${TARGET#android-}" "${out_dir}" "${src}" "${java_home}"
@@ -167,7 +191,7 @@ INSTALL="${ROOT}/native/projectm/${TARGET}"
 BUILD="${SRC}/build-${TARGET}"
 
 ensure_sources
-apply_ios_patches
+apply_patches
 
 CMAKE_ARGS=(
   -S "${SRC}"
