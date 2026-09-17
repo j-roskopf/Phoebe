@@ -47,16 +47,15 @@ internal class VisualizerSpectrumPcmSynth(
         if (frames <= 0) return null
 
         val amplitudes = FloatArray(magnitudesDb.size)
-        var energy = 0.0
         for (band in magnitudesDb.indices) {
             val db = magnitudesDb[band]
             val linear = if (db.isFinite()) 10.0.pow(db.coerceIn(MinDb, MaxDb) / 20.0) else 0.0
-            val amplitude = if (linear < SilenceFloor) 0f else linear.toFloat()
-            amplitudes[band] = amplitude
-            energy += (amplitude * amplitude).toDouble()
+            amplitudes[band] = if (linear < SilenceFloor) 0f else linear.toFloat()
         }
-        // Keep the summed oscillators inside [-1, 1] without flattening quiet passages.
-        val normalization = if (energy <= 1e-9) 0f else (1.0 / kotlin.math.sqrt(energy)).toFloat()
+        // Keep the summed oscillators bounded without cancelling the input level: a
+        // fixed 1/sqrt(bandCount) headroom preserves quiet-vs-loud dynamics, while
+        // dividing by the live energy would normalize every passage to full scale.
+        val normalization = (1.0 / kotlin.math.sqrt(amplitudes.size.toDouble())).toFloat()
 
         val stereo = FloatArray(frames * 2)
         for (frame in 0 until frames) {

@@ -118,6 +118,16 @@ compile_jni() {
         -L"${INSTALL}/lib" -lprojectM-4 \
         -o "${out_dir}/PhoebeProjectM.dll" \
         "${src}" || echo "WARN: Windows JNI compile skipped"
+      # projectM's OpenGL Core Windows build links GLEW dynamically; ship its
+      # runtime DLL beside the others so packaged apps can load projectM-4.dll.
+      local vcpkg_root="${VCPKG_INSTALLATION_ROOT:-}"
+      local vcpkg_triplet="${VCPKG_TARGET_TRIPLET:-x64-windows}"
+      if [[ -n "$vcpkg_root" && -d "${vcpkg_root}/installed/${vcpkg_triplet}/bin" ]]; then
+        for dll in "${vcpkg_root}/installed/${vcpkg_triplet}/bin/"*.dll; do
+          [[ -f "$dll" ]] || continue
+          cp -f "$dll" "${out_dir}/"
+        done
+      fi
       ;;
     android-*)
       compile_android_jni "${TARGET#android-}" "${out_dir}" "${src}" "${java_home}"

@@ -916,9 +916,12 @@ abstract class SimpleAudioPlayer(
         // Hosts with a real PCM tap (Linux Pulse/ffmpeg, Android/iOS decoders) publish
         // to VisualizerPcmBus directly. JavaFX on macOS/Windows has no PCM tap, so
         // rebuild an approximate time-domain block from the spectrum it does give us;
-        // without it projectM/Butterchurn receive silence and render black.
-        spectrumPcmSynth.render(magnitudesDb, timestampMs)?.let { samples ->
-            VisualizerPcmBus.publish(samples, channels = 2, sampleRateHz = spectrumPcmSynth.rateHz)
+        // without it projectM/Butterchurn receive silence and render black. Skip the
+        // synthesis (oscillators + buffers) when no visualizer surface is mounted.
+        if (VisualizerPcmBus.sinkCount() > 0) {
+            spectrumPcmSynth.render(magnitudesDb, timestampMs)?.let { samples ->
+                VisualizerPcmBus.publish(samples, channels = 2, sampleRateHz = spectrumPcmSynth.rateHz)
+            }
         }
         // Spectrum path kept only for amplitude chrome; band FFT deleted (Decision 10).
         if (!canPublishAudioAnalysis(timestampMs)) return
