@@ -54,6 +54,7 @@ abstract class SimpleAudioPlayer(
     private val mutableAudioAnalysis = MutableStateFlow(AudioAnalysisFrame.Empty)
     override val audioAnalysis: StateFlow<AudioAnalysisFrame> = mutableAudioAnalysis
     private val audioAnalysisThrottle = AudioAnalysisThrottle()
+    private val spectrumPcmSynth = VisualizerSpectrumPcmSynth()
     private var progressJob: Job? = null
     private var playbackStartupJob: Job? = null
     private var preferUnityOutputVolume = false
@@ -912,6 +913,13 @@ abstract class SimpleAudioPlayer(
         source: AudioAnalysisSource = AudioAnalysisSource.Spectrum,
         timestampMs: Long = currentTimeMs(),
     ) {
+        // Hosts with a real PCM tap (Linux Pulse/ffmpeg, Android/iOS decoders) publish
+        // to VisualizerPcmBus directly. JavaFX on macOS/Windows has no PCM tap, so
+        // rebuild an approximate time-domain block from the spectrum it does give us;
+        // without it projectM/Butterchurn receive silence and render black.
+        spectrumPcmSynth.render(magnitudesDb, timestampMs)?.let { samples ->
+            VisualizerPcmBus.publish(samples, channels = 2, sampleRateHz = spectrumPcmSynth.rateHz)
+        }
         // Spectrum path kept only for amplitude chrome; band FFT deleted (Decision 10).
         if (!canPublishAudioAnalysis(timestampMs)) return
         val maxMagnitude = magnitudesDb.maxOrNull() ?: return
@@ -928,6 +936,7 @@ abstract class SimpleAudioPlayer(
 
     protected fun resetAudioAnalysis() {
         audioAnalysisThrottle.reset()
+        spectrumPcmSynth.reset()
         mutableAudioAnalysis.value = AudioAnalysisFrame.Empty.copy(timestampMs = currentTimeMs())
     }
 

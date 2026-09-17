@@ -36,25 +36,39 @@ ensure_sources() {
 }
 
 # v4.1.7 rejects iOS GLES at configure time and assumes Linux GLES headers.
-# Apply Phoebe overlays so ios-sim / ios-device can build static OpenGLES libs.
-apply_ios_patches() {
-  case "$TARGET" in
-    ios-*) ;;
-    *) return 0 ;;
-  esac
-  local patch_dir="${ROOT}/native/projectm/patches/ios"
-  if [[ ! -d "$patch_dir" ]]; then
-    echo "ERROR: missing iOS projectM patches at ${patch_dir}"
+# Apply Phoebe overlays so every host gets the target-framebuffer hook and
+# ios-sim / ios-device can build static OpenGLES libs.
+apply_patches() {
+  local common_dir="${ROOT}/native/projectm/patches/common"
+  local ios_dir="${ROOT}/native/projectm/patches/ios"
+  if [[ ! -d "$common_dir" ]]; then
+    echo "ERROR: missing projectM patches at ${common_dir}"
     exit 1
   fi
+
   # Reset patched files so re-runs stay idempotent when patches change.
   git -C "${SRC}" checkout -f -- \
     CMakeLists.txt \
     src/libprojectM/ProjectM.cpp \
     src/libprojectM/projectM-opengl.h \
     vendor/SOIL2/SOIL2.c
+
   local patch
-  for patch in "${patch_dir}"/*.patch; do
+  for patch in "${common_dir}"/*.patch; do
+    [[ -f "$patch" ]] || continue
+    echo "Applying projectM common patch: $(basename "$patch")"
+    git -C "${SRC}" apply "$patch"
+  done
+
+  case "$TARGET" in
+    ios-*) ;;
+    *) return 0 ;;
+  esac
+  if [[ ! -d "$ios_dir" ]]; then
+    echo "ERROR: missing iOS projectM patches at ${ios_dir}"
+    exit 1
+  fi
+  for patch in "${ios_dir}"/*.patch; do
     [[ -f "$patch" ]] || continue
     echo "Applying iOS GLES patch: $(basename "$patch")"
     git -C "${SRC}" apply "$patch"
@@ -167,7 +181,7 @@ INSTALL="${ROOT}/native/projectm/${TARGET}"
 BUILD="${SRC}/build-${TARGET}"
 
 ensure_sources
-apply_ios_patches
+apply_patches
 
 CMAKE_ARGS=(
   -S "${SRC}"

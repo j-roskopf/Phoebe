@@ -105,11 +105,15 @@ fun resolveProjectMLibraryDir(): File {
         os.contains("win") -> "windows-x64"
         else -> "linux-$arch"
     }
-    val candidates = listOf(
-        File("native/projectm/$target/lib"),
-        File("../native/projectm/$target/lib"),
-        File(System.getProperty("user.dir"), "native/projectm/$target/lib"),
-    )
+    val candidates = buildList {
+        // Packaged apps bundle the libraries flat in the jpackage resources dir.
+        System.getProperty("compose.application.resources.dir")
+            ?.takeIf { it.isNotBlank() }
+            ?.let { add(File(it)) }
+        add(File("native/projectm/$target/lib"))
+        add(File("../native/projectm/$target/lib"))
+        add(File(System.getProperty("user.dir"), "native/projectm/$target/lib"))
+    }
     val found = candidates.firstOrNull { dir ->
         dir.isDirectory && dir.listFiles()?.any { it.name.contains("PhoebeProjectM") } == true
     }

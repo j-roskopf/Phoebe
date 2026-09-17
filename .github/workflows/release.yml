@@ -210,6 +210,26 @@ jobs:
             exit 1
           fi
 
+      - name: Install projectM build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build
+
+      - name: Set up Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r27c
+
+      - name: Build projectM for Android ABIs
+        shell: bash
+        env:
+          ANDROID_NDK: ${{ steps.setup-ndk.outputs.ndk-path }}
+        run: |
+          for abi in arm64-v8a armeabi-v7a x86_64 x86; do
+            ./scripts/build-projectm.sh "android-${abi}"
+          done
+
       - name: Configure Android signing
         shell: bash
         run: |
@@ -292,6 +312,14 @@ jobs:
             echo "::error::Missing required Linux release secrets: ${missing[*]}"
             exit 1
           fi
+
+      - name: Install projectM build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libgl1-mesa-dev libglm-dev
+
+      - name: Build projectM
+        run: ./scripts/build-projectm.sh linux-x64
 
       - name: Build Linux package
         run: >
@@ -389,6 +417,15 @@ jobs:
             Write-Error "Missing required Windows release secrets: $($missing -join ', ')"
             exit 1
           }
+
+      - name: Install projectM build deps
+        shell: pwsh
+        run: |
+          & "${env:VCPKG_INSTALLATION_ROOT}\vcpkg.exe" install glew:x64-windows
+
+      - name: Build projectM
+        shell: bash
+        run: ./scripts/build-projectm.sh windows-x64
 
       - name: Build Windows package
         shell: pwsh
@@ -551,6 +588,14 @@ jobs:
             echo "compose.desktop.mac.signing.identity=${jpackage_signing_identity}"
             echo "compose.desktop.mac.signing.keychain=${keychain_path}"
           } >> "${HOME}/.gradle/gradle.properties"
+
+      - name: Install projectM build deps
+        shell: bash
+        run: brew install cmake glm
+
+      - name: Build projectM
+        shell: bash
+        run: ./scripts/build-projectm.sh macos-arm64
 
       - name: Build macOS package
         shell: bash
