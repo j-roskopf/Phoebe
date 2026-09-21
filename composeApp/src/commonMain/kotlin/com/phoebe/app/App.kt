@@ -39,6 +39,7 @@ import com.phoebe.app.telemetry.Telemetry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -56,6 +57,30 @@ private const val HomeScreenLayoutModeFile = "home_screen_layout_mode"
  * dispatcher is wedged, and rendering with defaults beats showing nothing indefinitely.
  */
 private const val AppearanceLoadTimeoutMs = 5_000L
+
+/**
+ * Load the stored appearance preferences, allowing [timeoutMs] for them to land.
+ *
+ * The read is started on [scope] and then awaited separately: a timeout around the read itself
+ * would not help, because `withTimeoutOrNull` cancels cooperatively and a blocking `File.readText`
+ * inside `Dispatchers.IO` cannot be interrupted. Awaiting a `Deferred` *is* cancellable, so the
+ * timeout always returns; on expiry the read is abandoned and defaults are rendered instead of
+ * leaving the app on the bootstrap screen forever.
+ */
+private suspend fun loadStoredAppearance(
+    scope: CoroutineScope,
+    storage: PlatformStorage,
+    timeoutMs: Long,
+): StoredAppearance? {
+    val pending = scope.async {
+        runCatching { readStoredAppearance(storage) }
+            .onFailure { error ->
+                PhoebeLog.d("App") { "Appearance preferences failed to load: ${error.logDetail()}" }
+            }
+            .getOrNull()
+    }
+    return withTimeoutOrNull(timeoutMs) { pending.await() }
+}
 
 private class StoredAppearance(
     val useLightAppearance: Boolean,
@@ -208,13 +233,11 @@ fun App(
                 PhoebeLog.d("App") { "installPlatformPlayback failed: ${error.logDetail()}" }
             }
 
-        val stored = withTimeoutOrNull(AppearanceLoadTimeoutMs) {
-            runCatching { readStoredAppearance(readyDependencies.platformStorage) }
-                .onFailure { error ->
-                    PhoebeLog.d("App") { "Appearance preferences failed to load: ${error.logDetail()}" }
-                }
-                .getOrNull()
-        }
+        val stored = loadStoredAppearance(
+            scope = stateScope,
+            storage = readyDependencies.platformStorage,
+            timeoutMs = AppearanceLoadTimeoutMs,
+        )
         if (stored == null) {
             PhoebeLog.d("App") { "Appearance preferences unavailable; starting with defaults" }
         }
