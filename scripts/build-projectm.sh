@@ -126,11 +126,17 @@ compile_jni() {
         glew_cflags+=(-I"${vcpkg_root}/installed/${vcpkg_triplet}/include")
         glew_ldflags+=(-L"${vcpkg_root}/installed/${vcpkg_triplet}/lib" -lglew32)
       fi
+      local jni_out="${out_dir}/PhoebeProjectM.dll"
+      # Drop any shim from a previous install first: a failed compile below is
+      # downgraded to a warning, and a stale DLL would still satisfy the
+      # required-file check while lacking newer JNI entry points (e.g.
+      # nativeInitGlLoader), shipping a visualizer that dies at runtime.
+      rm -f "${jni_out}"
       clang -shared \
         -I"${java_home}/include" -I"${java_home}/include/win32" \
         -I"${INSTALL}/include" \
         "${glew_cflags[@]}" \
-        -o "${out_dir}/PhoebeProjectM.dll" \
+        -o "${jni_out}" \
         "${src}" \
         -L"${INSTALL}/lib" -lprojectM-4 \
         "${glew_ldflags[@]}" || echo "WARN: Windows JNI compile skipped"
