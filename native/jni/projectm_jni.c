@@ -8,8 +8,38 @@
 
 #include <projectM-4/projectM.h>
 
+#if defined(_WIN32)
+/* projectM's Windows build includes <GL/glew.h> and calls through GLEW's
+ * function pointers. The host must glewInit() after the context is current —
+ * LWJGL's GL.createCapabilities() does not initialize GLEW, and leaving the
+ * pointers NULL access-violates on the first projectM GL call. */
+# include <GL/glew.h>
+#endif
+
 static projectm_handle handle_from(jlong ptr) {
     return (projectm_handle)(uintptr_t)ptr;
+}
+
+/**
+ * Initialize the platform GL loader projectM was built against.
+ * Windows: glewInit (required for core-profile contexts). Other hosts: no-op.
+ * Must run with a current GL context, before the first projectm_create().
+ */
+JNIEXPORT jboolean JNICALL
+Java_com_phoebe_app_feature_playback_ProjectMNative_nativeInitGlLoader(
+    JNIEnv *env, jclass clazz) {
+    (void)env;
+    (void)clazz;
+#if defined(_WIN32)
+    glewExperimental = GL_TRUE;
+    GLenum err = glewInit();
+    /* Known GLEW quirk on core profiles: glewInit can raise GL_INVALID_ENUM. */
+    while (glGetError() != GL_NO_ERROR) {
+    }
+    return err == GLEW_OK ? JNI_TRUE : JNI_FALSE;
+#else
+    return JNI_TRUE;
+#endif
 }
 
 JNIEXPORT jlong JNICALL

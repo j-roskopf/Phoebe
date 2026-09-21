@@ -96,23 +96,36 @@ class ProjectMGlPanel(
         ProjectMNative.ensureLoaded(libraryDir.absolutePath)
         VisualizerPcmBus.addSink(this)
         val data = GLData().apply {
+            // projectM needs glGenSamplers (OpenGL 3.3); core profile matches its
+            // Windows GLEW build. Requesting 3.2 left sampler entry points missing.
             majorVersion = 3
-            minorVersion = 2
+            minorVersion = 3
             profile = GLData.Profile.CORE
             doubleBuffer = true
             swapInterval = 1
         }
         canvas = object : AWTGLCanvas(data) {
             override fun initGL() {
-                GL.createCapabilities()
-                val ptr = ProjectMNative.nativeCreate()
-                check(ptr != 0L) { "projectm_create failed — is an OpenGL 3+ context current?" }
-                handle.set(ptr)
-                ProjectMNative.nativeSetFps(ptr, 60)
-                ProjectMNative.nativeSetPresetDuration(ptr, 20.0)
-                applyPreset(ptr, force = true)
-                ProjectMNative.nativeSetPresetLocked(ptr, locked.get())
-                glReady.set(true)
+                val ready = runCatching {
+                    GL.createCapabilities()
+                    // Windows projectM is built against GLEW; LWJGL does not init it.
+                    check(ProjectMNative.nativeInitGlLoader()) {
+                        "glewInit failed — projectM cannot resolve OpenGL entry points"
+                    }
+                    val ptr = ProjectMNative.nativeCreate()
+                    check(ptr != 0L) { "projectm_create failed — is an OpenGL 3.3+ context current?" }
+                    handle.set(ptr)
+                    ProjectMNative.nativeSetFps(ptr, 60)
+                    ProjectMNative.nativeSetPresetDuration(ptr, 20.0)
+                    applyPreset(ptr, force = true)
+                    ProjectMNative.nativeSetPresetLocked(ptr, locked.get())
+                    true
+                }.getOrElse { error ->
+                    System.err.println("projectM initGL failed: ${error.message}")
+                    ProjectMHostGate.markFailed()
+                    false
+                }
+                glReady.set(ready)
             }
 
             override fun paintGL() {
@@ -182,6 +195,7 @@ class ProjectMGlPanel(
                 .onFailure { error ->
                     System.err.println("projectM render failed: ${error.message}")
                     animator.stop()
+                    ProjectMHostGate.markFailed()
                 }
         }
         animator.isRepeats = true

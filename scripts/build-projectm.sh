@@ -116,20 +116,31 @@ compile_jni() {
         -L"${INSTALL}/lib" -lprojectM-4
       ;;
     windows-*)
+      # PhoebeProjectM calls glewInit on Windows (see projectm_jni.c); link GLEW
+      # explicitly and pass its headers/libs from vcpkg.
+      local vcpkg_root="${VCPKG_INSTALLATION_ROOT:-}"
+      local vcpkg_triplet="${VCPKG_TARGET_TRIPLET:-x64-windows}"
+      local glew_cflags=()
+      local glew_ldflags=()
+      if [[ -n "$vcpkg_root" ]]; then
+        glew_cflags+=(-I"${vcpkg_root}/installed/${vcpkg_triplet}/include")
+        glew_ldflags+=(-L"${vcpkg_root}/installed/${vcpkg_triplet}/lib" -lglew32)
+      fi
       clang -shared \
         -I"${java_home}/include" -I"${java_home}/include/win32" \
         -I"${INSTALL}/include" \
+        "${glew_cflags[@]}" \
         -o "${out_dir}/PhoebeProjectM.dll" \
         "${src}" \
-        -L"${INSTALL}/lib" -lprojectM-4 || echo "WARN: Windows JNI compile skipped"
+        -L"${INSTALL}/lib" -lprojectM-4 \
+        "${glew_ldflags[@]}" || echo "WARN: Windows JNI compile skipped"
       # projectM's OpenGL Core Windows build links GLEW dynamically; ship its
       # runtime DLL beside the others so packaged apps can load projectM-4.dll.
-      local vcpkg_root="${VCPKG_INSTALLATION_ROOT:-}"
-      local vcpkg_triplet="${VCPKG_TARGET_TRIPLET:-x64-windows}"
       if [[ -n "$vcpkg_root" && -d "${vcpkg_root}/installed/${vcpkg_triplet}/bin" ]]; then
-        for dll in "${vcpkg_root}/installed/${vcpkg_triplet}/bin/"*.dll; do
-          [[ -f "$dll" ]] || continue
-          cp -f "$dll" "${out_dir}/"
+        for dll in glew32.dll; do
+          local src_dll="${vcpkg_root}/installed/${vcpkg_triplet}/bin/${dll}"
+          [[ -f "$src_dll" ]] || continue
+          cp -f "$src_dll" "${out_dir}/"
         done
       fi
       ;;

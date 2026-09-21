@@ -39,7 +39,4 @@ class ProjectMSmokeTest {
             panel.disposeNative()
         }
     }
-
-    private fun resolveProjectMLibraryDirOrNull(): File? =
-        runCatching { resolveProjectMLibraryDir() }.getOrNull()
 }
