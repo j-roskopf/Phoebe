@@ -8,7 +8,7 @@ actual object ProjectMRenderer {
      * the host then threw out of composition instead of falling back to artwork.
      */
     actual fun isNativeAvailable(): Boolean =
-        runCatching { resolveProjectMLibraryDir() }.getOrNull()?.let { dir ->
+        resolveProjectMLibraryDirOrNull()?.let { dir ->
             dir.listFiles()?.any { it.name.contains("PhoebeProjectM") || it.name.contains("projectM") } == true
         } == true
 }

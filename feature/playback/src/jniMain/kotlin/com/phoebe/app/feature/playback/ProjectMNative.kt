@@ -114,6 +114,12 @@ object ProjectMNative {
         }
     }
 
+    /**
+     * Platform GL loader init (Windows: glewInit). Call with a current context
+     * before [nativeCreate]; no-op elsewhere.
+     */
+    external fun nativeInitGlLoader(): Boolean
+
     external fun nativeCreate(): Long
     external fun nativeDestroy(ptr: Long)
     external fun nativeSetWindowSize(ptr: Long, width: Int, height: Int)
