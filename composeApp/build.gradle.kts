@@ -636,13 +636,23 @@ tasks.named("compileKotlinDesktop") { dependsOn(compileMacMediaKeysNative) }
 // resources dir, next to libPhoebeMediaKeys.dylib, which is where the runtime
 // resolver looks.
 val syncProjectMResources = tasks.register<Copy>("syncProjectMResources") {
-    val projectMLib = rootProject.layout.projectDirectory
-        .dir("native/projectm/$composeDesktopTarget/lib")
+    val projectMRoot = rootProject.layout.projectDirectory
+        .dir("native/projectm/$composeDesktopTarget")
         .asFile
-    onlyIf { projectMLib.isDirectory }
+    val projectMLib = projectMRoot.resolve("lib")
+    // Windows CMake installs the runtime DLL to bin/ and only the import lib to lib/, so a
+    // lib-only copy ships PhoebeProjectM.dll without the projectM-4.dll it imports.
+    val projectMBin = projectMRoot.resolve("bin")
+    onlyIf { projectMLib.isDirectory || projectMBin.isDirectory }
     from(projectMLib) {
         include("*.dylib", "*.so", "*.dll")
     }
+    from(projectMBin) {
+        include("*.dll")
+    }
+    // build-projectm.sh flattens bin/ into lib/, so the same DLL can appear in both. lib/ is
+    // the canonical copy; take it and drop the duplicate.
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     into(macMediaKeysAppResources.map { it.dir(composeDesktopTarget) })
 }
 
@@ -694,6 +704,15 @@ tasks.withType<JavaExec>().configureEach {
                     "LD_LIBRARY_PATH",
                     if (existingLd.isNullOrBlank()) projectMLib.absolutePath
                     else "${projectMLib.absolutePath}:$existingLd",
+                )
+            } else if (System.getProperty("os.name").lowercase().contains("win")) {
+                // Windows resolves a DLL's own imports off PATH, not off the directory it was
+                // loaded from, so GLEW beside projectM-4.dll is otherwise unreachable.
+                val existingPath = environment["PATH"] as String? ?: System.getenv("PATH")
+                environment(
+                    "PATH",
+                    if (existingPath.isNullOrBlank()) projectMLib.absolutePath
+                    else "${projectMLib.absolutePath};$existingPath",
                 )
             }
         }

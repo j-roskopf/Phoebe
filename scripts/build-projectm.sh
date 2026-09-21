@@ -92,32 +92,36 @@ compile_jni() {
   local out_dir="${INSTALL}/lib"
   mkdir -p "${out_dir}"
   local src="${ROOT}/native/jni/projectm_jni.c"
+  # The source file must precede -lprojectM-4 on every link line. GNU ld resolves inputs
+  # left to right, so with the source last there are no pending projectM references when
+  # it reaches the library, and Ubuntu's default --as-needed drops it: the shim then loads
+  # fine but leaves every projectm_* symbol undefined and dies on the first render call.
   case "$TARGET" in
     macos-*)
       clang -shared -fPIC \
         -I"${java_home}/include" -I"${java_home}/include/darwin" \
         -I"${INSTALL}/include" \
-        -L"${INSTALL}/lib" -lprojectM-4 \
         -Wl,-rpath,@loader_path \
         -o "${out_dir}/libPhoebeProjectM.dylib" \
-        "${src}"
+        "${src}" \
+        -L"${INSTALL}/lib" -lprojectM-4
       ;;
     linux-*)
       gcc -shared -fPIC \
         -I"${java_home}/include" -I"${java_home}/include/linux" \
         -I"${INSTALL}/include" \
-        -L"${INSTALL}/lib" -lprojectM-4 \
         -Wl,-rpath,'$ORIGIN' \
         -o "${out_dir}/libPhoebeProjectM.so" \
-        "${src}"
+        "${src}" \
+        -L"${INSTALL}/lib" -lprojectM-4
       ;;
     windows-*)
       clang -shared \
         -I"${java_home}/include" -I"${java_home}/include/win32" \
         -I"${INSTALL}/include" \
-        -L"${INSTALL}/lib" -lprojectM-4 \
         -o "${out_dir}/PhoebeProjectM.dll" \
-        "${src}" || echo "WARN: Windows JNI compile skipped"
+        "${src}" \
+        -L"${INSTALL}/lib" -lprojectM-4 || echo "WARN: Windows JNI compile skipped"
       # projectM's OpenGL Core Windows build links GLEW dynamically; ship its
       # runtime DLL beside the others so packaged apps can load projectM-4.dll.
       local vcpkg_root="${VCPKG_INSTALLATION_ROOT:-}"
@@ -270,8 +274,34 @@ else
   cmake --build "${BUILD}" --target install --config Release -j"${JOBS}"
 fi
 
+# On Windows CMake splits the shared library: the import lib goes to lib/ but the runtime
+# DLL goes to bin/ (projectM's PROJECTM_RUNTIME_DIR). Everything downstream — the runtime
+# loader, syncProjectMResources, the release packaging — resolves a single directory, so
+# flatten the DLLs into lib/ and keep that the one place to look.
+case "$TARGET" in
+  windows-*)
+    if [[ -d "${INSTALL}/bin" ]]; then
+      mkdir -p "${INSTALL}/lib"
+      find "${INSTALL}/bin" -maxdepth 1 -name '*.dll' -exec cp -f {} "${INSTALL}/lib/" \;
+    fi
+    ;;
+esac
+
 case "$TARGET" in
   macos-*|linux-*|windows-*|android-*) compile_jni ;;
+esac
+
+# The JNI shim silently skips on a compiler error, and a lib/ without projectM-4 loads
+# nothing at runtime. Fail here instead of shipping a visualizer that cannot start.
+case "$TARGET" in
+  macos-*|linux-*|windows-*)
+    for required in PhoebeProjectM projectM-4; do
+      if ! ls "${INSTALL}/lib/"*"${required}"* >/dev/null 2>&1; then
+        echo "ERROR: ${INSTALL}/lib is missing ${required}; the visualizer would fail to load."
+        exit 1
+      fi
+    done
+    ;;
 esac
 
 echo "Installed projectM → ${INSTALL}"
