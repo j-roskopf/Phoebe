@@ -31,7 +31,10 @@ import com.phoebe.app.ui.PhoebeTintOption
 import com.phoebe.app.ui.PhoebeRoot
 import com.phoebe.app.ui.PlatformInteractionLocals
 import com.phoebe.app.feature.playback.mediaPlaybackShortcuts
+import com.phoebe.app.platform.PhoebeLog
+import com.phoebe.app.platform.PlatformStorage
 import com.phoebe.app.platform.isDesktopPlatform
+import com.phoebe.app.platform.logDetail
 import com.phoebe.app.telemetry.Telemetry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -41,11 +44,43 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 private const val AppearanceThemeFile = "appearance_theme"
 private const val AppearanceTintFile = "appearance_tint"
 private const val AppearanceDesignFile = "appearance_design"
 private const val HomeScreenLayoutModeFile = "home_screen_layout_mode"
+
+/**
+ * Four small file reads should take milliseconds. If they have not landed by now the storage
+ * dispatcher is wedged, and rendering with defaults beats showing nothing indefinitely.
+ */
+private const val AppearanceLoadTimeoutMs = 5_000L
+
+private class StoredAppearance(
+    val useLightAppearance: Boolean,
+    val designId: String,
+    val tintId: String,
+    val homeScreenLayoutMode: HomeScreenLayoutMode,
+)
+
+private suspend fun readStoredAppearance(storage: PlatformStorage): StoredAppearance {
+    val theme = storage.readText(AppearanceThemeFile)?.trim()?.lowercase()
+    val design = PhoebeDesignSystem.fromId(storage.readText(AppearanceDesignFile))
+    val tint = storage.readText(AppearanceTintFile)
+        ?.trim()
+        ?.lowercase()
+        ?.let { PhoebeTintOption.fromId(it, design).id }
+        ?: PhoebeTintOption.defaultForDesign(design).id
+    return StoredAppearance(
+        useLightAppearance = theme == "light" || theme == "true",
+        designId = design.id,
+        tintId = tint,
+        homeScreenLayoutMode = HomeScreenLayoutMode.fromStorage(
+            storage.readText(HomeScreenLayoutModeFile)?.trim(),
+        ),
+    )
+}
 
 private object AppDependencyRuntime {
     private val mutex = Mutex()
@@ -162,22 +197,32 @@ fun App(
     var appearanceTintId by remember(readyDependencies) { mutableStateOf(PhoebeTintOption.Purple.id) }
     var homeScreenLayoutMode by remember(readyDependencies) { mutableStateOf<HomeScreenLayoutMode?>(null) }
 
+    // `homeScreenLayoutMode` staying null keeps the whole UI unrendered, so this effect must
+    // always resolve it. It previously assigned the mode last, after an unguarded
+    // `installPlatformPlayback` and four `Dispatchers.IO` reads: anything that stalled or threw
+    // in between left a blank window that survived Activity restarts — only force-stopping the
+    // process cleared it, because the stall is process-global. Bound the load and fall back.
     LaunchedEffect(readyDependencies) {
-        installPlatformPlayback(readyDependencies)
-        val stored = readyDependencies.platformStorage.readText(AppearanceThemeFile)?.trim()?.lowercase()
-        useLightAppearance = stored == "light" || stored == "true"
-        val storedDesign = PhoebeDesignSystem.fromId(
-            readyDependencies.platformStorage.readText(AppearanceDesignFile),
-        )
-        appearanceDesignId = storedDesign.id
-        appearanceTintId = readyDependencies.platformStorage.readText(AppearanceTintFile)
-            ?.trim()
-            ?.lowercase()
-            ?.let { PhoebeTintOption.fromId(it, storedDesign).id }
-            ?: PhoebeTintOption.defaultForDesign(storedDesign).id
-        homeScreenLayoutMode = HomeScreenLayoutMode.fromStorage(
-            readyDependencies.platformStorage.readText(HomeScreenLayoutModeFile)?.trim(),
-        )
+        runCatching { installPlatformPlayback(readyDependencies) }
+            .onFailure { error ->
+                PhoebeLog.d("App") { "installPlatformPlayback failed: ${error.logDetail()}" }
+            }
+
+        val stored = withTimeoutOrNull(AppearanceLoadTimeoutMs) {
+            runCatching { readStoredAppearance(readyDependencies.platformStorage) }
+                .onFailure { error ->
+                    PhoebeLog.d("App") { "Appearance preferences failed to load: ${error.logDetail()}" }
+                }
+                .getOrNull()
+        }
+        if (stored == null) {
+            PhoebeLog.d("App") { "Appearance preferences unavailable; starting with defaults" }
+        }
+        useLightAppearance = stored?.useLightAppearance ?: false
+        appearanceDesignId = stored?.designId ?: PhoebeDesignSystem.Default.id
+        appearanceTintId = stored?.tintId
+            ?: PhoebeTintOption.defaultForDesign(PhoebeDesignSystem.Default).id
+        homeScreenLayoutMode = stored?.homeScreenLayoutMode ?: HomeScreenLayoutMode.Default
     }
 
     LaunchedEffect(state) {
@@ -191,7 +236,13 @@ fun App(
 
     PhoebeTheme(useLightAppearance = useLightAppearance, tintId = appearanceTintId, designId = appearanceDesignId) {
         PlatformInteractionLocals {
-        val resolvedHomeScreenLayoutMode = homeScreenLayoutMode ?: return@PlatformInteractionLocals
+        // Never emit an empty tree here: an unresolved layout mode has to look like startup,
+        // not like a dead app.
+        val resolvedHomeScreenLayoutMode = homeScreenLayoutMode
+        if (resolvedHomeScreenLayoutMode == null) {
+            AppBootstrapScreen(message = "Loading Phoebe…")
+            return@PlatformInteractionLocals
+        }
 
         GlobalMediaKeysEffect(
             playerFlow = state.player,

@@ -94,3 +94,30 @@ kotlin {
         }
     }
 }
+
+// ProjectMSmokeTest resolves its libraries relative to the working directory, which for a
+// Gradle test JVM is this module — so it never found them and silently assumed-skipped on
+// every local run. Point it at the real install dir and give it the repo root for the
+// bundled presets, so the test actually exercises the native load path.
+val projectMHostTarget = run {
+    val os = System.getProperty("os.name").orEmpty().lowercase()
+    val arch = when (System.getProperty("os.arch")) {
+        "aarch64", "arm64" -> "arm64"
+        else -> "x64"
+    }
+    when {
+        os.contains("mac") -> "macos-$arch"
+        os.contains("win") -> "windows-x64"
+        else -> "linux-$arch"
+    }
+}
+
+tasks.withType<Test>().configureEach {
+    val projectMLib = rootProject.layout.projectDirectory
+        .dir("native/projectm/$projectMHostTarget/lib")
+        .asFile
+    if (projectMLib.isDirectory) {
+        systemProperty("phoebe.projectm.libraryDir", projectMLib.absolutePath)
+    }
+    workingDir = rootProject.layout.projectDirectory.asFile
+}
