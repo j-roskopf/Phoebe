@@ -1,18 +1,17 @@
 package com.phoebe.app.feature.playback
 
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.toComposeImageBitmap
+import androidx.compose.ui.graphics.asComposeImageBitmap
 import com.phoebe.app.player.VisualizerPcmBus
 import com.phoebe.app.player.VisualizerPcmSink
 import java.nio.ByteBuffer
-import java.nio.ByteOrder
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+import org.jetbrains.skia.Bitmap
 import org.jetbrains.skia.ColorAlphaType
 import org.jetbrains.skia.ColorType
-import org.jetbrains.skia.Image
 import org.jetbrains.skia.ImageInfo
 import org.lwjgl.opengl.GL11.GL_COLOR_BUFFER_BIT
 import org.lwjgl.opengl.GL11.GL_LINEAR
@@ -51,6 +50,8 @@ import org.lwjgl.opengl.GL30.glRenderbufferStorage
 /**
  * projectM instance plus the FBO readback that turns a frame into an [ImageBitmap].
  *
+ * Frames are published bottom-up (OpenGL row order); hosts flip them when drawing.
+ *
  * Every GL method here requires the caller's OpenGL context to already be current
  * on this thread. PCM and preset setters are safe from other threads.
  */
@@ -74,7 +75,14 @@ internal class ProjectMGlCore(
     private var fboDepth = 0
     private var fboW = 0
     private var fboH = 0
-    private var pixelBuffer: ByteBuffer? = null
+
+    // glReadPixels writes straight into these Skia bitmaps, rotated so the one
+    // Compose is drawing is not the one being overwritten. Allocating a fresh
+    // w*h*4 frame (twice on the heap, twice natively) 60 times a second left
+    // hundreds of MB of native pixels waiting on GC.
+    private val frameRing = arrayOfNulls<Bitmap>(FrameRingSize)
+    private val frameRingAddr = LongArray(FrameRingSize)
+    private var frameRingIndex = 0
 
     init {
         VisualizerPcmBus.addSink(this)
@@ -123,7 +131,11 @@ internal class ProjectMGlCore(
         ProjectMNative.nativeAddPcmFloat(ptr, samples, channels.coerceIn(1, 2))
     }
 
-    /** Call with a current OpenGL 3.3+ context. Returns false when projectM cannot start. */
+    /**
+     * Call with a current OpenGL 3.3+ context. Returns false when projectM cannot start.
+     * Callers own failure reporting: [ProjectMHostGate] is Compose state, so it must be
+     * written on the host's UI thread, not the offscreen GL thread this may run on.
+     */
     fun initGl(): Boolean {
         val ready = runCatching {
             check(ProjectMNative.nativeInitGlLoader()) {
@@ -139,7 +151,6 @@ internal class ProjectMGlCore(
             true
         }.getOrElse { error ->
             System.err.println("projectM initGL failed: ${error.message}")
-            ProjectMHostGate.markFailed()
             false
         }
         return ready
@@ -171,16 +182,18 @@ internal class ProjectMGlCore(
         glClear(GL_COLOR_BUFFER_BIT)
         ProjectMNative.nativeRenderFrame(ptr)
 
-        val buffer = pixelBuffer ?: return false
-        buffer.clear()
+        val slot = frameRingIndex
+        val bitmap = frameRing[slot] ?: return false
+        frameRingIndex = (slot + 1) % FrameRingSize
         // projectM only rebinds the draw target; make sure the read target is
         // still our FBO before pulling the composited frame back out.
         glBindFramebuffer(GL_FRAMEBUFFER, fbo)
-        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, buffer)
+        glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, frameRingAddr[slot])
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
+        bitmap.notifyPixelsChanged()
 
         if (!disposed.get()) {
-            onFrame(rgbaToImageBitmap(buffer, w, h))
+            onFrame(bitmap.asComposeImageBitmap())
         }
 
         val frames = frameCount.incrementAndGet()
@@ -221,7 +234,24 @@ internal class ProjectMGlCore(
         glBindFramebuffer(GL_FRAMEBUFFER, 0)
         fboW = w
         fboH = h
-        pixelBuffer = ByteBuffer.allocateDirect(w * h * 4).order(ByteOrder.nativeOrder())
+        allocateFrameRing(w, h)
+    }
+
+    private fun allocateFrameRing(w: Int, h: Int) {
+        // projectM leaves alpha undefined (often 0); RGB_888X ignores that byte so
+        // the frame draws opaque without a per-pixel fix-up pass.
+        val info = ImageInfo(w, h, ColorType.RGB_888X, ColorAlphaType.OPAQUE)
+        for (i in 0 until FrameRingSize) {
+            // Old bitmaps may still be on screen; let their Managed cleaner free them.
+            val bitmap = Bitmap()
+            check(bitmap.allocPixels(info)) { "projectM frame bitmap alloc failed (${w}x$h)" }
+            val pixmap = checkNotNull(bitmap.peekPixels()) { "projectM frame bitmap has no pixels" }
+            check(pixmap.rowBytes == w * 4) { "unexpected projectM frame stride ${pixmap.rowBytes}" }
+            frameRingAddr[i] = pixmap.addr
+            pixmap.close()
+            frameRing[i] = bitmap
+        }
+        frameRingIndex = 0
     }
 
     private fun destroyFbo() {
@@ -239,38 +269,8 @@ internal class ProjectMGlCore(
         }
         fboW = 0
         fboH = 0
-        pixelBuffer = null
-    }
-
-    private fun rgbaToImageBitmap(buffer: ByteBuffer, w: Int, h: Int): ImageBitmap {
-        // OpenGL reads bottom-up; flip vertically while copying into Skia-friendly bytes.
-        val src = ByteArray(w * h * 4)
-        buffer.rewind()
-        buffer.get(src)
-        val flipped = ByteArray(src.size)
-        val stride = w * 4
-        for (y in 0 until h) {
-            val srcRow = (h - 1 - y) * stride
-            val dstRow = y * stride
-            System.arraycopy(src, srcRow, flipped, dstRow, stride)
-        }
-        // projectM's FBO leaves alpha undefined (often 0); force opaque so the
-        // Compose Image is visible instead of blending to transparent.
-        var i = 3
-        while (i < flipped.size) {
-            flipped[i] = 0xFF.toByte()
-            i += 4
-        }
-        val image = Image.makeRaster(
-            imageInfo = ImageInfo(w, h, ColorType.RGBA_8888, ColorAlphaType.OPAQUE),
-            bytes = flipped,
-            rowBytes = stride,
-        )
-        return try {
-            image.toComposeImageBitmap()
-        } finally {
-            image.close()
-        }
+        frameRing.fill(null)
+        frameRingAddr.fill(0L)
     }
 
     private fun applyPreset(ptr: Long, force: Boolean): Boolean {
@@ -299,3 +299,5 @@ internal class ProjectMGlCore(
         return false
     }
 }
+
+private const val FrameRingSize = 3

@@ -5,14 +5,15 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.wrapContentSize
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -213,11 +214,15 @@ private fun NowPlayingVisualizerDisplay(
         // Targets without a live host (or a failed native create) fall back to
         // artwork instead of a black stub surface.
         if (desktopArtworkConstrained) {
-            Box(modifier, contentAlignment = Alignment.Center) {
+            // ArtworkImage only sizes via matchParentSize children, so wrapContentSize
+            // collapses to 0×0 and the Now Playing slot looks like an empty rectangle.
+            BoxWithConstraints(modifier, contentAlignment = Alignment.Center) {
+                val side = minOf(maxWidth, maxHeight)
+                val artModifier = Modifier.size(side).aspectRatio(1f)
                 if (track != null) {
-                    TrackArtworkImage(track, Modifier.wrapContentSize(), elevated = true)
+                    TrackArtworkImage(track, artModifier, elevated = true)
                 } else {
-                    EmptyNowPlayingArtworkSlot(Modifier.wrapContentSize(), glyphSp = 52.sp)
+                    EmptyNowPlayingArtworkSlot(artModifier, glyphSp = 52.sp)
                 }
             }
         } else if (track != null) {
