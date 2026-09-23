@@ -78,6 +78,7 @@ kotlin {
                 val lwjglVersion = libs.versions.lwjgl.get()
                 implementation("org.lwjgl:lwjgl:$lwjglVersion")
                 implementation("org.lwjgl:lwjgl-opengl:$lwjglVersion")
+                implementation("org.lwjgl:lwjgl-egl:$lwjglVersion")
                 implementation("org.lwjgl:lwjgl-jawt:$lwjglVersion")
                 implementation("org.lwjgl:lwjgl:$lwjglVersion:$lwjglNatives")
                 implementation("org.lwjgl:lwjgl-opengl:$lwjglVersion:$lwjglNatives")

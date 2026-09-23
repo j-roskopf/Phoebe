@@ -18,6 +18,8 @@ import androidx.compose.ui.window.WindowScope
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.phoebe.app.platform.PhoebeLog
+import com.phoebe.app.feature.playback.prewarmLinuxProjectMGl
+import com.phoebe.app.player.configureLinuxJavaFxPrismForOffscreenGl
 import com.phoebe.app.platform.configureWindowsDesktopRendering
 import com.phoebe.app.platform.WindowsUndecoratedWindowSupport
 import com.phoebe.app.platform.appDisplayName
@@ -54,6 +56,9 @@ private val desktopShutdownStarted = AtomicBoolean(false)
 private val desktopProcessExitScheduled = AtomicBoolean(false)
 
 fun main(args: Array<String>) {
+    configureLinuxJavaFxPrismForOffscreenGl()
+    // Skiko's window context makes later eglMakeCurrent fail. Do this first.
+    prewarmLinuxProjectMGl()
     configureDesktopApplicationName()
     configureDesktopChromecastNetworking()
     configureDesktopApplicationIcon(isDebugBuild())

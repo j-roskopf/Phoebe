@@ -20,6 +20,8 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.platform.logDetail
@@ -48,6 +50,93 @@ actual fun ProjectMVisualizerHost(
         return
     }
 
+    if (isLinuxDesktop()) {
+        LinuxOffscreenProjectMHost(
+            libraryDir = libraryDir,
+            presetPath = presetPath,
+            presetData = presetData,
+            locked = locked,
+            isPlaying = isPlaying,
+            modifier = modifier,
+            suspendRendering = suspendRendering,
+        )
+        return
+    }
+
+    SwingProjectMHost(
+        libraryDir = libraryDir,
+        presetPath = presetPath,
+        presetData = presetData,
+        locked = locked,
+        isPlaying = isPlaying,
+        modifier = modifier,
+        suspendRendering = suspendRendering,
+    )
+}
+
+@Composable
+private fun LinuxOffscreenProjectMHost(
+    libraryDir: File,
+    presetPath: String?,
+    presetData: String?,
+    locked: Boolean,
+    isPlaying: Boolean,
+    modifier: Modifier,
+    suspendRendering: Boolean,
+) {
+    var frame by remember { mutableStateOf<ImageBitmap?>(null) }
+    val session = remember(libraryDir) {
+        ProjectMOffscreenSession(libraryDir) { bitmap ->
+            frame = bitmap
+        }
+    }
+    DisposableEffect(session) {
+        session.start()
+        onDispose { session.dispose() }
+    }
+    DisposableEffect(presetPath, presetData, locked, isPlaying, suspendRendering) {
+        when {
+            !presetPath.isNullOrBlank() -> session.setPresetFile(presetPath)
+            !presetData.isNullOrBlank() -> session.setPresetData(presetData)
+            else -> session.setPresetFile("idle://")
+        }
+        session.setLocked(locked)
+        session.setPlaying(isPlaying && !suspendRendering)
+        onDispose { }
+    }
+
+    Box(
+        modifier
+            .fillMaxSize()
+            .background(Color.Black)
+            .semantics { contentDescription = "Now playing visualizer" }
+            .onSizeChanged { size ->
+                session.setTargetPixelSize(size.width, size.height)
+            },
+    ) {
+        val current = frame
+        if (current != null) {
+            Image(
+                bitmap = current,
+                contentDescription = null,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.FillBounds,
+                filterQuality = FilterQuality.Low,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SwingProjectMHost(
+    libraryDir: File,
+    presetPath: String?,
+    presetData: String?,
+    locked: Boolean,
+    isPlaying: Boolean,
+    modifier: Modifier,
+    suspendRendering: Boolean,
+) {
     var frame by remember { mutableStateOf<ImageBitmap?>(null) }
     val panel = remember(libraryDir) {
         runCatching {
@@ -112,6 +201,9 @@ actual fun ProjectMVisualizerHost(
         }
     }
 }
+
+private fun isLinuxDesktop(): Boolean =
+    System.getProperty("os.name").orEmpty().lowercase().contains("linux")
 
 fun resolveProjectMLibraryDir(): File =
     resolveProjectMLibraryDirOrNull()
