@@ -113,6 +113,13 @@ internal class ProjectMOffscreenSession(
             return
         }
         while (!disposed.get() && !core.isDisposed()) {
+            // Render at the consumer's pace. Starting the next frame while the last is
+            // still queued for Compose lets the GL thread cycle the bitmap ring faster
+            // than the UI draws it, overwriting a frame Skia may still be reading.
+            if (publishPosted.get()) {
+                Thread.sleep(2)
+                continue
+            }
             val started = System.nanoTime()
             val rendered = runCatching { core.render() }.getOrElse { error ->
                 core.releaseGl()

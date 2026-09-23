@@ -90,6 +90,39 @@ val composeDesktopTarget = when {
     else -> "linux-x64"
 }
 
+// Runtime files a packaged desktop app needs to actually load the projectM visualizer.
+// Match the platform shim/shared-library names exactly — a stale import lib or PDB named
+// "PhoebeProjectM.lib" must not satisfy a "contains PhoebeProjectM" check.
+private val projectMRuntimeShimName: String = when {
+    composeDesktopTarget.startsWith("windows") -> "PhoebeProjectM.dll"
+    composeDesktopTarget.startsWith("macos") -> "libPhoebeProjectM.dylib"
+    else -> "libPhoebeProjectM.so"
+}
+
+private fun isProjectMRuntimeLibrary(name: String): Boolean = when {
+    composeDesktopTarget.startsWith("windows") -> name.startsWith("projectM-4") && name.endsWith(".dll")
+    composeDesktopTarget.startsWith("macos") -> name.startsWith("libprojectM-4") && name.endsWith(".dylib")
+    else -> name.startsWith("libprojectM-4") && name.endsWith(".so")
+}
+
+private fun dirHasProjectMRuntimeShim(dir: File): Boolean =
+    dir.isDirectory && dir.listFiles()?.any { it.name == projectMRuntimeShimName } == true
+
+/**
+ * True when [root] (including its lib/ and bin/) holds the loadable JNI shim plus every
+ * shared library it needs at runtime. Windows additionally requires glew32.dll, which
+ * projectM-4.dll imports dynamically.
+ */
+private fun projectMRuntimeComplete(root: File): Boolean {
+    val names = listOf(root.resolve("lib"), root.resolve("bin"), root)
+        .flatMap { dir -> dir.listFiles()?.map { it.name } ?: emptyList() }
+        .toSet()
+    if (projectMRuntimeShimName !in names) return false
+    if (names.none(::isProjectMRuntimeLibrary)) return false
+    if (composeDesktopTarget.startsWith("windows") && "glew32.dll" !in names) return false
+    return true
+}
+
 fun usesJvmWithAarch64C1OsrBug(): Boolean {
     if (System.getProperty("os.arch") != "aarch64") return false
     val version = Runtime.version()
@@ -643,11 +676,10 @@ val syncProjectMResources = tasks.register<Copy>("syncProjectMResources") {
     // Windows CMake installs the runtime DLL to bin/ and only the import lib to lib/, so a
     // lib-only copy ships PhoebeProjectM.dll without the projectM-4.dll it imports.
     val projectMBin = projectMRoot.resolve("bin")
-    fun dirHasPhoebeShim(dir: File): Boolean =
-        dir.isDirectory && dir.listFiles()?.any { it.name.contains("PhoebeProjectM") } == true
-    // Skip when the JNI shim is missing — copying bare projectM-4.dll makes the packaged
-    // app look like it has a visualizer while the host can never start.
-    onlyIf { dirHasPhoebeShim(projectMLib) || dirHasPhoebeShim(projectMBin) || dirHasPhoebeShim(projectMRoot) }
+    // Skip when the runtime shim or one of its shared-library deps is missing — copying a
+    // bare projectM-4.dll makes the packaged app look like it has a visualizer while the
+    // host can never start.
+    onlyIf { projectMRuntimeComplete(projectMRoot) }
     from(projectMLib) {
         include("*.dylib", "*.so", "*.dll")
     }
@@ -703,13 +735,10 @@ tasks.matching { it.name in projectMDesktopPackagingTaskNames }.configureEach {
         val projectMRoot = rootProject.layout.projectDirectory
             .dir("native/projectm/$composeDesktopTarget")
             .asFile
-        val hasShim = listOf(projectMRoot.resolve("lib"), projectMRoot.resolve("bin"), projectMRoot)
-            .any { dir ->
-                dir.isDirectory && dir.listFiles()?.any { it.name.contains("PhoebeProjectM") } == true
-            }
-        if (!hasShim) {
+        if (!projectMRuntimeComplete(projectMRoot)) {
             throw GradleException(
-                "native/projectm/$composeDesktopTarget is missing PhoebeProjectM. " +
+                "native/projectm/$composeDesktopTarget is missing the projectM runtime " +
+                    "($projectMRuntimeShimName, projectM-4, and glew32 on Windows). " +
                     "Run scripts/build-projectm.sh $composeDesktopTarget before packaging.",
             )
         }
@@ -730,9 +759,7 @@ tasks.withType<JavaExec>().configureEach {
         val projectMLib = sequenceOf(
             projectMTarget.resolve("lib"),
             projectMTarget,
-        ).firstOrNull { dir ->
-            dir.isDirectory && dir.listFiles()?.any { it.name.contains("PhoebeProjectM") } == true
-        }
+        ).firstOrNull(::dirHasProjectMRuntimeShim)
         if (projectMLib != null) {
             systemProperty("phoebe.projectm.libraryDir", projectMLib.absolutePath)
             val existing = environment["DYLD_LIBRARY_PATH"] as String?
