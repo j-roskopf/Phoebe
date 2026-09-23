@@ -86,8 +86,16 @@ compile_jni() {
     java_home="${candidate}"
   fi
   if [[ -z "$java_home" || ! -f "${java_home}/include/jni.h" ]]; then
-    echo "WARN: JAVA_HOME with jni.h not found; skipping PhoebeProjectM JNI shim"
-    return 0
+    case "$TARGET" in
+      macos-*|linux-*|windows-*)
+        echo "ERROR: JAVA_HOME with jni.h not found; PhoebeProjectM is required for desktop."
+        exit 1
+        ;;
+      *)
+        echo "WARN: JAVA_HOME with jni.h not found; skipping PhoebeProjectM JNI shim"
+        return 0
+        ;;
+    esac
   fi
   local out_dir="${INSTALL}/lib"
   mkdir -p "${out_dir}"
@@ -127,19 +135,21 @@ compile_jni() {
         glew_ldflags+=(-L"${vcpkg_root}/installed/${vcpkg_triplet}/lib" -lglew32)
       fi
       local jni_out="${out_dir}/PhoebeProjectM.dll"
-      # Drop any shim from a previous install first: a failed compile below is
-      # downgraded to a warning, and a stale DLL would still satisfy the
-      # required-file check while lacking newer JNI entry points (e.g.
-      # nativeInitGlLoader), shipping a visualizer that dies at runtime.
+      # Drop any shim from a previous install first so a failed compile cannot
+      # leave a stale DLL that satisfies the required-file check while lacking
+      # newer JNI entry points (e.g. nativeInitGlLoader).
       rm -f "${jni_out}"
-      clang -shared \
+      if ! clang -shared \
         -I"${java_home}/include" -I"${java_home}/include/win32" \
         -I"${INSTALL}/include" \
         "${glew_cflags[@]}" \
         -o "${jni_out}" \
         "${src}" \
         -L"${INSTALL}/lib" -lprojectM-4 \
-        "${glew_ldflags[@]}" || echo "WARN: Windows JNI compile skipped"
+        "${glew_ldflags[@]}"; then
+        echo "ERROR: Windows JNI compile failed; PhoebeProjectM.dll is required for the visualizer."
+        exit 1
+      fi
       # projectM's OpenGL Core Windows build links GLEW dynamically; ship its
       # runtime DLL beside the others so packaged apps can load projectM-4.dll.
       if [[ -n "$vcpkg_root" && -d "${vcpkg_root}/installed/${vcpkg_triplet}/bin" ]]; then
@@ -148,6 +158,10 @@ compile_jni() {
           [[ -f "$src_dll" ]] || continue
           cp -f "$src_dll" "${out_dir}/"
         done
+      fi
+      if [[ ! -f "${out_dir}/glew32.dll" ]]; then
+        echo "ERROR: glew32.dll missing beside PhoebeProjectM.dll; set VCPKG_INSTALLATION_ROOT."
+        exit 1
       fi
       ;;
     android-*)

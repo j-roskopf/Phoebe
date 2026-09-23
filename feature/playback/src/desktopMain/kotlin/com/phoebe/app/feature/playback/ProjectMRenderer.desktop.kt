@@ -2,13 +2,12 @@ package com.phoebe.app.feature.playback
 
 actual object ProjectMRenderer {
     /**
-     * Only `resolveProjectMLibraryDir` proves the libs are present. A bare
-     * `native/projectm` existence check is not a signal — a fresh checkout ships
-     * `native/projectm/patches/`, so it reported available with nothing built and
-     * the host then threw out of composition instead of falling back to artwork.
+     * A resolved dir must contain the Phoebe JNI shim **and** that shim must load.
+     * Bare `projectM-4.dll` (without `PhoebeProjectM`) is not enough — treating it
+     * as available used to mount the host and paint an empty black rectangle.
      */
-    actual fun isNativeAvailable(): Boolean =
-        resolveProjectMLibraryDirOrNull()?.let { dir ->
-            dir.listFiles()?.any { it.name.contains("PhoebeProjectM") || it.name.contains("projectM") } == true
-        } == true
+    actual fun isNativeAvailable(): Boolean {
+        val dir = resolveProjectMLibraryDirOrNull() ?: return false
+        return ProjectMNative.tryEnsureLoaded(dir.absolutePath)
+    }
 }

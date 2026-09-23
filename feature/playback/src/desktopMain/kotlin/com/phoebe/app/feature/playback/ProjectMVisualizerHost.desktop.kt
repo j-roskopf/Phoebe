@@ -45,8 +45,9 @@ actual fun ProjectMVisualizerHost(
             "desktop projectM unavailable " +
                 "(dir=$libraryDir, failure=${ProjectMNative.loadFailure}) — artwork fallback"
         }
+        // Prefer LaunchedEffect over composing a black stub: the display layer
+        // swaps to artwork once the gate flips. Avoid Snapshot writes in composition.
         LaunchedEffect(Unit) { ProjectMHostGate.markFailed() }
-        Box(modifier.fillMaxSize().background(Color.Black))
         return
     }
 
@@ -149,7 +150,6 @@ private fun SwingProjectMHost(
     }
     if (panel == null) {
         LaunchedEffect(Unit) { ProjectMHostGate.markFailed() }
-        Box(modifier.fillMaxSize().background(Color.Black))
         return
     }
 
@@ -229,9 +229,14 @@ fun resolveProjectMLibraryDirOrNull(): File? {
             add(resourcesDir)
             add(File(resourcesDir, target))
         }
+        // Prefer lib/ (build-projectm.sh canonical layout). Also accept the target root —
+        // a partial Windows copy sometimes lands DLLs there without a lib/ folder.
         add(File("native/projectm/$target/lib"))
+        add(File("native/projectm/$target"))
         add(File("../native/projectm/$target/lib"))
+        add(File("../native/projectm/$target"))
         add(File(System.getProperty("user.dir"), "native/projectm/$target/lib"))
+        add(File(System.getProperty("user.dir"), "native/projectm/$target"))
     }
     val found = candidates.firstOrNull(::dirLooksLikeProjectM)
     if (found != null) {

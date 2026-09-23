@@ -643,18 +643,40 @@ val syncProjectMResources = tasks.register<Copy>("syncProjectMResources") {
     // Windows CMake installs the runtime DLL to bin/ and only the import lib to lib/, so a
     // lib-only copy ships PhoebeProjectM.dll without the projectM-4.dll it imports.
     val projectMBin = projectMRoot.resolve("bin")
-    onlyIf { projectMLib.isDirectory || projectMBin.isDirectory }
+    fun dirHasPhoebeShim(dir: File): Boolean =
+        dir.isDirectory && dir.listFiles()?.any { it.name.contains("PhoebeProjectM") } == true
+    // Skip when the JNI shim is missing — copying bare projectM-4.dll makes the packaged
+    // app look like it has a visualizer while the host can never start.
+    onlyIf { dirHasPhoebeShim(projectMLib) || dirHasPhoebeShim(projectMBin) || dirHasPhoebeShim(projectMRoot) }
     from(projectMLib) {
         include("*.dylib", "*.so", "*.dll")
     }
     from(projectMBin) {
         include("*.dll")
     }
+    // Partial Windows drops sometimes put DLLs at the target root (no lib/).
+    from(projectMRoot) {
+        include("*.dll", "*.dylib", "*.so")
+    }
     // build-projectm.sh flattens bin/ into lib/, so the same DLL can appear in both. lib/ is
     // the canonical copy; take it and drop the duplicate.
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     into(macMediaKeysAppResources.map { it.dir(composeDesktopTarget) })
 }
+
+val projectMDesktopPackagingTaskNames = setOf(
+    "createDistributable",
+    "createReleaseDistributable",
+    "runDistributable",
+    "packageDmg",
+    "packageReleaseDmg",
+    "packagePkg",
+    "packageReleasePkg",
+    "packageDeb",
+    "packageReleaseDeb",
+    "packageMsi",
+    "packageReleaseMsi",
+)
 
 tasks.matching {
     it.name in setOf(
@@ -676,6 +698,24 @@ tasks.matching {
     dependsOn(syncProjectMResources)
 }
 
+tasks.matching { it.name in projectMDesktopPackagingTaskNames }.configureEach {
+    doFirst {
+        val projectMRoot = rootProject.layout.projectDirectory
+            .dir("native/projectm/$composeDesktopTarget")
+            .asFile
+        val hasShim = listOf(projectMRoot.resolve("lib"), projectMRoot.resolve("bin"), projectMRoot)
+            .any { dir ->
+                dir.isDirectory && dir.listFiles()?.any { it.name.contains("PhoebeProjectM") } == true
+            }
+        if (!hasShim) {
+            throw GradleException(
+                "native/projectm/$composeDesktopTarget is missing PhoebeProjectM. " +
+                    "Run scripts/build-projectm.sh $composeDesktopTarget before packaging.",
+            )
+        }
+    }
+}
+
 val desktopDevRunTaskNames = setOf("run", "hotRunDesktop", "hotDevDesktop", "desktopRunHot")
 
 tasks.withType<JavaExec>().configureEach {
@@ -684,10 +724,16 @@ tasks.withType<JavaExec>().configureEach {
     javaLauncher.set(desktopJavaLauncher)
     doFirst {
         setExecutable(desktopJavaExecutable.get())
-        val projectMLib = rootProject.layout.projectDirectory
-            .dir("native/projectm/$composeDesktopTarget/lib")
+        val projectMTarget = rootProject.layout.projectDirectory
+            .dir("native/projectm/$composeDesktopTarget")
             .asFile
-        if (projectMLib.isDirectory) {
+        val projectMLib = sequenceOf(
+            projectMTarget.resolve("lib"),
+            projectMTarget,
+        ).firstOrNull { dir ->
+            dir.isDirectory && dir.listFiles()?.any { it.name.contains("PhoebeProjectM") } == true
+        }
+        if (projectMLib != null) {
             systemProperty("phoebe.projectm.libraryDir", projectMLib.absolutePath)
             val existing = environment["DYLD_LIBRARY_PATH"] as String?
                 ?: System.getenv("DYLD_LIBRARY_PATH")
