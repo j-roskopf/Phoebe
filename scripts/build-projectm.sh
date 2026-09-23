@@ -134,6 +134,10 @@ compile_jni() {
         glew_cflags+=(-I"${vcpkg_root}/installed/${vcpkg_triplet}/include")
         glew_ldflags+=(-L"${vcpkg_root}/installed/${vcpkg_triplet}/lib" -lglew32)
       fi
+      # glewInit comes from GLEW, but glGetError still resolves to the system
+      # OpenGL import (opengl32) under clang; without it the shim fails to link
+      # with LNK2019 on __imp_glGetError.
+      glew_ldflags+=(-lopengl32)
       local jni_out="${out_dir}/PhoebeProjectM.dll"
       # Drop any shim from a previous install first so a failed compile cannot
       # leave a stale DLL that satisfies the required-file check while lacking
