@@ -14,10 +14,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.awt.SwingPanel
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.semantics.contentDescription
@@ -120,7 +122,7 @@ private fun LinuxOffscreenProjectMHost(
             Image(
                 bitmap = current,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().flipVertically(),
                 contentScale = ContentScale.FillBounds,
                 filterQuality = FilterQuality.Low,
             )
@@ -194,12 +196,17 @@ private fun SwingProjectMHost(
             Image(
                 bitmap = current,
                 contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier.fillMaxSize().flipVertically(),
                 contentScale = ContentScale.FillBounds,
                 filterQuality = FilterQuality.Low,
             )
         }
     }
+}
+
+/** projectM frames arrive in OpenGL's bottom-up row order. */
+private fun Modifier.flipVertically(): Modifier = drawWithContent {
+    scale(scaleX = 1f, scaleY = -1f) { this@drawWithContent.drawContent() }
 }
 
 private fun isLinuxDesktop(): Boolean =

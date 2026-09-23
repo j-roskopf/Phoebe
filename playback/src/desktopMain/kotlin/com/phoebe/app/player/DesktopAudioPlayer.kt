@@ -4457,15 +4457,17 @@ internal data class DesktopPlaybackStartupPlan(
 )
 
 /**
- * Prism's hardware pipeline on this hybrid NVIDIA/Mesa box initializes EGL, and
- * after that eglMakeCurrent fails for every other context. projectM then never
- * draws, which shows up as an empty visualizer and Mesa's "failed to create dri2
- * screen" warning. Compose itself renders with Skiko, so Prism can stay on the
- * software pipeline.
+ * JavaFX is only here for media playback; nothing renders a JavaFX scene, so Prism
+ * stays on the software pipeline everywhere.
+ *
+ * Linux: Prism's hardware pipeline on a hybrid NVIDIA/Mesa box initializes EGL, and
+ * after that eglMakeCurrent fails for every other context. projectM then never draws,
+ * which shows up as an empty visualizer and Mesa's "failed to create dri2 screen" warning.
+ *
+ * macOS/Windows: the ES2/D3D pipeline creates GPU contexts and compiles shaders at
+ * toolkit startup that nothing ever uses.
  */
-fun configureLinuxJavaFxPrismForOffscreenGl() {
-    val os = System.getProperty("os.name").orEmpty().lowercase()
-    if (!os.contains("linux")) return
+fun configureJavaFxSoftwarePrism() {
     if (!System.getProperty("prism.order").isNullOrBlank()) return
     System.setProperty("prism.order", "sw")
 }
@@ -4562,7 +4564,7 @@ private object JavaFxRuntime {
 
     private fun start() {
         if (started.compareAndSet(false, true)) {
-            configureLinuxJavaFxPrismForOffscreenGl()
+            configureJavaFxSoftwarePrism()
             Thread({
                 runCatching {
                     Platform.startup {

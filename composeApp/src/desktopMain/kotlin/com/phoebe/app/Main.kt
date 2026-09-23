@@ -19,7 +19,7 @@ import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
 import com.phoebe.app.platform.PhoebeLog
 import com.phoebe.app.feature.playback.prewarmLinuxProjectMGl
-import com.phoebe.app.player.configureLinuxJavaFxPrismForOffscreenGl
+import com.phoebe.app.player.configureJavaFxSoftwarePrism
 import com.phoebe.app.platform.configureWindowsDesktopRendering
 import com.phoebe.app.platform.WindowsUndecoratedWindowSupport
 import com.phoebe.app.platform.appDisplayName
@@ -56,7 +56,7 @@ private val desktopShutdownStarted = AtomicBoolean(false)
 private val desktopProcessExitScheduled = AtomicBoolean(false)
 
 fun main(args: Array<String>) {
-    configureLinuxJavaFxPrismForOffscreenGl()
+    configureJavaFxSoftwarePrism()
     // Skiko's window context makes later eglMakeCurrent fail. Do this first.
     prewarmLinuxProjectMGl()
     configureDesktopApplicationName()
@@ -225,7 +225,10 @@ private fun configureDesktopApplicationName() {
  * on every frame, which pins a core or more during playback.
  *
  * Budgeting ~[SkiaGpuCacheFullScreenLayers] full-screen layers keeps a realistic
- * frame resident. Respects an explicit `-Dskiko.gpu.resourceCacheLimit` override.
+ * frame resident. Skia fills whatever budget it gets and never trims below it, so
+ * this is the steady-state GPU footprint, not a ceiling that is rarely reached:
+ * 16 layers on a 3456x2234 panel held ~470 MB. Respects an explicit
+ * `-Dskiko.gpu.resourceCacheLimit` override.
  */
 private fun configureSkiaGpuResourceCache() {
     if (System.getProperty("skiko.gpu.resourceCacheLimit") != null) return
@@ -250,9 +253,9 @@ private fun configureSkiaGpuResourceCache() {
 }
 
 private const val BytesPerPixel = 4.0
-private const val SkiaGpuCacheFullScreenLayers = 16.0
-private const val SkiaGpuCacheMinBytes = 128L * 1024L * 1024L
-private const val SkiaGpuCacheMaxBytes = 512L * 1024L * 1024L
+private const val SkiaGpuCacheFullScreenLayers = 6.0
+private const val SkiaGpuCacheMinBytes = 96L * 1024L * 1024L
+private const val SkiaGpuCacheMaxBytes = 256L * 1024L * 1024L
 
 private fun configureDesktopApplicationIcon(debug: Boolean) {
     if (!isMacOs()) return

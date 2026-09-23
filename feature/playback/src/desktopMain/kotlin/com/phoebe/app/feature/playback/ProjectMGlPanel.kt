@@ -35,7 +35,7 @@ class ProjectMGlPanel(
 ) : JPanel(BorderLayout()) {
     private val core = ProjectMGlCore(onFrame)
     private val disposed = AtomicBoolean(false)
-    private val canvas: AWTGLCanvas
+    private val canvas: ContextOwningCanvas
     private val animator: Timer
 
     init {
@@ -49,14 +49,14 @@ class ProjectMGlPanel(
             doubleBuffer = true
             swapInterval = 1
         }
-        canvas = object : AWTGLCanvas(data) {
+        canvas = object : ContextOwningCanvas(data) {
             override fun initGL() {
+                if (disposed.get()) return
                 val ready = runCatching {
                     GL.createCapabilities()
                     core.initGl()
                 }.getOrElse { error ->
                     System.err.println("projectM initGL failed: ${error.message}")
-                    ProjectMHostGate.markFailed()
                     false
                 }
                 if (!ready) {
@@ -75,6 +75,10 @@ class ProjectMGlPanel(
                 glClearColor(0f, 0f, 0f, 1f)
                 glClear(GL_COLOR_BUFFER_BIT)
                 swapBuffers()
+            }
+
+            override fun releaseGlResources() {
+                core.releaseGl()
             }
         }.apply {
             isEnabled = false
@@ -150,16 +154,36 @@ class ProjectMGlPanel(
         core.markDisposed()
         stop()
         val destroy = Runnable {
-            // One more render while disposed=true so paintGL can destroy the FBO
-            // with a current GL context.
-            runCatching {
-                if (canvas.isDisplayable) {
-                    canvas.render()
-                }
-            }
-            runCatching { canvas.disposeCanvas() }
+            // Release projectM and delete the context now; removeNotify covers a
+            // SwingPanel that detaches the canvas before this runs.
+            if (canvas.isDisplayable) canvas.releaseContext()
         }
         if (SwingUtilities.isEventDispatchThread()) destroy.run()
         else SwingUtilities.invokeAndWait(destroy)
+    }
+}
+
+/**
+ * lwjgl3-awt's [AWTGLCanvas.removeNotify] zeroes `context` without deleting it, and
+ * [AWTGLCanvas.disposeCanvas] only frees the JAWT surface. Every detach therefore
+ * leaked the NSOpenGLContext/WGL context along with the projectM textures and FBO
+ * living in it. This deletes the context while the peer can still be locked.
+ */
+private abstract class ContextOwningCanvas(data: GLData) : AWTGLCanvas(data) {
+    /** Free GL objects owned by this context. Called with the context current. */
+    abstract fun releaseGlResources()
+
+    override fun removeNotify() {
+        releaseContext()
+        super.removeNotify()
+    }
+
+    fun releaseContext() {
+        if (context == 0L) return
+        runCatching { runInContext { releaseGlResources() } }
+            .onFailure { error -> System.err.println("projectM releaseGl failed: ${error.message}") }
+        runCatching { platformCanvas.deleteContext(context) }
+        context = 0L
+        initCalled = false
     }
 }
