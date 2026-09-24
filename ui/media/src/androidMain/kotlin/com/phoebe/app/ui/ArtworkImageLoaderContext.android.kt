@@ -5,3 +5,5 @@ import com.phoebe.app.AndroidContextHolder
 
 internal actual fun stableArtworkImageLoaderContext(platformContext: PlatformContext): PlatformContext =
     AndroidContextHolder.application
+
+internal actual val artworkMemoryCacheMaxBytes: Long? = null

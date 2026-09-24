@@ -57,6 +57,7 @@ import coil3.annotation.ExperimentalCoilApi
 import coil3.compose.AsyncImagePainter
 import coil3.compose.LocalPlatformContext
 import coil3.compose.rememberAsyncImagePainter
+import coil3.memory.MemoryCache
 import coil3.network.ConcurrentRequestStrategy
 import coil3.network.NetworkHeaders
 import coil3.network.httpHeaders
@@ -373,6 +374,11 @@ private fun readDiskCachedArtwork(
 @OptIn(ExperimentalCoilApi::class)
 private fun buildArtworkImageLoader(context: PlatformContext): ImageLoader =
     ImageLoader.Builder(context)
+        .apply {
+            artworkMemoryCacheMaxBytes?.let { maxBytes ->
+                memoryCache { MemoryCache.Builder().maxSizeBytes(maxBytes).build() }
+            }
+        }
         .components {
             // Shares RemoteArtworkCache's client rather than minting another one.
             add(

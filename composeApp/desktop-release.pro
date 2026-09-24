@@ -72,6 +72,20 @@
 -keep class com.google.protobuf.** { *; }
 -keep class com.fasterxml.jackson.** { *; }
 
+# SkiaGpuCacheTrimmer reflects into Skiko internals (SkiaLayer.getRedrawer$skiko(),
+# redrawer drawLock/contextHandler, ContextHandler.getContext). Keep those members so
+# the trimmer still finds the GPU context in shrunk release builds.
+-keepclassmembers class org.jetbrains.skiko.SkiaLayer {
+    public org.jetbrains.skiko.redrawer.Redrawer getRedrawer$skiko();
+}
+-keepclassmembers class org.jetbrains.skiko.redrawer.** {
+    java.lang.Object drawLock;
+    org.jetbrains.skiko.context.* contextHandler;
+}
+-keepclassmembers class org.jetbrains.skiko.context.** {
+    org.jetbrains.skia.DirectContext getContext();
+}
+
 # Navigation routes are persisted via rememberSerializable + kotlinx.serialization.
 # Without these rules, release builds crash when opening routes such as Recently Added.
 -keepattributes *Annotation*, InnerClasses

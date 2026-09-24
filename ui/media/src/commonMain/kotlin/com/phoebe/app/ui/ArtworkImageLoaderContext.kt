@@ -9,3 +9,9 @@ import coil3.PlatformContext
  * configuration updates; callers should use an application-stable context there.
  */
 internal expect fun stableArtworkImageLoaderContext(platformContext: PlatformContext): PlatformContext
+
+/**
+ * Byte budget for the shared artwork loader's in-memory bitmap cache, or null for
+ * Coil's platform default.
+ */
+internal expect val artworkMemoryCacheMaxBytes: Long?
