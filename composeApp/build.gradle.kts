@@ -492,10 +492,9 @@ compose.desktop {
             // that fits a 1080p screen thrashes on a large or HiDPI one.
         ) + aarch64C1OsrWorkaroundJvmArgs + windowsSkikoJvmArgs()
         if (System.getProperty("os.name").lowercase().contains("mac")) {
-            val mediaKeysDylibPath =
-                layout.buildDirectory.get().asFile.resolve("native/macos/libPhoebeMediaKeys.dylib").absolutePath
+            // The media keys dylib path is a dev-run-only override (see the JavaExec
+            // block below); packaged apps load it from compose.application.resources.dir.
             jvmArgs += listOf(
-                "-Dphoebe.mediakeys.lib=$mediaKeysDylibPath",
                 "--add-opens=java.desktop/sun.awt=ALL-UNNAMED",
                 "--add-opens=java.desktop/sun.lwawt=ALL-UNNAMED",
                 "--add-opens=java.desktop/sun.lwawt.macosx=ALL-UNNAMED",
@@ -731,6 +730,12 @@ tasks.matching {
 }
 
 tasks.matching { it.name in projectMDesktopPackagingTaskNames }.configureEach {
+    // Compose's jpackage tasks do not fingerprint the app resources dir, so a rebuilt
+    // JNI shim or media-keys dylib left createDistributable UP-TO-DATE and the bundle
+    // kept the old binary (projectM then failed with UnsatisfiedLinkError).
+    inputs.dir(macMediaKeysAppResources)
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+        .withPropertyName("phoebeNativeAppResources")
     doFirst {
         val projectMRoot = rootProject.layout.projectDirectory
             .dir("native/projectm/$composeDesktopTarget")
@@ -751,6 +756,12 @@ tasks.withType<JavaExec>().configureEach {
     if (name !in desktopDevRunTaskNames) return@configureEach
 
     javaLauncher.set(desktopJavaLauncher)
+    if (System.getProperty("os.name").lowercase().contains("mac")) {
+        systemProperty(
+            "phoebe.mediakeys.lib",
+            layout.buildDirectory.get().asFile.resolve("native/macos/libPhoebeMediaKeys.dylib").absolutePath,
+        )
+    }
     doFirst {
         setExecutable(desktopJavaExecutable.get())
         val projectMTarget = rootProject.layout.projectDirectory

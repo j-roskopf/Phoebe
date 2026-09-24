@@ -138,6 +138,10 @@ fun main(args: Array<String>) {
                 window.addWindowFocusListener(listener)
                 onDispose { window.removeWindowFocusListener(listener) }
             }
+            DisposableEffect(window) {
+                val uninstall = installSkiaGpuCacheTrimmer(window)
+                onDispose { uninstall() }
+            }
             val continuousMotionEnabled = windowFocused && !windowState.isMinimized
             CompositionLocalProvider(
                 LocalDesktopMergesTitleBar provides useCustomWindowsTitleBar,
