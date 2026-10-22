@@ -246,11 +246,24 @@ fun LibraryImmersiveGrid(
         val centeredIndex by remember(rows, cols, pitch, count) {
             derivedStateOf {
                 val c = camera
-                val row = (c.y / pitch).roundToInt().coerceIn(0, rows - 1)
-                // Last row may be incomplete; only consider columns that hold an item.
-                val columnsInRow = (count - row * cols).coerceIn(1, cols)
-                val col = ((c.x - stagger(row)) / pitch).roundToInt().coerceIn(0, columnsInRow - 1)
-                row * cols + col
+                // Staggered rows can put the nearest tile in either adjacent row, so compare both.
+                val rowEstimate = c.y / pitch
+                val firstRow = floor(rowEstimate).toInt().coerceIn(0, rows - 1)
+                var bestIndex = 0
+                var bestDistance = Float.MAX_VALUE
+                for (row in firstRow..(firstRow + 1).coerceAtMost(rows - 1)) {
+                    // Last row may be incomplete; only consider columns that hold an item.
+                    val columnsInRow = (count - row * cols).coerceIn(1, cols)
+                    val col = ((c.x - stagger(row)) / pitch).roundToInt().coerceIn(0, columnsInRow - 1)
+                    val dx = col * pitch + stagger(row) - c.x
+                    val dy = row * pitch - c.y
+                    val distance = dx * dx + dy * dy
+                    if (distance < bestDistance) {
+                        bestDistance = distance
+                        bestIndex = row * cols + col
+                    }
+                }
+                bestIndex
             }
         }
         val centeredItem = items.getOrNull(centeredIndex)
@@ -299,7 +312,6 @@ fun LibraryImmersiveGrid(
             },
             modifier = Modifier
                 .fillMaxSize()
-                .focusable()
                 .onKeyEvent { event ->
                     if (event.type != KeyEventType.KeyDown) return@onKeyEvent false
                     val step = when (event.key) {
@@ -316,6 +328,7 @@ fun LibraryImmersiveGrid(
                     animateCameraTo(camera + step)
                     true
                 }
+                .focusable()
                 .pointerInput(pitch, maxX, maxY) {
                     awaitPointerEventScope {
                         while (true) {
