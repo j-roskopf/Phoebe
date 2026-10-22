@@ -174,12 +174,15 @@ fun LibraryImmersiveGrid(
             mutableStateOf(Offset(fraction.x * maxX, fraction.y * maxY))
         }
         var lastBounds by remember(kind) { mutableStateOf(Offset(maxX, maxY)) }
+        var flingJob by remember { mutableStateOf<Job?>(null) }
         fun cameraFraction(bounds: Offset = Offset(maxX, maxY)): Offset = Offset(
             if (bounds.x > 0f) (camera.x / bounds.x).coerceIn(0f, 1f) else 0.5f,
             if (bounds.y > 0f) (camera.y / bounds.y).coerceIn(0f, 1f) else 0.5f,
         )
         // Resizes and catalog changes rescale the camera so the same region stays in view.
         LaunchedEffect(maxX, maxY) {
+            // In-flight animations captured the old bounds and would overwrite the rescale.
+            flingJob?.cancel()
             val fraction = cameraFraction(lastBounds)
             camera = Offset(fraction.x * maxX, fraction.y * maxY)
             lastBounds = Offset(maxX, maxY)
@@ -193,7 +196,6 @@ fun LibraryImmersiveGrid(
             camera = clampCamera(camera + delta)
         }
 
-        var flingJob by remember { mutableStateOf<Job?>(null) }
         fun animateCameraTo(target: Offset) {
             flingJob?.cancel()
             flingJob = scope.launch {
