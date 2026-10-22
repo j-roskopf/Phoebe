@@ -47,7 +47,7 @@ class LibraryUiRepository(
             val prefs = row.toPreferences().normalized()
             val viewMode = withContext(Dispatchers.Default) {
                 storage.readText(ViewModeFile)
-            }?.takeIf { it in setOf("Grid", "List", "Flow") } ?: prefs.viewMode
+            }?.takeIf { it in setOf("Grid", "List", "Flow", "Immersive") } ?: prefs.viewMode
             val resolved = prefs.copy(viewMode = viewMode)
             mutableState.value = resolved
             // Persist migrations (e.g. Charts tab inserted into legacy defaults).
@@ -103,7 +103,7 @@ class LibraryUiRepository(
     }
 
     suspend fun setViewMode(viewMode: String) {
-        val normalized = viewMode.takeIf { it in setOf("Grid", "List", "Flow") } ?: "Grid"
+        val normalized = viewMode.takeIf { it in setOf("Grid", "List", "Flow", "Immersive") } ?: "Grid"
         val next = mutableState.value.copy(viewMode = normalized)
         mutableState.value = next
         withContext(Dispatchers.Default) {

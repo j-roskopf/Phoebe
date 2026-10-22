@@ -2370,6 +2370,8 @@ fun ArtistDetailPanel(
                                         onAscending = { albumAscending = it },
                                         viewMode = albumViewMode,
                                         onViewMode = { albumViewMode = it },
+                                        // Immersive needs the whole viewport; it does not fit inside the artist detail list.
+                                        viewModes = listOf(LibraryViewMode.Grid, LibraryViewMode.List, LibraryViewMode.Flow),
                                     )
                                 }
                             } else {
@@ -2425,6 +2427,8 @@ fun ArtistDetailPanel(
                                     onAscending = { albumAscending = it },
                                     viewMode = albumViewMode,
                                     onViewMode = { albumViewMode = it },
+                                    // Immersive needs the whole viewport; it does not fit inside the artist detail list.
+                                    viewModes = listOf(LibraryViewMode.Grid, LibraryViewMode.List, LibraryViewMode.Flow),
                                     modifier = contentPaddingModifier.padding(top = 10.dp),
                                 )
                             }
@@ -2456,7 +2460,7 @@ fun ArtistDetailPanel(
                                 )
                             }
                         }
-                        LibraryViewMode.Grid -> {
+                        LibraryViewMode.Grid, LibraryViewMode.Immersive -> {
                         items(
                             albumGridRows.size,
                             key = { rowIndex -> "album-grid-row:${albumGridRows[rowIndex].first().id}" },
