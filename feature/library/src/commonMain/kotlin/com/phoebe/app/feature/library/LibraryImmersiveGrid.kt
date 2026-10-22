@@ -74,6 +74,7 @@ import com.phoebe.app.ui.ArtworkImage
 import com.phoebe.app.ui.PhoebeUi
 import com.phoebe.app.ui.libraryGridDecodeDimension
 import com.phoebe.app.ui.phoebeClickable
+import kotlin.math.abs
 import kotlin.math.ceil
 import kotlin.math.floor
 import kotlin.math.roundToInt
@@ -244,8 +245,10 @@ fun LibraryImmersiveGrid(
             derivedStateOf {
                 val c = camera
                 val row = (c.y / pitch).roundToInt().coerceIn(0, rows - 1)
-                val col = ((c.x - stagger(row)) / pitch).roundToInt().coerceIn(0, cols - 1)
-                (row * cols + col).coerceAtMost(count - 1)
+                // Last row may be incomplete; only consider columns that hold an item.
+                val columnsInRow = (count - row * cols).coerceIn(1, cols)
+                val col = ((c.x - stagger(row)) / pitch).roundToInt().coerceIn(0, columnsInRow - 1)
+                row * cols + col
             }
         }
         val centeredItem = items.getOrNull(centeredIndex)
@@ -311,17 +314,33 @@ fun LibraryImmersiveGrid(
                     animateCameraTo(camera + step)
                     true
                 }
-                .pointerInput(pitch) {
+                .pointerInput(pitch, maxX, maxY) {
                     awaitPointerEventScope {
                         while (true) {
                             val event = awaitPointerEvent()
                             if (event.type != PointerEventType.Scroll) continue
                             val change = event.changes.firstOrNull() ?: continue
-                            var delta = change.scrollDelta
+                            val scroll = change.scrollDelta
+                            if (scroll == Offset.Zero) {
+                                // Trackpad panning arrives in pixels, not wheel notches.
+                                val pan = change.panOffset
+                                if (pan != Offset.Zero) {
+                                    flingJob?.cancel()
+                                    panBy(-pan)
+                                    change.consume()
+                                }
+                                continue
+                            }
+                            var delta = Offset(
+                                if (abs(scroll.x) > 3f) scroll.x / 32f else scroll.x,
+                                if (abs(scroll.y) > 3f) scroll.y / 32f else scroll.y,
+                            )
                             // Plain mouse wheels only report Y; shift turns it into a sideways pan.
                             if (event.keyboardModifiers.isShiftPressed && delta.x == 0f) {
                                 delta = Offset(delta.y, 0f)
                             }
+                            // Cap per-event movement so raw pixel deltas cannot jump whole screens.
+                            delta = Offset(delta.x.coerceIn(-3f, 3f), delta.y.coerceIn(-3f, 3f))
                             if (delta != Offset.Zero) {
                                 flingJob?.cancel()
                                 panBy(delta * (pitch * ImmersiveWheelCellFraction))
