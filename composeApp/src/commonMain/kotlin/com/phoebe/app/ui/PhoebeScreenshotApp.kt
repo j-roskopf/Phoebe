@@ -258,6 +258,7 @@ internal enum class PhoebeScreenshotScenario {
     LibraryScrollbar,
     LibraryFiveColumnGrid,
     LibraryFlow,
+    LibraryImmersive,
     Radio,
     Playlist,
     Artist,
@@ -293,6 +294,9 @@ internal fun PhoebeScreenshotApp(
     val fixture = remember { PhoebeScreenshotFixture }
     if (scenario == PhoebeScreenshotScenario.LibraryFlow) {
         resetCoverFlowScrollStore()
+    }
+    if (scenario == PhoebeScreenshotScenario.LibraryImmersive) {
+        resetImmersiveScrollStore()
     }
     val screenshotAudioAnalysis = remember(scenario) {
         MutableStateFlow(AudioAnalysisFrame.Empty)
@@ -413,6 +417,7 @@ internal fun PhoebeDesktopScreenshotScenario(
         PhoebeScreenshotScenario.LibraryScrollbar,
         PhoebeScreenshotScenario.LibraryFiveColumnGrid,
         PhoebeScreenshotScenario.LibraryFlow,
+        PhoebeScreenshotScenario.LibraryImmersive,
         -> BrowseSection.Library
         PhoebeScreenshotScenario.Radio -> BrowseSection.Radio
         PhoebeScreenshotScenario.Playlist -> BrowseSection.Library
@@ -426,6 +431,7 @@ internal fun PhoebeDesktopScreenshotScenario(
             artistGridItemSizeDp = LibraryUiPreferences.MinArtistGridItemSizeDp,
         )
         PhoebeScreenshotScenario.LibraryFlow -> fixture.libraryUi.copy(viewMode = "Flow")
+        PhoebeScreenshotScenario.LibraryImmersive -> fixture.libraryUi.copy(viewMode = "Immersive")
         PhoebeScreenshotScenario.HomePlayedRows -> fixture.libraryUi.copy(
             homeSections = listOf(HomeSection.Played, HomeSection.Random),
         )
@@ -434,6 +440,7 @@ internal fun PhoebeDesktopScreenshotScenario(
     val catalog = when (scenario) {
         PhoebeScreenshotScenario.LibraryFiveColumnGrid,
         PhoebeScreenshotScenario.LibraryFlow,
+        PhoebeScreenshotScenario.LibraryImmersive,
         -> fixture.catalog.withFiveColumnGridArtists(fixture.nowMs)
         else -> fixture.catalog
     }
@@ -618,7 +625,8 @@ internal fun PhoebeMobileScreenshotScenario(
 ) {
     val catalog = if (
         scenario == PhoebeScreenshotScenario.LibraryFiveColumnGrid ||
-        scenario == PhoebeScreenshotScenario.LibraryFlow
+        scenario == PhoebeScreenshotScenario.LibraryFlow ||
+        scenario == PhoebeScreenshotScenario.LibraryImmersive
     ) {
         fixture.catalog.withFiveColumnGridArtists(fixture.nowMs)
     } else {
@@ -630,6 +638,7 @@ internal fun PhoebeMobileScreenshotScenario(
             artistGridItemSizeDp = LibraryUiPreferences.MinArtistGridItemSizeDp,
         )
         PhoebeScreenshotScenario.LibraryFlow -> fixture.libraryUi.copy(viewMode = "Flow")
+        PhoebeScreenshotScenario.LibraryImmersive -> fixture.libraryUi.copy(viewMode = "Immersive")
         else -> fixture.libraryUi
     }
 
@@ -888,6 +897,7 @@ internal fun PhoebeMobileScreenshotScenario(
                     PhoebeScreenshotScenario.LibraryScrollbar,
                     PhoebeScreenshotScenario.LibraryFiveColumnGrid,
                     PhoebeScreenshotScenario.LibraryFlow,
+                    PhoebeScreenshotScenario.LibraryImmersive,
                     -> BrowseSection.Library
                     PhoebeScreenshotScenario.Radio -> BrowseSection.Radio
                     PhoebeScreenshotScenario.Search -> BrowseSection.Search
@@ -1005,6 +1015,7 @@ internal fun PhoebeMobileScreenshotScenario(
                     PhoebeScreenshotScenario.LibraryScrollbar,
                     PhoebeScreenshotScenario.LibraryFiveColumnGrid,
                     PhoebeScreenshotScenario.LibraryFlow,
+                    PhoebeScreenshotScenario.LibraryImmersive,
                     -> BrowseSection.Library
                     PhoebeScreenshotScenario.Radio -> BrowseSection.Radio
                     PhoebeScreenshotScenario.Search -> BrowseSection.Search

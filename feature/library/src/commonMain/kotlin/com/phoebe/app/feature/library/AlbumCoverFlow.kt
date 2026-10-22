@@ -468,6 +468,42 @@ fun LibraryCoverFlow(
     }
 }
 
+internal fun Album.toCoverFlowItem(): CoverFlowItem = CoverFlowItem(
+    id = id,
+    title = title,
+    subtitle = artist,
+    thumbUrl = thumbUrl,
+    sharedKey = "album:$id",
+)
+
+internal fun Artist.toCoverFlowItem(): CoverFlowItem = CoverFlowItem(
+    id = id,
+    title = title,
+    subtitle = buildString {
+        if (albumCount > 0) append("$albumCount albums")
+        if (songCount > 0) {
+            if (isNotEmpty()) append(" • ")
+            append("$songCount songs")
+        }
+    },
+    thumbUrl = thumbUrl,
+    sharedKey = "artist:$id",
+)
+
+internal fun Track.toCoverFlowItem(): CoverFlowItem = CoverFlowItem(
+    id = id,
+    title = title,
+    subtitle = buildString {
+        append(artist)
+        if (album.isNotBlank()) {
+            append(" • ")
+            append(album)
+        }
+    },
+    thumbUrl = thumbUrl ?: localArtworkUri,
+    sharedKey = "song:$id",
+)
+
 @Composable
 fun AlbumCoverFlow(
     albums: List<Album>,
@@ -476,17 +512,7 @@ fun AlbumCoverFlow(
     onOpen: (Album) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val items = remember(albums) {
-        albums.map { album ->
-            CoverFlowItem(
-                id = album.id,
-                title = album.title,
-                subtitle = album.artist,
-                thumbUrl = album.thumbUrl,
-                sharedKey = "album:${album.id}",
-            )
-        }
-    }
+    val items = remember(albums) { albums.map { it.toCoverFlowItem() } }
     val albumById = remember(albums) { albums.associateBy { it.id } }
     LibraryCoverFlow(
         items = items,
@@ -507,23 +533,7 @@ fun ArtistCoverFlow(
     onOpen: (Artist) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val items = remember(artists) {
-        artists.map { artist ->
-            CoverFlowItem(
-                id = artist.id,
-                title = artist.title,
-                subtitle = buildString {
-                    if (artist.albumCount > 0) append("${artist.albumCount} albums")
-                    if (artist.songCount > 0) {
-                        if (isNotEmpty()) append(" • ")
-                        append("${artist.songCount} songs")
-                    }
-                },
-                thumbUrl = artist.thumbUrl,
-                sharedKey = "artist:${artist.id}",
-            )
-        }
-    }
+    val items = remember(artists) { artists.map { it.toCoverFlowItem() } }
     val artistById = remember(artists) { artists.associateBy { it.id } }
     LibraryCoverFlow(
         items = items,
@@ -544,23 +554,7 @@ fun TrackCoverFlow(
     onOpen: (Track) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val items = remember(tracks) {
-        tracks.map { track ->
-            CoverFlowItem(
-                id = track.id,
-                title = track.title,
-                subtitle = buildString {
-                    append(track.artist)
-                    if (track.album.isNotBlank()) {
-                        append(" • ")
-                        append(track.album)
-                    }
-                },
-                thumbUrl = track.thumbUrl ?: track.localArtworkUri,
-                sharedKey = "song:${track.id}",
-            )
-        }
-    }
+    val items = remember(tracks) { tracks.map { it.toCoverFlowItem() } }
     val trackById = remember(tracks) { tracks.associateBy { it.id } }
     LibraryCoverFlow(
         items = items,
@@ -714,6 +708,7 @@ fun LibraryViewMode.label(): String = when (this) {
     LibraryViewMode.Grid -> "Grid"
     LibraryViewMode.List -> "List"
     LibraryViewMode.Flow -> "Flow"
+    LibraryViewMode.Immersive -> "Immersive"
 }
 
 fun LibraryUiPreferences.resolvedViewMode(): LibraryViewMode =

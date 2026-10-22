@@ -100,7 +100,7 @@ enum class AlbumSortKey { RecentlyAdded, Name, Year, Artist }
 
 enum class SongFileFilter { All, Lossless, Lossy }
 
-enum class LibraryViewMode { Grid, List, Flow }
+enum class LibraryViewMode { Grid, List, Flow, Immersive }
 
 private const val JellyfinLibraryPageSize = 100
 
@@ -433,6 +433,7 @@ private fun FavoriteLibraryToolbar(
             DropdownMenuItem(text = { Text("Grid") }, onClick = { onViewMode(LibraryViewMode.Grid); close() })
             DropdownMenuItem(text = { Text("List") }, onClick = { onViewMode(LibraryViewMode.List); close() })
             DropdownMenuItem(text = { Text("Flow") }, onClick = { onViewMode(LibraryViewMode.Flow); close() })
+            DropdownMenuItem(text = { Text("Immersive") }, onClick = { onViewMode(LibraryViewMode.Immersive); close() })
         }
     }
 }
@@ -786,6 +787,7 @@ fun DetailSectionToolbar(
     onAscending: ((Boolean) -> Unit)?,
     viewMode: LibraryViewMode? = null,
     onViewMode: ((LibraryViewMode) -> Unit)? = null,
+    viewModes: List<LibraryViewMode> = LibraryViewMode.entries,
     columns: LibraryColumnVisibility? = null,
     onColumns: ((LibraryColumnVisibility) -> Unit)? = null,
     reorderMode: Boolean? = null,
@@ -812,6 +814,7 @@ fun DetailSectionToolbar(
             onAscending = onAscending,
             viewMode = viewMode,
             onViewMode = onViewMode,
+            viewModes = viewModes,
             columns = columns,
             onColumns = onColumns,
             reorderMode = reorderMode,
@@ -836,6 +839,7 @@ fun DetailSectionHeader(
     onAscending: ((Boolean) -> Unit)?,
     viewMode: LibraryViewMode? = null,
     onViewMode: ((LibraryViewMode) -> Unit)? = null,
+    viewModes: List<LibraryViewMode> = LibraryViewMode.entries,
     columns: LibraryColumnVisibility? = null,
     onColumns: ((LibraryColumnVisibility) -> Unit)? = null,
     reorderMode: Boolean? = null,
@@ -864,6 +868,7 @@ fun DetailSectionHeader(
             onAscending = onAscending,
             viewMode = viewMode,
             onViewMode = onViewMode,
+            viewModes = viewModes,
             columns = columns,
             onColumns = onColumns,
             reorderMode = reorderMode,
@@ -888,6 +893,7 @@ fun LibrarySectionOptionsMenu(
     onAscending: ((Boolean) -> Unit)?,
     viewMode: LibraryViewMode? = null,
     onViewMode: ((LibraryViewMode) -> Unit)? = null,
+    viewModes: List<LibraryViewMode> = LibraryViewMode.entries,
     columns: LibraryColumnVisibility? = null,
     onColumns: ((LibraryColumnVisibility) -> Unit)? = null,
     reorderMode: Boolean? = null,
@@ -1051,33 +1057,17 @@ fun LibrarySectionOptionsMenu(
                     OptionsBackMenuItem("View") { submenu = null }
                     if (hasView) {
                         val selectViewMode = onViewMode
-                        SelectableOptionsMenuItem(
-                            label = "Grid",
-                            selected = viewMode == LibraryViewMode.Grid,
-                            onClick = {
-                                selectViewMode(LibraryViewMode.Grid)
-                                expanded = false
-                                submenu = null
-                            },
-                        )
-                        SelectableOptionsMenuItem(
-                            label = "List",
-                            selected = viewMode == LibraryViewMode.List,
-                            onClick = {
-                                selectViewMode(LibraryViewMode.List)
-                                expanded = false
-                                submenu = null
-                            },
-                        )
-                        SelectableOptionsMenuItem(
-                            label = "Flow",
-                            selected = viewMode == LibraryViewMode.Flow,
-                            onClick = {
-                                selectViewMode(LibraryViewMode.Flow)
-                                expanded = false
-                                submenu = null
-                            },
-                        )
+                        viewModes.forEach { mode ->
+                            SelectableOptionsMenuItem(
+                                label = mode.label(),
+                                selected = viewMode == mode,
+                                onClick = {
+                                    selectViewMode(mode)
+                                    expanded = false
+                                    submenu = null
+                                },
+                            )
+                        }
                     }
                 }
                 LibrarySectionOptionsSubmenu.Columns -> {
@@ -1317,6 +1307,22 @@ fun LibraryFilterOptionsMenuItems(
         },
         onClick = {
             onLibraryViewMode(LibraryViewMode.Flow)
+            onDismiss()
+        },
+    )
+    DropdownMenuItem(
+        text = {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (libraryViewMode == LibraryViewMode.Immersive) {
+                    PhoebeIconView(PhoebeIcon.Check, tint = PhoebeUi.accentLight, modifier = Modifier.size(14.dp))
+                } else {
+                    Spacer(Modifier.size(14.dp))
+                }
+                Text("View: Immersive")
+            }
+        },
+        onClick = {
+            onLibraryViewMode(LibraryViewMode.Immersive)
             onDismiss()
         },
     )
@@ -1800,6 +1806,13 @@ private fun ArtistsContent(
                 )
             }
         }
+        LibraryViewMode.Immersive -> {
+            ArtistImmersiveGrid(
+                artists = artists,
+                onOpen = onArtist,
+                modifier = modifier,
+            )
+        }
     }
 }
 
@@ -2127,6 +2140,13 @@ private fun AlbumsGrid(
                 )
             }
         }
+        LibraryViewMode.Immersive -> {
+            AlbumImmersiveGrid(
+                albums = albums,
+                onOpen = onOpen,
+                modifier = modifier,
+            )
+        }
     }
 }
 
@@ -2299,11 +2319,23 @@ private fun SongsTable(
     modifier: Modifier = Modifier,
     viewMode: LibraryViewMode = LibraryViewMode.List,
 ) {
-    if (viewMode == LibraryViewMode.Flow) {
+    if (viewMode == LibraryViewMode.Flow || viewMode == LibraryViewMode.Immersive) {
         if (tracks.isEmpty()) {
             Box(modifier.padding(top = 24.dp)) {
                 Text("No songs yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
             }
+            return
+        }
+        if (viewMode == LibraryViewMode.Immersive) {
+            TrackImmersiveGrid(
+                tracks = tracks,
+                onOpen = { track ->
+                    tracks.indexOfFirst { it.id == track.id }
+                        .takeIf { it >= 0 }
+                        ?.let(onPlay)
+                },
+                modifier = modifier,
+            )
             return
         }
         Box(modifier, contentAlignment = Alignment.Center) {

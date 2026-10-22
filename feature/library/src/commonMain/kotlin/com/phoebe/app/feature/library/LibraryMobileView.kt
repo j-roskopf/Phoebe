@@ -644,6 +644,11 @@ private fun MobileArtistsContent(
                 }
             }
         }
+        LibraryViewMode.Immersive -> {
+            MobileImmersiveStage(contentPadding, contentHeader) {
+                ArtistImmersiveGrid(artists = artists, onOpen = onArtist)
+            }
+        }
     }
 }
 
@@ -910,6 +915,36 @@ private fun MobileAlbumsContent(
                 }
             }
         }
+        LibraryViewMode.Immersive -> {
+            MobileImmersiveStage(contentPadding, contentHeader) {
+                AlbumImmersiveGrid(albums = albums, onOpen = onAlbum)
+            }
+        }
+    }
+}
+
+/** Header pinned on top; the immersive wall fills the rest above the bottom chrome. */
+@Composable
+private fun MobileImmersiveStage(
+    contentPadding: PaddingValues,
+    contentHeader: (@Composable () -> Unit)?,
+    content: @Composable () -> Unit,
+) {
+    Column(Modifier.fillMaxSize()) {
+        contentHeader?.let { header ->
+            Box(Modifier.padding(top = contentPadding.calculateTopPadding())) { header() }
+        }
+        Box(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .padding(
+                    top = if (contentHeader == null) contentPadding.calculateTopPadding() else 0.dp,
+                    bottom = contentPadding.calculateBottomPadding(),
+                ),
+        ) {
+            content()
+        }
     }
 }
 
@@ -1060,7 +1095,7 @@ private fun MobileSongsList(
     contentHeader: (@Composable () -> Unit)? = null,
     viewMode: LibraryViewMode = LibraryViewMode.List,
 ) {
-    if (viewMode == LibraryViewMode.Flow) {
+    if (viewMode == LibraryViewMode.Flow || viewMode == LibraryViewMode.Immersive) {
         if (tracks.isEmpty()) {
             LazyColumn(
                 contentPadding = contentPadding,
@@ -1072,6 +1107,19 @@ private fun MobileSongsList(
                 item(contentType = "empty-state") {
                     Text("No songs yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
                 }
+            }
+            return
+        }
+        if (viewMode == LibraryViewMode.Immersive) {
+            MobileImmersiveStage(contentPadding, contentHeader) {
+                TrackImmersiveGrid(
+                    tracks = tracks,
+                    onOpen = { track ->
+                        tracks.indexOfFirst { it.id == track.id }
+                            .takeIf { it >= 0 }
+                            ?.let(onPlay)
+                    },
+                )
             }
             return
         }
