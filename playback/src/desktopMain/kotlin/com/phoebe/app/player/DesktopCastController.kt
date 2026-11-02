@@ -64,6 +64,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import su.litvak.chromecast.api.v2.ChromeCast
 import su.litvak.chromecast.api.v2.ChromeCastException
 import su.litvak.chromecast.api.v2.Media as CastV2Media
@@ -81,6 +85,7 @@ actual fun createCastController(audioPlayer: AudioPlayer): CastController =
 private const val DefaultMediaReceiverAppId = "CC1AD845"
 private const val AppearanceThemeFile = "appearance_theme"
 private const val AppearanceTintFile = "appearance_tint"
+private const val RememberedCastDeviceFile = "cast_last_device.json"
 
 private data class PendingDesktopCastHandoff(
     val queue: List<Track>,
@@ -109,6 +114,7 @@ internal class DesktopCastController(
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val pickerRefreshMs: Long = 1_200L,
     private val loadTimeoutMs: Long = 30_000L,
+    private val deviceMemory: DesktopCastDeviceMemory = StorageDesktopCastDeviceMemory(),
 ) : CastController {
     private val mutableState = MutableStateFlow(
         CastState(
@@ -138,6 +144,7 @@ internal class DesktopCastController(
                     it.copy(message = "Chromecast discovery couldn't start. Check local network access.")
                 }
             }
+            restoreRememberedCast()
         }
     }
 
@@ -343,8 +350,69 @@ internal class DesktopCastController(
                     message = null,
                 )
             }
+            rememberDevice(connection.device)
             startPositionSync()
             castCurrentQueueIfPossible()
+        }
+    }
+
+    /**
+     * Rejoin a receiver that is still playing after the app was closed or killed.
+     *
+     * The desktop Cast transport owns its socket, so a restart loses the connection even though
+     * the Cast device can keep playing the last queue. Without this, the app comes back showing
+     * local/idle playback while the speaker is still going. Only adopt the session when the
+     * receiver reports Phoebe media; otherwise the device belongs to another sender and we must
+     * not hijack it.
+     */
+    private suspend fun restoreRememberedCast() {
+        if (currentConnection != null || mutableState.value.isConnected) return
+        val remembered = runCatching { deviceMemory.read() }.getOrNull() ?: return
+        val discovered = runTransport("read Chromecast devices for rejoin") { transport.devices() }
+            .getOrNull()
+            ?.firstOrNull { it.id == remembered.id }
+        val device = discovered ?: remembered.toDevice()
+        PhoebeLog.d("DesktopCastController") {
+            "attempting to rejoin receiver device=${device.displayName} host=${device.host}"
+        }
+        val restored = runTransport("restore Chromecast session") {
+            val connection = transport.connect(device)
+            connection.connect()
+            Triple(connection, connection.readStatus(), connection.readVolume())
+        }.getOrElse { error ->
+            PhoebeLog.d("DesktopCastController") { "Chromecast rejoin failed: ${error.message}" }
+            return
+        }
+        val (connection, status, volume) = restored
+        if (currentConnection != null || mutableState.value.isConnected) {
+            runCatching { connection.disconnect() }
+            return
+        }
+        if (status?.media?.trackId == null) {
+            PhoebeLog.d("DesktopCastController") { "receiver at ${device.displayName} has no Phoebe media; not rejoining" }
+            runCatching { connection.disconnect() }
+            runCatching { deviceMemory.clear() }
+            return
+        }
+        currentConnection = connection
+        mutableState.update {
+            it.copy(
+                isAvailable = true,
+                deviceName = device.displayName,
+                volume = volume ?: it.volume,
+                message = null,
+            )
+        }
+        applyRemoteStatus(status)
+        startPositionSync()
+        PhoebeLog.d("DesktopCastController") {
+            "rejoined receiver device=${device.displayName} playing=${status.isPlaying} track=${status.media.trackId}"
+        }
+    }
+
+    private suspend fun rememberDevice(device: DesktopCastDevice) {
+        runCatching { deviceMemory.remember(device) }.onFailure { error ->
+            PhoebeLog.d("DesktopCastController") { "Couldn't remember Chromecast device: ${error.message}" }
         }
     }
 
@@ -483,6 +551,7 @@ internal class DesktopCastController(
         statusSyncJob?.cancel()
         statusSyncJob = null
         cancelTrackEndWatchdog()
+        scope.launch { runCatching { deviceMemory.clear() } }
         val pending = pendingHandoff
         pendingHandoff = null
         appQueueSnapshot = null
@@ -825,6 +894,59 @@ internal data class DesktopCastDevice(
 ) {
     override fun toString(): String =
         model?.takeIf { it.isNotBlank() }?.let { "$displayName ($it)" } ?: displayName
+}
+
+@Serializable
+internal data class DesktopCastRememberedDevice(
+    val id: String,
+    val displayName: String,
+    val model: String? = null,
+    val host: String? = null,
+    val port: Int = DefaultChromecastPort,
+) {
+    fun toDevice(): DesktopCastDevice = DesktopCastDevice(
+        id = id,
+        displayName = displayName,
+        model = model,
+        host = host,
+        port = port,
+    )
+}
+
+internal fun DesktopCastDevice.toRememberedDevice(): DesktopCastRememberedDevice? =
+    host?.takeIf { it.isNotBlank() }?.let { host ->
+        DesktopCastRememberedDevice(
+            id = id,
+            displayName = displayName,
+            model = model,
+            host = host,
+            port = port,
+        )
+    }
+
+internal interface DesktopCastDeviceMemory {
+    suspend fun read(): DesktopCastRememberedDevice?
+    suspend fun remember(device: DesktopCastDevice)
+    suspend fun clear()
+}
+
+internal class StorageDesktopCastDeviceMemory(
+    private val storage: PlatformStorage = PlatformStorage(),
+    private val json: Json = Json { ignoreUnknownKeys = true },
+) : DesktopCastDeviceMemory {
+    override suspend fun read(): DesktopCastRememberedDevice? =
+        storage.readText(RememberedCastDeviceFile)?.let { text ->
+            runCatching { json.decodeFromString<DesktopCastRememberedDevice>(text) }.getOrNull()
+        }
+
+    override suspend fun remember(device: DesktopCastDevice) {
+        val remembered = device.toRememberedDevice() ?: return
+        storage.writeText(RememberedCastDeviceFile, json.encodeToString(remembered))
+    }
+
+    override suspend fun clear() {
+        storage.delete(RememberedCastDeviceFile)
+    }
 }
 
 internal data class DesktopCastMedia(

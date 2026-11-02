@@ -49,6 +49,82 @@ class DesktopCastControllerTest {
     }
 
     @Test
+    fun reopenedAppRejoinsReceiverThatIsStillPlaying() = runTest {
+        val player = FakeAudioPlayer()
+        player.play(listOf(testTrack("jellyfin:local")), 0)
+        val connection = FakeDesktopCastConnection(volume = 0.35f)
+        connection.status = playingCastStatus("jellyfin:restored", positionMs = 42_000L)
+        val memory = InMemoryDesktopCastDeviceMemory(
+            DesktopCastRememberedDevice(
+                id = "living-room",
+                displayName = "Living Room",
+                host = "192.168.1.20",
+            ),
+        )
+
+        val controller = newController(player, connection, deviceMemory = memory)
+        runCurrent()
+
+        assertTrue(controller.state.value.isConnected)
+        assertEquals("Living Room", controller.state.value.deviceName)
+        assertEquals("jellyfin:restored", controller.state.value.currentTrack?.id)
+        assertEquals(42_000L, controller.state.value.positionMs)
+        assertTrue(controller.state.value.isPlaying)
+        assertTrue(connection.loadRequests.isEmpty())
+        assertFalse(player.state.value.isPlaying)
+    }
+
+    @Test
+    fun reopenedAppDoesNotHijackReceiverWithoutPhoebeMedia() = runTest {
+        val connection = FakeDesktopCastConnection()
+        connection.status = DesktopCastStatus(
+            deviceName = "Living Room",
+            media = null,
+            isPlaying = true,
+            isBuffering = false,
+            positionMs = 0L,
+            durationMs = 0L,
+            volume = 0.7f,
+            isFinished = false,
+        )
+        val memory = InMemoryDesktopCastDeviceMemory(
+            DesktopCastRememberedDevice(
+                id = "living-room",
+                displayName = "Living Room",
+                host = "192.168.1.20",
+            ),
+        )
+
+        val controller = newController(player = FakeAudioPlayer(), connection = connection, deviceMemory = memory)
+        runCurrent()
+
+        assertFalse(controller.state.value.isConnected)
+        assertFalse(connection.connected)
+        assertEquals(null, memory.remembered)
+    }
+
+    @Test
+    fun connectingRemembersDeviceUntilUserDisconnects() = runTest {
+        val memory = InMemoryDesktopCastDeviceMemory()
+        val controller = newController(
+            player = FakeAudioPlayer(),
+            connection = FakeDesktopCastConnection(),
+            deviceMemory = memory,
+        )
+
+        controller.showDevicePicker()
+        runCurrent()
+
+        assertEquals("living-room", memory.remembered?.id)
+        assertEquals("192.168.1.20", memory.remembered?.host)
+
+        controller.disconnect()
+        runCurrent()
+
+        assertEquals(null, memory.remembered)
+    }
+
+    @Test
     fun selectingDeviceCastsSubsonicAndRadioQueues() = runTest {
         val queue = listOf(
             testTrack("navidrome:1", streamUrl = "http://navidrome.example/rest/stream.view?id=1"),
@@ -466,6 +542,7 @@ class DesktopCastControllerTest {
         loadTimeoutMs: Long = 30_000L,
         dispatcher: CoroutineDispatcher = StandardTestDispatcher(testScheduler),
         picker: DesktopCastDevicePicker = AutoSelectingDevicePicker,
+        deviceMemory: InMemoryDesktopCastDeviceMemory = InMemoryDesktopCastDeviceMemory(),
     ): DesktopCastController =
         DesktopCastController(
             audioPlayer = player,
@@ -475,7 +552,35 @@ class DesktopCastControllerTest {
             ioDispatcher = dispatcher,
             pickerRefreshMs = 0L,
             loadTimeoutMs = loadTimeoutMs,
+            deviceMemory = deviceMemory,
         )
+
+    private fun playingCastStatus(id: String, positionMs: Long): DesktopCastStatus {
+        val castUrl = "https://music.example/$id.mp3"
+        return DesktopCastStatus(
+            deviceName = "Living Room",
+            media = DesktopCastRemoteMedia(
+                trackId = id,
+                title = id,
+                artist = "Artist",
+                album = "Album",
+                durationMs = 60_000L,
+                streamUrl = castUrl,
+                castUrl = castUrl,
+                downloadUrl = null,
+                thumbUrl = null,
+                filepath = null,
+                audioCodec = "mp3",
+                contentId = castUrl,
+            ),
+            isPlaying = true,
+            isBuffering = false,
+            positionMs = positionMs,
+            durationMs = 60_000L,
+            volume = 0.35f,
+            isFinished = false,
+        )
+    }
 
     private fun testTrack(id: String, streamUrl: String = "https://music.example/$id.mp3"): Track =
         Track(
@@ -551,10 +656,30 @@ private data class ConnectedDialog(
     val onDismiss: () -> Unit,
 )
 
+private class InMemoryDesktopCastDeviceMemory(
+    remembered: DesktopCastRememberedDevice? = null,
+) : DesktopCastDeviceMemory {
+    var remembered: DesktopCastRememberedDevice? = remembered
+
+    override suspend fun read(): DesktopCastRememberedDevice? = remembered
+
+    override suspend fun remember(device: DesktopCastDevice) {
+        remembered = device.toRememberedDevice()
+    }
+
+    override suspend fun clear() {
+        remembered = null
+    }
+}
+
 private class FakeDesktopCastTransport(
     private val connection: FakeDesktopCastConnection,
 ) : DesktopCastTransport {
-    private val device = DesktopCastDevice(id = "living-room", displayName = "Living Room")
+    private val device = DesktopCastDevice(
+        id = "living-room",
+        displayName = "Living Room",
+        host = "192.168.1.20",
+    )
     override suspend fun startDiscovery() = Unit
     override suspend fun refreshDiscovery() = Unit
     override suspend fun devices(): List<DesktopCastDevice> = listOf(device)
