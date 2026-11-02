@@ -104,6 +104,27 @@ class DesktopCastControllerTest {
     }
 
     @Test
+    fun reopenedAppKeepsRememberedDeviceWhenStatusIsUnavailable() = runTest {
+        val connection = FakeDesktopCastConnection().apply { returnNullStatus = true }
+        val remembered = DesktopCastRememberedDevice(
+            id = "living-room",
+            displayName = "Living Room",
+            host = "192.168.1.20",
+        )
+        val memory = InMemoryDesktopCastDeviceMemory(remembered)
+
+        val controller = newController(
+            player = FakeAudioPlayer(),
+            connection = connection,
+            deviceMemory = memory,
+        )
+        runCurrent()
+
+        assertFalse(controller.state.value.isConnected)
+        assertEquals(remembered, memory.remembered)
+    }
+
+    @Test
     fun connectingRemembersDeviceUntilUserDisconnects() = runTest {
         val memory = InMemoryDesktopCastDeviceMemory()
         val controller = newController(

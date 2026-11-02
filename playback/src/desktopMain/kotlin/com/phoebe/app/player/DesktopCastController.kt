@@ -388,7 +388,17 @@ internal class DesktopCastController(
             runCatching { connection.disconnect() }
             return
         }
-        if (status?.media?.trackId == null) {
+        if (status == null) {
+            // A failed status read is not evidence that the receiver stopped; keep the remembered
+            // device so a transient network error does not permanently disable rejoin.
+            PhoebeLog.d("DesktopCastController") {
+                "receiver status unavailable at ${device.displayName}; keeping remembered device"
+            }
+            runCatching { connection.disconnect() }
+            return
+        }
+        val media = status.media
+        if (media?.trackId == null) {
             PhoebeLog.d("DesktopCastController") { "receiver at ${device.displayName} has no Phoebe media; not rejoining" }
             runCatching { connection.disconnect() }
             runCatching { deviceMemory.clear() }
@@ -406,7 +416,7 @@ internal class DesktopCastController(
         applyRemoteStatus(status)
         startPositionSync()
         PhoebeLog.d("DesktopCastController") {
-            "rejoined receiver device=${device.displayName} playing=${status.isPlaying} track=${status.media.trackId}"
+            "rejoined receiver device=${device.displayName} playing=${status.isPlaying} track=${media.trackId}"
         }
     }
 
