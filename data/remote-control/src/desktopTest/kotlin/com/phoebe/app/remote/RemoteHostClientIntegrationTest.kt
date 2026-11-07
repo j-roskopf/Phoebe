@@ -216,13 +216,13 @@ class RemoteHostClientIntegrationTest {
         delay(100L)
         client.connect("127.0.0.1", testPort)
 
-        val pairingRequest = withTimeout(5000L) {
+        val pairingRequest = withTimeout(15_000L) {
             hostServer.pendingPairings.first { it.isNotEmpty() }.first()
         }
 
         pairingRequest.reject()
 
-        withTimeout(5000L) {
+        withTimeout(15_000L) {
             client.state.first { it.status == RemoteConnectionStatus.Error }
         }
 

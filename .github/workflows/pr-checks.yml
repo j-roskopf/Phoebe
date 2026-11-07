@@ -22,7 +22,7 @@ jobs:
       matrix:
         include:
           - os: linux
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - os: macos
             runner: macos-26
           - os: windows
@@ -255,7 +255,7 @@ jobs:
 
   web-screenshots:
     name: Web screenshots
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
 
     steps:
