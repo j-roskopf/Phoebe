@@ -242,8 +242,10 @@ class PlexConnectionResolverTest {
         // Without the hint pinned to rank 0, the race waits out the dead :32400 / other relay
         // budgets. Concurrent MockEngine dispatch can reorder near-simultaneous starts, so assert
         // wall time rather than strict first-host order.
+        // Dead peers hang for 5s, so anything under that proves the hint won the race without
+        // waiting them out. Allow headroom for CI scheduling jitter instead of a tight bound.
         assertTrue(
-            elapsedMs < 2_000,
+            elapsedMs < 4_000,
             "hinted relay race waited ${elapsedMs}ms behind dead peers",
         )
     }

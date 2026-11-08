@@ -31,7 +31,7 @@ jobs:
       matrix:
         include:
           - os: linux
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - os: macos
             runner: macos-26
           - os: windows
@@ -435,7 +435,7 @@ jobs:
   web-production-playback-smoke:
     name: Web production playback smoke
     if: github.event_name == 'push' || contains(github.event.pull_request.labels.*.name, 'smoke')
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 35
 
     steps:

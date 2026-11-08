@@ -193,6 +193,11 @@ private class AndroidCastController : CastController {
     override fun showDevicePicker() {
         val activity = AndroidContextHolder.activity
         ensureCastSessionListener()
+        PhoebeLog.d(TAG) {
+            "showDevicePicker activity=${activity != null} listener=$sessionListenerRegistered " +
+                "appConnected=${mutableState.value.isConnected} castState=${castContext?.castState}"
+        }
+        adoptUntrackedCastSession()
         if (activity == null) {
             mutableState.update { it.copy(message = "Chromecast is not available right now.") }
             return
@@ -735,13 +740,32 @@ private class AndroidCastController : CastController {
 
     private fun ensureCastSessionListener() {
         if (sessionListenerRegistered) return
-        val context = castContext ?: return
+        val context = runCatching { CastContext.getSharedInstance(appContext) }
+            .onFailure { error ->
+                PhoebeLog.d(TAG) { "cast session listener not registered: CastContext unavailable (${error::class.simpleName}: ${error.message})" }
+            }
+            .getOrNull() ?: return
         context.sessionManager.addSessionManagerListener(sessionListener, CastSession::class.java)
+        PhoebeLog.d(TAG) { "cast session listener registered existingSession=${context.sessionManager.currentCastSession != null}" }
         sessionListenerRegistered = true
         mutableState.update { it.copy(isAvailable = true, message = null) }
         context.sessionManager.currentCastSession?.let { session ->
             connect(session, castLocalQueueIfReceiverEmpty = false)
         }
+    }
+
+    /**
+     * The Cast framework can hold a connected session whose start/resume callback this controller
+     * never saw (listener registered late, or a missed callback). The system Cast dialog then says
+     * "connected" while the app icon stays off and nothing is sent to the receiver. Tapping the cast
+     * button is explicit intent to cast, so adopt that session and hand off the local queue.
+     */
+    private fun adoptUntrackedCastSession() {
+        if (mutableState.value.isConnected) return
+        val session = castContext?.sessionManager?.currentCastSession ?: return
+        if (!session.isConnected) return
+        PhoebeLog.d(TAG) { "adopting untracked cast session device=${session.castDevice?.friendlyName}" }
+        connect(session, castLocalQueueIfReceiverEmpty = true)
     }
 
     private fun restoreLocalPlayback(handoff: PendingCastHandoff) {
