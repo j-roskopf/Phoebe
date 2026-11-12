@@ -85,6 +85,8 @@ kotlin {
                 implementation("org.lwjglx:lwjgl3-awt:${libs.versions.lwjglAwt.get()}") {
                     exclude(group = "org.lwjgl")
                 }
+                implementation(libs.dbus.java.core)
+                implementation(libs.dbus.java.transport.native.unixsocket)
             }
         }
         androidMain {

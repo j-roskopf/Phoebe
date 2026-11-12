@@ -21,6 +21,7 @@ jaudiotagger = "3.0.1"
 jnativehook = "2.2.2"
 lwjgl = "3.3.6"
 lwjglAwt = "0.2.3"
+dbus-java = "5.1.1"
 jna = "5.18.1"
 soundlibs-mp3spi = "1.9.5.4"
 soundlibs-vorbisspi = "1.0.3.3"
@@ -118,6 +119,8 @@ lwjgl-bom = { module = "org.lwjgl:lwjgl-bom", version.ref = "lwjgl" }
 lwjgl = { module = "org.lwjgl:lwjgl" }
 lwjgl-opengl = { module = "org.lwjgl:lwjgl-opengl" }
 lwjgl-awt = { module = "org.lwjglx:lwjgl3-awt", version.ref = "lwjglAwt" }
+dbus-java-core = { module = "com.github.hypfvieh:dbus-java-core", version.ref = "dbus-java" }
+dbus-java-transport-native-unixsocket = { module = "com.github.hypfvieh:dbus-java-transport-native-unixsocket", version.ref = "dbus-java" }
 jna = { module = "net.java.dev.jna:jna", version.ref = "jna" }
 jna-platform = { module = "net.java.dev.jna:jna-platform", version.ref = "jna" }
 soundlibs-mp3spi = { module = "com.googlecode.soundlibs:mp3spi", version.ref = "soundlibs-mp3spi" }
