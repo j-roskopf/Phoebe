@@ -43,6 +43,31 @@ class EmbyClientTest {
     }
 
     @Test
+    fun keepsLegacyEmbyAuthorizationHeaders() = runTest {
+        val requests = mutableListOf<io.ktor.client.request.HttpRequestData>()
+        val engine = MockEngine { request ->
+            requests += request
+            when (request.url.encodedPath) {
+                "/emby/Users/AuthenticateByName" -> respondJson(
+                    """{ "User": { "Id": "user-1", "Name": "Ada" }, "AccessToken": "emby-token" }""",
+                )
+                "/emby/Users/user-1/Views" -> respondJson("""{ "Items": [] }""")
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val client = EmbyClient(testHttpClient(engine))
+
+        val auth = client.authenticate("https://emby.example", "ada", "secret")
+        client.libraries(auth.server, auth.token, auth.userId)
+
+        val (signIn, libraries) = requests
+        assertTrue(signIn.headers["X-Emby-Authorization"].orEmpty().startsWith("MediaBrowser Client=\"Phoebe\""))
+        assertEquals(null, signIn.headers["X-Emby-Token"])
+        assertEquals("emby-token", libraries.headers["X-Emby-Token"])
+        requests.forEach { request -> assertEquals(null, request.headers[HttpHeaders.Authorization]) }
+    }
+
+    @Test
     fun favoritesAndRatingsUseUserScopedEmbyEndpoints() = runTest {
         val paths = mutableListOf<String>()
         val engine = MockEngine { request ->

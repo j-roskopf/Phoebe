@@ -1,6 +1,7 @@
 package com.phoebe.app
 
 import com.phoebe.app.data.JellyfinClient
+import com.phoebe.app.data.embyFamilyArtworkAuthHeaders
 import com.phoebe.app.domain.MusicLibrary
 import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.testing.testHttpClient
@@ -53,6 +54,43 @@ class JellyfinClientTest {
         assertEquals("jf-token", auth.token)
         assertEquals("Ada", auth.userName)
         assertEquals(listOf(MusicLibrary("music", "Music")), libraries)
+    }
+
+    @Test
+    fun sendsAuthorizationHeaderInsteadOfLegacyEmbyHeaders() = runTest {
+        val requests = mutableListOf<io.ktor.client.request.HttpRequestData>()
+        val engine = MockEngine { request ->
+            requests += request
+            when (request.url.encodedPath) {
+                "/Users/AuthenticateByName" -> respondJson(
+                    """{ "User": { "Id": "user-1", "Name": "Ada" }, "AccessToken": "jf-token" }""",
+                )
+                "/UserViews" -> respondJson("""{ "Items": [] }""")
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val client = JellyfinClient(testHttpClient(engine))
+
+        val auth = client.authenticate("https://jellyfin.example/", "ada", "secret")
+        client.libraries(auth.server, auth.token, auth.userId)
+
+        val (signIn, libraries) = requests
+        assertTrue(signIn.headers[HttpHeaders.Authorization].orEmpty().startsWith("MediaBrowser Client=\"Phoebe\""))
+        assertFalse(signIn.headers[HttpHeaders.Authorization].orEmpty().contains("Token="))
+        assertTrue(libraries.headers[HttpHeaders.Authorization].orEmpty().endsWith(", Token=\"jf-token\""))
+        requests.forEach { request ->
+            assertEquals(null, request.headers["X-Emby-Authorization"])
+            assertEquals(null, request.headers["X-Emby-Token"])
+        }
+    }
+
+    @Test
+    fun artworkAuthHeadersUseAuthorizationAndToken() {
+        val headers = embyFamilyArtworkAuthHeaders("https://jellyfin.example/Items/item-1/Images/Primary?api_key=jf-token")
+
+        assertEquals(setOf(HttpHeaders.Authorization, "X-Emby-Token"), headers.keys)
+        assertTrue(headers.getValue(HttpHeaders.Authorization).endsWith(", Token=\"jf-token\""))
+        assertEquals("jf-token", headers["X-Emby-Token"])
     }
 
     @Test
