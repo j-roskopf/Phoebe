@@ -963,14 +963,19 @@ open class JellyfinClient(
     private fun resolvedItemsPath(path: String, userId: String?): String =
         if (path == "/Items") itemsApiPath(userId.orEmpty()) else path
 
-    private fun io.ktor.client.request.HttpRequestBuilder.jellyfinHeaders() {
+    private fun io.ktor.client.request.HttpRequestBuilder.jellyfinHeaders(token: String? = null) {
         header(HttpHeaders.Accept, "application/json")
-        header("X-Emby-Authorization", """MediaBrowser Client="Phoebe", Device="Phoebe", DeviceId="phoebe", Version="1.0.0"""")
+        if (family == EmbyFamily.Emby) {
+            header("X-Emby-Authorization", EmbyFamilyClientAuthorization)
+            token?.let { header("X-Emby-Token", it) }
+        } else {
+            // Newer Jellyfin servers reject the legacy X-Emby-Authorization header with a 400.
+            header(HttpHeaders.Authorization, jellyfinAuthorizationHeader(token))
+        }
     }
 
     private fun io.ktor.client.request.HttpRequestBuilder.jellyfinAuth(token: String) {
-        jellyfinHeaders()
-        header("X-Emby-Token", token)
+        jellyfinHeaders(token)
     }
 
     private suspend fun quickConnectState(base: String, secret: String): JellyfinQuickConnectResult =
@@ -1287,6 +1292,9 @@ internal fun embyArtistPathName(name: String): String =
 internal const val EmbyFamilyClientAuthorization =
     """MediaBrowser Client="Phoebe", Device="Phoebe", DeviceId="phoebe", Version="1.0.0""""
 
+internal fun jellyfinAuthorizationHeader(token: String? = null): String =
+    if (token == null) EmbyFamilyClientAuthorization else """$EmbyFamilyClientAuthorization, Token="$token""""
+
 internal fun embyFamilyApiKeyFromUrl(url: String): String? =
     url.substringAfter('?', "")
         .split('&')
@@ -1305,8 +1313,9 @@ fun String.isEmbyFamilyArtworkUrl(): Boolean =
 fun embyFamilyArtworkAuthHeaders(url: String): Map<String, String> {
     if (!url.isEmbyFamilyArtworkUrl()) return emptyMap()
     val token = embyFamilyApiKeyFromUrl(url) ?: return emptyMap()
+    // Jellyfin reads Authorization, Emby reads X-Emby-Token; X-Emby-Authorization is rejected by newer Jellyfin.
     return mapOf(
-        "X-Emby-Authorization" to EmbyFamilyClientAuthorization,
+        HttpHeaders.Authorization to jellyfinAuthorizationHeader(token),
         "X-Emby-Token" to token,
     )
 }
