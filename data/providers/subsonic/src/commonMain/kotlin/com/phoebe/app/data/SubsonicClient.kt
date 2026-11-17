@@ -478,6 +478,104 @@ class SubsonicClient(
         return response.response.similarSongs2?.song.orEmpty().map { it.toTrack(server.uri, username, password) }
     }
 
+    /**
+     * `getSimilarSongs` (non-ID3 variant) accepts an artist, album, or song ID, which makes it the right
+     * call for seeding from whatever item is in the queue. Like [similarSongs] it depends on the server's
+     * external metadata agents (Last.fm on Navidrome) and returns an empty list when none are configured.
+     */
+    suspend fun similarSongsForItem(server: PlexServer, username: String, password: String, itemId: String, count: Int = 50): List<Track> {
+        val response = request<SubsonicSimilarSongsRoot>(server.uri, username, password, "getSimilarSongs") {
+            parameter("id", itemId.removePrefix("navidrome:"))
+            parameter("count", count)
+        }
+        return response.response.similarSongs?.song.orEmpty().map { it.toTrack(server.uri, username, password) }
+    }
+
+    suspend fun randomSongs(server: PlexServer, username: String, password: String, genre: String? = null, count: Int = 50): List<Track> {
+        val response = request<SubsonicRandomSongsRoot>(server.uri, username, password, "getRandomSongs") {
+            parameter("size", count.coerceIn(1, SubsonicPageSize))
+            genre?.takeIf { it.isNotBlank() }?.let { parameter("genre", it) }
+        }
+        return response.response.randomSongs?.song.orEmpty().map { it.toTrack(server.uri, username, password) }
+    }
+
+    /** Resolves a server artist ID from a display name via `search3`; exact (case-insensitive) matches only. */
+    suspend fun findArtistIdByName(server: PlexServer, username: String, password: String, name: String): String? {
+        val query = name.trim().takeIf { it.isNotBlank() } ?: return null
+        val response = request<SubsonicSearchResult3Root>(server.uri, username, password, "search3") {
+            parameter("query", query)
+            parameter("artistCount", 10)
+            parameter("albumCount", 0)
+            parameter("songCount", 0)
+        }
+        return response.response.searchResult3?.artist.orEmpty()
+            .firstOrNull { it.name.trim().equals(query, ignoreCase = true) }
+            ?.id
+    }
+
+    suspend fun artistTracks(
+        server: PlexServer,
+        username: String,
+        password: String,
+        artistId: String,
+        maxAlbums: Int = ArtistRadioMaxSeedAlbums,
+    ): List<Track> {
+        val response = request<SubsonicArtistRoot>(server.uri, username, password, "getArtist") {
+            parameter("id", artistId.removePrefix("navidrome:"))
+        }
+        val albums = response.response.artist?.album.orEmpty()
+            .map { it.toAlbum(server.uri, username, password) }
+            .shuffled()
+            .take(maxAlbums.coerceAtLeast(1))
+        return albumTracksParallel(server, albums, username, password).values.flatten()
+    }
+
+    /**
+     * Builds an artist radio queue. Prefers the server's similar-songs list (Last.fm-backed on Navidrome);
+     * when that comes back thin — no Last.fm integration, or few similar artists in the library — it falls
+     * back to a shuffle of the artist's own tracks interleaved with random songs from the artist's genre.
+     *
+     * [artistId] may be null when the catalog only knows the artist by name; it is then resolved with
+     * `search3`. Returned tracks carry bare (unprefixed) server IDs.
+     */
+    suspend fun artistRadio(
+        server: PlexServer,
+        username: String,
+        password: String,
+        artistId: String?,
+        artistName: String,
+        genreHint: String? = null,
+        count: Int = ArtistRadioTrackCount,
+    ): List<Track> {
+        val resolvedId = artistId?.removePrefix("navidrome:")?.takeIf { it.isNotBlank() }
+            ?: runCatching { findArtistIdByName(server, username, password, artistName) }.getOrNull()
+        val similar = resolvedId
+            ?.let { id -> runCatching { similarSongs(server, username, password, id, count) }.getOrNull() }
+            .orEmpty()
+            .distinctBy { it.id }
+        if (similar.size >= ArtistRadioMinSimilarTracks) return similar.take(count)
+
+        val own = resolvedId
+            ?.let { id -> runCatching { artistTracks(server, username, password, id) }.getOrNull() }
+            .orEmpty()
+            .distinctBy { it.id }
+            .shuffled()
+        val genre = genreHint.primarySubsonicGenre()
+            ?: own.mapNotNull { it.genre.primarySubsonicGenre() }
+                .groupingBy { it }
+                .eachCount()
+                .maxByOrNull { it.value }
+                ?.key
+        val ownIds = own.mapTo(HashSet()) { it.id }
+        val genreTracks = genre
+            ?.let { runCatching { randomSongs(server, username, password, it, count) }.getOrNull() }
+            .orEmpty()
+            .filterNot { it.id in ownIds }
+        return (similar + interleave(own.take(count / 2), genreTracks))
+            .distinctBy { it.id }
+            .take(count)
+    }
+
     fun streamUrl(baseUrl: String, username: String, password: String, id: String): String =
         subsonicBinaryUrl(baseUrl, username, password, "stream", id)
 
@@ -517,9 +615,26 @@ class SubsonicClient(
         const val SubsonicApiVersion = "1.16.1"
         const val SubsonicClientName = "phoebe"
         const val SubsonicPageSize = 500
+        const val ArtistRadioTrackCount = 50
+        const val ArtistRadioMinSimilarTracks = 10
+        const val ArtistRadioMaxSeedAlbums = 8
         var saltCounter = 1
     }
 }
+
+private fun <T> interleave(first: List<T>, second: List<T>): List<T> {
+    val result = ArrayList<T>(first.size + second.size)
+    val max = maxOf(first.size, second.size)
+    for (index in 0 until max) {
+        first.getOrNull(index)?.let(result::add)
+        second.getOrNull(index)?.let(result::add)
+    }
+    return result
+}
+
+/** Phoebe joins OpenSubsonic multi-genre arrays with ", "; `getRandomSongs?genre=` needs a single genre. */
+private fun String?.primarySubsonicGenre(): String? =
+    this?.substringBefore(',')?.trim()?.takeIf { it.isNotBlank() }
 
 private fun subsonicBinaryUrl(baseUrl: String, username: String, password: String, method: String, id: String): String {
     val salt = "phoebe${kotlin.random.Random.nextInt().toUInt().toString(16)}"
@@ -571,6 +686,15 @@ private data class SubsonicPlaylistRoot(@SerialName("subsonic-response") val res
 private data class SubsonicSimilarSongsRoot(@SerialName("subsonic-response") val response: SubsonicResponse = SubsonicResponse())
 
 @Serializable
+private data class SubsonicRandomSongsRoot(@SerialName("subsonic-response") val response: SubsonicResponse = SubsonicResponse())
+
+@Serializable
+private data class SubsonicSearchResult3Root(@SerialName("subsonic-response") val response: SubsonicResponse = SubsonicResponse())
+
+@Serializable
+private data class SubsonicArtistRoot(@SerialName("subsonic-response") val response: SubsonicResponse = SubsonicResponse())
+
+@Serializable
 private data class SubsonicStarred2Root(@SerialName("subsonic-response") val response: SubsonicResponse = SubsonicResponse())
 
 @Serializable
@@ -586,9 +710,25 @@ private data class SubsonicResponse(
     val song: SubsonicSongDto? = null,
     val playlists: SubsonicPlaylists? = null,
     val playlist: SubsonicPlaylistDto? = null,
+    val similarSongs: SubsonicSongs? = null,
     val similarSongs2: SubsonicSongs? = null,
+    val randomSongs: SubsonicSongs? = null,
+    val searchResult3: SubsonicSearchResult3? = null,
+    val artist: SubsonicArtistWithAlbumsDto? = null,
     val starred2: SubsonicStarred2? = null,
     val internetRadioStations: SubsonicInternetRadioStations? = null,
+)
+
+@Serializable
+private data class SubsonicSearchResult3(
+    val artist: List<SubsonicArtistDto> = emptyList(),
+)
+
+@Serializable
+private data class SubsonicArtistWithAlbumsDto(
+    val id: String,
+    val name: String,
+    val album: List<SubsonicAlbumDto> = emptyList(),
 )
 
 @Serializable

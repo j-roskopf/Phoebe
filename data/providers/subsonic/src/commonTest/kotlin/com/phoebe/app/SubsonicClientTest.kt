@@ -258,6 +258,122 @@ class SubsonicClientTest {
             catalog.artists.map { it.title }.sorted(),
         )
     }
+
+    @Test
+    fun artistRadioUsesServerSimilarSongsWhenAvailable() = runTest {
+        val server = PlexServer("navidrome:test", "Navidrome", "https://navidrome.example", owned = true)
+        val seen = mutableListOf<String>()
+        val engine = MockEngine { request ->
+            seen += request.url.encodedPath
+            when (request.url.encodedPath) {
+                "/rest/getSimilarSongs2.view" -> {
+                    assertEquals("ar1", request.url.parameters["id"])
+                    respondJson(songsResponse("similarSongs2", (1..12).map { "sim$it" }))
+                }
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val client = SubsonicClient(testHttpClient(engine))
+
+        val tracks = client.artistRadio(server, "ada", "secret", artistId = "navidrome:ar1", artistName = "North Lake")
+
+        assertEquals((1..12).map { "sim$it" }, tracks.map { it.id })
+        assertEquals(listOf("/rest/getSimilarSongs2.view"), seen)
+    }
+
+    @Test
+    fun artistRadioFallsBackToArtistTracksAndGenreWhenSimilarSongsAreEmpty() = runTest {
+        val server = PlexServer("navidrome:test", "Navidrome", "https://navidrome.example", owned = true)
+        var randomGenre: String? = null
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/rest/getSimilarSongs2.view" -> respondJson(songsResponse("similarSongs2", emptyList()))
+                "/rest/getArtist.view" -> respondJson(
+                    """
+                    { "subsonic-response": { "status": "ok", "artist": { "id": "ar1", "name": "North Lake", "album": [
+                      { "id": "al1", "name": "Radio House", "artist": "North Lake" }
+                    ] } } }
+                    """.trimIndent(),
+                )
+                "/rest/getAlbum.view" -> respondJson(
+                    """
+                    { "subsonic-response": { "status": "ok", "album": {
+                      "id": "al1", "name": "Radio House", "artist": "North Lake", "song": [
+                        { "id": "own1", "title": "One", "genre": "Electronic, Synthpop" },
+                        { "id": "own2", "title": "Two", "genre": "Electronic" }
+                      ]
+                    } } }
+                    """.trimIndent(),
+                )
+                "/rest/getRandomSongs.view" -> {
+                    randomGenre = request.url.parameters["genre"]
+                    respondJson(songsResponse("randomSongs", listOf("own1", "gen1", "gen2")))
+                }
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val client = SubsonicClient(testHttpClient(engine))
+
+        val tracks = client.artistRadio(server, "ada", "secret", artistId = "ar1", artistName = "North Lake")
+
+        assertEquals("Electronic", randomGenre)
+        assertEquals(setOf("own1", "own2", "gen1", "gen2"), tracks.map { it.id }.toSet())
+        assertEquals(4, tracks.size)
+        assertTrue(tracks.first().id.startsWith("own"), "fallback radio should open with one of the artist's own tracks")
+    }
+
+    @Test
+    fun artistRadioResolvesUnknownArtistIdByExactName() = runTest {
+        val server = PlexServer("navidrome:test", "Navidrome", "https://navidrome.example", owned = true)
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/rest/search3.view" -> respondJson(
+                    """
+                    { "subsonic-response": { "status": "ok", "searchResult3": { "artist": [
+                      { "id": "ar-other", "name": "North Lake Tribute" },
+                      { "id": "ar1", "name": "north lake" }
+                    ] } } }
+                    """.trimIndent(),
+                )
+                "/rest/getSimilarSongs2.view" -> {
+                    assertEquals("ar1", request.url.parameters["id"])
+                    respondJson(songsResponse("similarSongs2", (1..10).map { "sim$it" }))
+                }
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val client = SubsonicClient(testHttpClient(engine))
+
+        val tracks = client.artistRadio(server, "ada", "secret", artistId = null, artistName = "North Lake")
+
+        assertEquals(10, tracks.size)
+    }
+
+    @Test
+    fun similarSongsForItemUsesNonId3Endpoint() = runTest {
+        val server = PlexServer("navidrome:test", "Navidrome", "https://navidrome.example", owned = true)
+        val engine = MockEngine { request ->
+            when (request.url.encodedPath) {
+                "/rest/getSimilarSongs.view" -> {
+                    assertEquals("tr1", request.url.parameters["id"])
+                    respondJson(songsResponse("similarSongs", listOf("sim1", "sim2")))
+                }
+                else -> respond("", HttpStatusCode.NotFound)
+            }
+        }
+        val client = SubsonicClient(testHttpClient(engine))
+
+        val tracks = client.similarSongsForItem(server, "ada", "secret", "navidrome:tr1")
+
+        assertEquals(listOf("sim1", "sim2"), tracks.map { it.id })
+    }
+}
+
+private fun songsResponse(key: String, ids: List<String>): String {
+    val songs = ids.joinToString(",") { id ->
+        """{ "id": "$id", "title": "Song $id", "artist": "Artist", "album": "Album", "albumId": "al-$id", "duration": 200 }"""
+    }
+    return """{ "subsonic-response": { "status": "ok", "$key": { "song": [$songs] } } }"""
 }
 
 private fun MockRequestHandleScope.respondJson(content: String) = respond(

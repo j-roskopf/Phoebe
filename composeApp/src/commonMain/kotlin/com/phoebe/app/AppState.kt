@@ -1101,10 +1101,7 @@ class AppState(
     ): List<Track> =
         when (origin) {
             is PlaybackQueueOrigin.Artist -> {
-                if (!origin.id.startsWith("plex:") &&
-                    !origin.id.startsWith("jellyfin:") &&
-                    !origin.id.startsWith("emby:")
-                ) {
+                if (!origin.id.supportsArtistRadio()) {
                     emptyList()
                 } else {
                     dependencies.catalogRepository.playArtistRadio(
@@ -1200,10 +1197,13 @@ class AppState(
             MediaProviderType.Plex -> dependencies.catalogRepository.plexSimilarTracksForItem(session.value, itemId)
             MediaProviderType.Jellyfin,
             MediaProviderType.Emby -> dependencies.catalogRepository.instantMixForItem(session.value, itemId)
-            MediaProviderType.Navidrome,
+            MediaProviderType.Navidrome -> dependencies.catalogRepository.navidromeSimilarTracksForItem(session.value, itemId)
             MediaProviderType.MusicAssistant,
             null -> emptyList()
         }
+
+    private fun String.supportsArtistRadio(): Boolean =
+        ArtistRadioCatalogPrefixes.any { startsWith(it) }
 
     private fun String.belongsToProviderType(providerType: MediaProviderType?): Boolean {
         val prefix = providerType?.catalogPrefix ?: return false
@@ -2746,7 +2746,7 @@ class AppState(
     }
 
     fun playArtistRadio(artist: Artist) = scope.launch {
-        if (!artist.id.startsWith("plex:") && !artist.id.startsWith("jellyfin:") && !artist.id.startsWith("emby:")) {
+        if (!artist.id.supportsArtistRadio()) {
             mutableMessage.value = "Artist Radio is available for streaming-library artists."
             return@launch
         }
@@ -2791,7 +2791,7 @@ class AppState(
     }
 
     fun probeArtistRadio(artist: Artist) = scope.launch {
-        if (!artist.id.startsWith("plex:") && !artist.id.startsWith("jellyfin:") && !artist.id.startsWith("emby:")) {
+        if (!artist.id.supportsArtistRadio()) {
             mutableArtistRadioAvailability.update { it + (artist.id to ArtistRadioAvailability.Unavailable) }
             return@launch
         }
@@ -4671,6 +4671,7 @@ private const val PlaybackHistoryDedupeWindowMs = 30_000L
 private const val KeepPlayingRemainingThresholdMs = 8L * 60L * 1000L
 private const val KeepPlayingEndedTailSlackMs = 1_500L
 private const val KeepPlayingNativeSeedItemLimit = 4
+private val ArtistRadioCatalogPrefixes = listOf("plex:", "jellyfin:", "emby:", "navidrome:")
 private const val KeepPlayingNativeCandidateTimeoutMs = 5_000L
 private const val KeepPlayingNativeItemsBudgetMs = 4_000L
 private const val KeepPlayingNativeItemTimeoutMs = 1_200L

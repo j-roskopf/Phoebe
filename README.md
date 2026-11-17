@@ -31,7 +31,7 @@ Phoebe can sign in to one remote music source at a time (plus optional local fol
 | Offline downloads | Yes | Yes | Yes | Yes | When URL available | From disk |
 | Playback sync to server | Timeline API | Session progress | Session progress | Scrobble on stop | Queue control | — |
 | Home library radio stations | Yes | No | No | No | Via MA² | — |
-| Artist radio / mix | Plex stations | Instant mix | Instant mix³ | Not wired⁴ | Via MA² | — |
+| Artist radio / mix | Plex stations | Instant mix | Instant mix³ | Similar songs⁴ | Via MA² | — |
 | Internet radio streams | Yes | Yes | Yes | Yes | Yes | Yes |
 | Collections (genre / mood / style) | All three | Genre | Genre | Genre | Genre | From tags |
 | Import server play history | Yes | Yes | Yes | Yes | No | — |
@@ -43,7 +43,7 @@ Phoebe can sign in to one remote music source at a time (plus optional local fol
 
 ³ Jellyfin and Emby both expose instant-mix APIs; artist radio in the UI is wired for Jellyfin today.
 
-⁴ Navidrome/Subsonic `getSimilarSongs2` exists in the client but is not yet hooked up to Artist Radio in the app.
+⁴ Navidrome/Subsonic artist radio and Keep Playing use the server's `getSimilarSongs2` / `getSimilarSongs`, which need an external metadata agent (Last.fm on Navidrome). When the server returns too few similar songs, artist radio falls back to the artist's own tracks mixed with random songs from the artist's genre.
 
 ### Plex (primary)
 
@@ -55,7 +55,7 @@ Shared catalog and playback stack (Emby uses `/emby` path normalization). Passwo
 
 ### Subsonic — Navidrome and compatible servers
 
-Subsonic-compatible `/rest/*.view` JSON with token auth (`u`, `t`, `s`, `v=1.16.1`, `c=phoebe`, `f=json`). Music folders, artists, albums, songs, playlists, playlist create/add, stars, ratings, streaming, downloads, artwork, and scrobbling on track stop. Quick and paged full-catalog sync modes. Server play-history stats can be imported when Navidrome exposes them. Genre collections only. No server metadata editing, no Plex-style library radio, and artist radio is not exposed in the UI yet (depends on server Last.fm/similar-song configuration when enabled).
+Subsonic-compatible `/rest/*.view` JSON with token auth (`u`, `t`, `s`, `v=1.16.1`, `c=phoebe`, `f=json`). Music folders, artists, albums, songs, playlists, playlist create/add, stars, ratings, streaming, downloads, artwork, and scrobbling on track stop. Quick and paged full-catalog sync modes. Server play-history stats can be imported when Navidrome exposes them. Genre collections only. No server metadata editing and no Plex-style library radio. **Artist radio** and **Keep Playing** use the server's similar-songs API (best with Navidrome's Last.fm integration enabled); without it, artist radio falls back to the artist's own tracks plus same-genre random picks.
 
 ### Music Assistant
 

@@ -4818,9 +4818,43 @@ class CatalogRepository(
                     if (tracks.isNotEmpty()) publishIndexedJellyfinTracks(tracks)
                 }
         }
+        if (session != null && session.isNavidrome() && artist.id.startsWith("navidrome:")) {
+            return navidromeArtistRadio(session, artist)
+        }
         val station = artistRadioStation(session, artist) ?: return emptyList()
         return playRadioStation(session, station)
     }
+
+    private suspend fun navidromeArtistRadio(session: PlexSession, artist: Artist): List<Track> {
+        val server = session.selectedServer ?: return emptyList()
+        val password = session.token.takeIf { it.isNotBlank() } ?: return emptyList()
+        val bareId = artist.id.removePrefix("navidrome:")
+        val catalogArtist = mutableCatalog.value.artists.firstOrNull { it.id == artist.id }
+        val tracks = subsonicClient.artistRadio(
+            server = server,
+            username = session.userName,
+            password = password,
+            // Artists derived from album tags get a synthetic id the server doesn't know; resolve those by name.
+            artistId = bareId.takeUnless { it.isSyntheticNavidromeArtistId() },
+            artistName = artist.title.ifBlank { catalogArtist?.title.orEmpty() },
+            genreHint = artist.genre ?: catalogArtist?.genre,
+        )
+        if (tracks.isNotEmpty()) publishIndexedProviderTracks("navidrome", tracks)
+        return tracks.map { it.withProviderPrefix("navidrome") }
+    }
+
+    /** Server-picked similar songs for an artist, album, or song ID (Navidrome `getSimilarSongs`). */
+    suspend fun navidromeSimilarTracksForItem(session: PlexSession?, itemId: String): List<Track> {
+        val navidromeSession = session?.takeIf { it.isNavidrome() } ?: return emptyList()
+        val bareId = providerItemId(itemId, "navidrome")?.takeUnless { it.isSyntheticNavidromeArtistId() } ?: return emptyList()
+        val server = navidromeSession.selectedServer ?: return emptyList()
+        val password = navidromeSession.token.takeIf { it.isNotBlank() } ?: return emptyList()
+        val tracks = subsonicClient.similarSongsForItem(server, navidromeSession.userName, password, bareId)
+        if (tracks.isNotEmpty()) publishIndexedProviderTracks("navidrome", tracks)
+        return tracks.map { it.withProviderPrefix("navidrome") }
+    }
+
+    private fun String.isSyntheticNavidromeArtistId(): Boolean = startsWith("artist:")
 
     suspend fun instantMixForItem(session: PlexSession?, itemId: String): List<Track> {
         val providerPrefix = session?.providerType?.catalogPrefix
@@ -4858,6 +4892,18 @@ class CatalogRepository(
                 id = "$providerPrefix-artist-radio-${artist.id}",
                 title = "${artist.title} Radio",
                 subtitle = "${session.providerType.name} Instant Mix",
+                key = artist.id,
+                thumbUrl = artist.thumbUrl,
+                category = PlexRadioStationCategory.Artist,
+            )
+        }
+        if (session != null && session.isNavidrome() && artist.id.startsWith("navidrome:")) {
+            // No network probe: Navidrome radio falls back to the artist's own tracks plus same-genre picks
+            // when Last.fm similar songs are unavailable, so it is always offered for server artists.
+            return PlexRadioStation(
+                id = "navidrome-artist-radio-${artist.id}",
+                title = "${artist.title} Radio",
+                subtitle = "Navidrome similar songs",
                 key = artist.id,
                 thumbUrl = artist.thumbUrl,
                 category = PlexRadioStationCategory.Artist,
