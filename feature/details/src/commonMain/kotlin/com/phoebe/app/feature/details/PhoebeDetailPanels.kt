@@ -2217,7 +2217,12 @@ fun ArtistDetailPanel(
     val ratingActions = LocalRatingActions.current
     val favoriteActions = LocalFavoriteActions.current
     LaunchedEffect(artist.id) {
-        if (artist.id.startsWith("plex:") || artist.id.startsWith("jellyfin:")) onProbeArtistRadio(artist)
+        if (artist.id.startsWith("plex:") ||
+            artist.id.startsWith("jellyfin:") ||
+            artist.id.startsWith("navidrome:")
+        ) {
+            onProbeArtistRadio(artist)
+        }
     }
     var showStats by remember(artist.id) { mutableStateOf(false) }
     var showArtworkGallery by remember(artist.id) { mutableStateOf(false) }
