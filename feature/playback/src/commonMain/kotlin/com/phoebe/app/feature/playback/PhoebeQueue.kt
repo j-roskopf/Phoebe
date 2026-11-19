@@ -238,11 +238,13 @@ fun UpNextList(
     val density = LocalDensity.current
     val rowSpacing = 2.dp
     val rowStepPx = with(density) { rowHeight.toPx() + rowSpacing.toPx() }
-    var draggingTrackId by remember { mutableStateOf<String?>(null) }
     var dragStartIndex by remember { mutableStateOf<Int?>(null) }
     var dragTargetIndex by remember { mutableStateOf<Int?>(null) }
     var dragOffsetPx by remember { mutableStateOf(0f) }
     val dividerUpNextIndex = upNextDivider.upNextIndex(currentIndex, upNext)
+    // The queue may hold the same track more than once, so a bare track id is not a unique
+    // LazyColumn key (duplicate keys crash). Suffix each id with its occurrence number.
+    val upNextKeys = remember(upNext) { upNextItemKeys(upNext) }
 
     LazyColumn(state = listState, modifier = modifier, verticalArrangement = Arrangement.spacedBy(rowSpacing)) {
         if (currentTrack != null) {
@@ -272,13 +274,13 @@ fun UpNextList(
             key = { itemIndex ->
                 if (hasDivider) {
                     when {
-                        itemIndex < dividerItemIndex -> upNext[itemIndex].id
+                        itemIndex < dividerItemIndex -> upNextKeys[itemIndex]
                         itemIndex == dividerItemIndex ->
                             "keep-playing-divider-${requireNotNull(dividerMarker).beforeQueueIndex}"
-                        else -> upNext[itemIndex - 1].id
+                        else -> upNextKeys[itemIndex - 1]
                     }
                 } else {
-                    upNext[itemIndex].id
+                    upNextKeys[itemIndex]
                 }
             },
             contentType = { itemIndex ->
@@ -298,12 +300,11 @@ fun UpNextList(
                     itemIndex
                 }
                 val track = upNext[index]
-                val isDragging = draggingTrackId == track.id
-                val draggingId = draggingTrackId
                 val startIndex = dragStartIndex
                 val targetIndex = dragTargetIndex
+                val isDragging = startIndex == index
                 val rowOffsetPx = when {
-                    draggingId == null || startIndex == null || targetIndex == null -> 0f
+                    startIndex == null || targetIndex == null -> 0f
                     isDragging -> dragOffsetPx
                     targetIndex > startIndex && index in (startIndex + 1)..targetIndex -> -rowStepPx
                     targetIndex < startIndex && index in targetIndex until startIndex -> rowStepPx
@@ -328,7 +329,6 @@ fun UpNextList(
                                     .pointerInput(track.id, index, upNext.lastIndex, rowStepPx) {
                                         detectDragGestures(
                                             onDragStart = {
-                                                draggingTrackId = track.id
                                                 dragStartIndex = index
                                                 dragTargetIndex = index
                                                 dragOffsetPx = 0f
@@ -336,7 +336,6 @@ fun UpNextList(
                                             onDragEnd = {
                                                 val from = dragStartIndex
                                                 val to = dragTargetIndex
-                                                draggingTrackId = null
                                                 dragStartIndex = null
                                                 dragTargetIndex = null
                                                 dragOffsetPx = 0f
@@ -345,7 +344,6 @@ fun UpNextList(
                                                 }
                                             },
                                             onDragCancel = {
-                                                draggingTrackId = null
                                                 dragStartIndex = null
                                                 dragTargetIndex = null
                                                 dragOffsetPx = 0f
@@ -387,6 +385,15 @@ fun UpNextList(
                 RepeatAllDivider()
             }
         }
+    }
+}
+
+private fun upNextItemKeys(upNext: List<Track>): List<String> {
+    val seen = HashMap<String, Int>()
+    return upNext.map { track ->
+        val occurrence = seen[track.id] ?: 0
+        seen[track.id] = occurrence + 1
+        if (occurrence == 0) track.id else "${track.id}#$occurrence"
     }
 }
 
