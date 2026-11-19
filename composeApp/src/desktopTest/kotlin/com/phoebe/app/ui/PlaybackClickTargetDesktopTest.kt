@@ -692,6 +692,35 @@ class PlaybackClickTargetDesktopTest {
 
     @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
     @Test
+    fun upNextListRendersQueueContainingSameTrackTwice() = runDesktopComposeUiTest(width = 520, height = 480) {
+        val tracks = playbackTracks()
+        val repeated = tracks[1]
+        var playedIndex: Int? = null
+
+        setContent {
+            PhoebeTheme {
+                Box(Modifier.size(520.dp, 480.dp)) {
+                    UpNextList(
+                        currentTrack = tracks[0],
+                        // Same track queued twice used to crash with "Key ... was already used"
+                        upNext = listOf(repeated, tracks[2], repeated, tracks[0]),
+                        repeat = RepeatMode.Off,
+                        onPlayQueue = { playedIndex = it },
+                        onMoveUpNext = { _, _ -> },
+                        onRemoveUpNext = {},
+                    )
+                }
+            }
+        }
+
+        onAllNodesWithTag(PlaybackTestTags.playTrack(repeated.id)).assertCountEquals(2)
+        onAllNodesWithTag(PlaybackTestTags.playTrack(repeated.id))[1].performClick()
+
+        assertEquals(2, playedIndex)
+    }
+
+    @OptIn(ExperimentalTestApi::class, ExperimentalComposeUiApi::class)
+    @Test
     fun desktopProgressLineClickSeeksToTappedPosition() = runDesktopComposeUiTest(width = 420, height = 80) {
         var seekPositionMs: Long? = null
 
