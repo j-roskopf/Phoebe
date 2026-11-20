@@ -230,6 +230,7 @@ import com.phoebe.app.feature.settings.DownloadManagerUiSummary
 import com.phoebe.app.feature.settings.SettingsCategory
 import com.phoebe.app.domain.ShellPlaybackState
 import com.phoebe.app.data.catalogAlbumsForArtist
+import com.phoebe.app.data.catalogArtistForAlbum
 import com.phoebe.app.data.catalogTracksForArtist
 import com.phoebe.app.data.BackupRestoreMode
 import com.phoebe.app.data.PlayHistoryRankedEntries
@@ -3147,15 +3148,22 @@ private fun Track?.withRadioNowPlaying(metadata: RadioNowPlayingMetadata?): Trac
 private fun resolveArtistForTrack(catalog: CatalogSnapshot, track: Track): Artist? {
     val title = track.artist.trim()
     if (title.isBlank()) return null
-    return catalog.artists.firstOrNull { it.title.equals(title, ignoreCase = true) }
-        ?: resolveAlbumForTrack(catalog, track)?.let { album ->
-            catalog.artists.firstOrNull { it.title.equals(album.artist, ignoreCase = true) }
-        }
-        ?: catalog.artists.firstOrNull { artist ->
-            catalogAlbumsForArtist(catalog, artist.title).any { album ->
-                album.title.equals(track.album, ignoreCase = true)
-            }
-        }
+    catalog.artists.firstOrNull { it.title.equals(title, ignoreCase = true) }?.let { return it }
+    resolveAlbumForTrack(catalog, track)?.let { album ->
+        catalog.artists.firstOrNull { it.title.equals(album.artist, ignoreCase = true) }?.let { return it }
+        catalogArtistForAlbum(catalog, album)?.let { return it }
+    }
+    val albumTitle = track.album.trim()
+    if (albumTitle.isBlank()) return null
+    // Match albums to artists in a single album pass. The previous shape asked
+    // `catalogAlbumsForArtist` once per artist, which is O(artists × albums) on the
+    // main thread and ANR'd on large catalogs when opening an artist from the player.
+    for (album in catalog.albums) {
+        if (!album.title.equals(albumTitle, ignoreCase = true)) continue
+        catalog.artists.firstOrNull { it.title.equals(album.artist, ignoreCase = true) }?.let { return it }
+        catalogArtistForAlbum(catalog, album)?.let { return it }
+    }
+    return null
 }
 
 private fun resolveAlbumForTrack(catalog: CatalogSnapshot, track: Track): Album? {
