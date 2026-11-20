@@ -25,6 +25,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -44,6 +46,7 @@ fun PillTextField(
     leadingIcon: PhoebeIcon,
     showClearButton: Boolean = true,
     clearButtonContentDescription: String = "Clear",
+    focusRequester: FocusRequester? = null,
 ) {
     val fieldTextStyle = TextStyle(color = PhoebeUi.primaryText, fontSize = 12.sp, lineHeight = 16.sp)
     var fieldValue by remember { mutableStateOf(TextFieldValue(value, selection = TextRange(value.length))) }
@@ -74,6 +77,7 @@ fun PillTextField(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxHeight()
+                .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
                 .trackDesktopTextInputFocus()
                 .semantics { this.contentDescription = contentDescription },
             decorationBox = { innerTextField ->
@@ -114,6 +118,7 @@ fun SearchPill(
     onQueryChange: (String) -> Unit,
     modifier: Modifier = Modifier.width(270.dp),
     placeholder: String = "Search songs, artists, albums",
+    focusRequester: FocusRequester? = null,
 ) {
     PillTextField(
         value = query,
@@ -124,5 +129,6 @@ fun SearchPill(
         leadingIcon = PhoebeIcon.Search,
         showClearButton = true,
         clearButtonContentDescription = "Clear search",
+        focusRequester = focusRequester,
     )
 }

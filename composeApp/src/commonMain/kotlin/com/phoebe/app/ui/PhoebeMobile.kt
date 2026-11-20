@@ -131,8 +131,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -422,6 +422,10 @@ internal fun MobileBrowseShell(
     showBottomChrome: Boolean = true,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    var libraryFavoritesOnly by rememberSaveable { mutableStateOf(false) }
+    var playlistsFavoritesOnly by rememberSaveable { mutableStateOf(false) }
+    // The query itself resets on section change upstream; the expanded field should too.
+    var toolbarSearchExpanded by remember(section, selectedPlaylistId) { mutableStateOf(false) }
     val mobileLibraryViewMode = libraryUi.resolvedViewMode()
     val pickLocalFolder = rememberPickLocalFolder(onPicked = onAddLocalFolder)
     val availableUpdate = when (val updateState = appUpdateState) {
@@ -470,6 +474,38 @@ internal fun MobileBrowseShell(
             section == BrowseSection.Charts ||
             section == BrowseSection.Playlists ||
             section == BrowseSection.Radio)
+    val toolbarFilters = selectedPlaylistId == null &&
+        (section == BrowseSection.Library || section == BrowseSection.Playlists)
+    val toolbarSearch = if (toolbarFilters) {
+        MobileToolbarSearch(
+            query = searchQuery,
+            onQueryChange = onSearchQuery,
+            expanded = toolbarSearchExpanded,
+            onExpandedChange = { toolbarSearchExpanded = it },
+            placeholder = if (section == BrowseSection.Playlists) {
+                "Search playlists"
+            } else {
+                when (libraryFilter) {
+                    LibraryFilterTab.Artists -> "Search artists"
+                    LibraryFilterTab.Albums -> "Search albums"
+                    LibraryFilterTab.Songs -> "Search songs"
+                }
+            },
+        )
+    } else {
+        null
+    }
+    val toolbarFavoritesFilter = when {
+        !toolbarFilters -> null
+        section == BrowseSection.Playlists -> MobileToolbarFavoritesFilter(
+            enabled = playlistsFavoritesOnly,
+            onEnabledChange = { playlistsFavoritesOnly = it },
+        )
+        else -> MobileToolbarFavoritesFilter(
+            enabled = libraryFavoritesOnly,
+            onEnabledChange = { libraryFavoritesOnly = it },
+        )
+    }
     val browseTopBar: @Composable () -> Unit = {
         val debugEventsMenu = onOpenEventsDebugMenu.takeIf {
             isDebugBuild() && section == BrowseSection.Settings && selectedPlaylistId == null
@@ -493,6 +529,8 @@ internal fun MobileBrowseShell(
                 !(section == BrowseSection.Settings && selectedPlaylistId == null),
             menuTint = if (availableUpdate != null) PhoebeUpdateBlue else PhoebeUi.primaryText,
             onMenuLongClick = debugEventsMenu,
+            search = toolbarSearch,
+            favoritesFilter = toolbarFavoritesFilter,
             menuContent = {
                 if (section == BrowseSection.Library && selectedPlaylistId == null) {
                     DropdownMenuItem(
@@ -827,6 +865,7 @@ internal fun MobileBrowseShell(
                         libraryUi = libraryUi,
                         searchQuery = searchQuery,
                         jellyfinPagination = (session.isEmbyFamily() || session.isNavidrome()) && session?.jellyfinSyncMode == JellyfinSyncMode.Quick,
+                        favoritesOnly = libraryFavoritesOnly,
                     ),
                     actions = LibraryRouteActions(
                         onJellyfinPage = onJellyfinPage,
@@ -897,6 +936,7 @@ internal fun MobileBrowseShell(
                         catalog = catalog,
                         catalogRefreshing = catalogRefreshing,
                         searchQuery = searchQuery,
+                        favoritesOnly = playlistsFavoritesOnly,
                     ),
                     actions = PlaylistsRouteActions(
                         onSearchQuery = onSearchQuery,
