@@ -255,6 +255,54 @@ class PhoebeNavigationTest {
     }
 
     @Test
+    fun reopeningPlayerFromDetailPopsBackToExistingPlayer() {
+        val navigator = PhoebeNavigator(PhoebeRoute.Browse())
+
+        navigator.open(PhoebeRoute.PlaylistDetail("playlist-1"))
+        navigator.openPlayer()
+        navigator.open(PhoebeRoute.SongDetail("track-1"))
+        navigator.open(PhoebeRoute.ArtistDetail("artist-1"))
+        navigator.openPlayer()
+
+        assertEquals(
+            listOf(PhoebeRoute.Browse(), PhoebeRoute.PlaylistDetail("playlist-1"), PhoebeRoute.Player),
+            navigator.routes,
+        )
+    }
+
+    @Test
+    fun reopeningDetailAlreadyOnStackDoesNotDuplicateIt() {
+        val navigator = PhoebeNavigator(PhoebeRoute.Browse())
+
+        navigator.open(PhoebeRoute.ArtistDetail("artist-1"))
+        navigator.open(PhoebeRoute.AlbumDetail("album-1"))
+        navigator.open(PhoebeRoute.ArtistDetail("artist-1"))
+
+        assertEquals(listOf(PhoebeRoute.Browse(), PhoebeRoute.ArtistDetail("artist-1")), navigator.routes)
+        assertEquals(true, navigator.pop())
+        assertEquals(listOf(PhoebeRoute.Browse()), navigator.routes)
+    }
+
+    @Test
+    fun differentDetailsOfSameTypeStillStack() {
+        val navigator = PhoebeNavigator(PhoebeRoute.Browse())
+
+        navigator.open(PhoebeRoute.ArtistDetail("artist-1"))
+        navigator.open(PhoebeRoute.AlbumDetail("album-1"))
+        navigator.open(PhoebeRoute.ArtistDetail("artist-2"))
+
+        assertEquals(
+            listOf(
+                PhoebeRoute.Browse(),
+                PhoebeRoute.ArtistDetail("artist-1"),
+                PhoebeRoute.AlbumDetail("album-1"),
+                PhoebeRoute.ArtistDetail("artist-2"),
+            ),
+            navigator.routes,
+        )
+    }
+
+    @Test
     fun setupFlowBackBehaviorUsesOwnedBackStack() {
         val navigator = PhoebeNavigator(PhoebeRoute.SignIn)
 

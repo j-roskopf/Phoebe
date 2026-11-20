@@ -574,6 +574,9 @@ private fun PhoebeRootStateHolder(
         when {
             currentRoute is PhoebeRoute.PlaylistDetail -> selectedPlaylistId = currentRoute.playlistId
             screen is AppScreen.PlaylistDetail -> selectedPlaylistId = screen.playlist.id
+            // navigator.open() can pop a playlist off the stack when it returns to an earlier route.
+            selectedPlaylistId != null && currentRoutes.none { it is PhoebeRoute.PlaylistDetail } ->
+                selectedPlaylistId = null
         }
     }
     val collapseMobilePlayer: () -> Unit = {

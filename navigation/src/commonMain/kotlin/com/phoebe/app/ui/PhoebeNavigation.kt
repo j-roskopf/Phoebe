@@ -540,9 +540,19 @@ class PhoebeNavigator(
     val currentRoute: PhoebeRoute
         get() = routes.lastOrNull() ?: PhoebeRoute.SignIn
 
+    /**
+     * Opens [route]. If it is already on the back stack, everything above it is popped instead of
+     * pushing a duplicate, so Back never revisits the same screen (e.g. the player opened again
+     * from an artist page that was itself opened from the player).
+     */
     fun open(route: PhoebeRoute) {
-        if (currentRoute != route) {
+        val existingIndex = backStack.lastIndexOf(route)
+        if (existingIndex < 0) {
             backStack.add(route)
+            return
+        }
+        while (backStack.lastIndex > existingIndex) {
+            backStack.removeAt(backStack.lastIndex)
         }
     }
 
