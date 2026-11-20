@@ -21,11 +21,15 @@ actual suspend fun createSqlDriver(schema: SqlSchema<QueryResult.AsyncValue<Unit
 
     val properties = Properties().apply {
         setProperty("busy_timeout", "10000")
-        setProperty("journal_mode", "WAL")
         setProperty("synchronous", "NORMAL")
     }
 
     val driver = openDriver(dbFile, properties, schema)
+    // `journal_mode` is deliberately not a connection property: sqlite-jdbc re-applies
+    // every property pragma when it opens each new thread's connection, and
+    // `PRAGMA journal_mode=WAL` can fail with SQLITE_BUSY while another connection holds
+    // the database. WAL persists in the file header, so set it once here instead.
+    driver.execPragma("PRAGMA journal_mode=WAL")
     driver.execPragma("PRAGMA busy_timeout=30000")
     registerDesktopDatabaseShutdownHook(dbFile)
     return driver

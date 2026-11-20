@@ -1432,7 +1432,10 @@ private external fun webAudioSourceMatchesUri(audio: HTMLAudioElement, uri: Stri
                 try { eq.gain.disconnect(); } catch (_) {}
             }
             if (eq.context && typeof eq.context.close === "function") {
-                try { eq.context.close(); } catch (_) {}
+                try {
+                    const closed = eq.context.close();
+                    if (closed && typeof closed.catch === "function") closed.catch(() => {});
+                } catch (_) {}
             }
             globalThis.__phoebeEqualizer = null;
         }
@@ -1442,7 +1445,10 @@ private external fun webAudioSourceMatchesUri(audio: HTMLAudioElement, uri: Stri
             try { entry.source.disconnect(); } catch (_) {}
             try { entry.gain.disconnect(); } catch (_) {}
             if (entry.context && typeof entry.context.close === "function") {
-                try { entry.context.close(); } catch (_) {}
+                try {
+                    const closed = entry.context.close();
+                    if (closed && typeof closed.catch === "function") closed.catch(() => {});
+                } catch (_) {}
             }
             gains.delete(audio);
         }
@@ -1492,7 +1498,10 @@ private external fun releaseWebAudioMediaBuffers(audio: HTMLAudioElement)
             eq = { audio, context, source, nodes: [], gain: null, gainValue: Number.isFinite(gainValue) ? gainValue : 1 };
             globalThis.__phoebeEqualizer = eq;
         }
-        eq.context.resume?.();
+        try {
+            const resumed = eq.context.resume?.();
+            if (resumed && typeof resumed.catch === "function") resumed.catch(() => {});
+        } catch (_) {}
         try { eq.source.disconnect(); } catch (_) {}
         for (const node of eq.nodes || []) {
             try { node.disconnect(); } catch (_) {}
@@ -1560,7 +1569,10 @@ private external fun isWebEqualizerAttached(audio: HTMLAudioElement): Boolean
                 eq.gain = eq.context.createGain();
             }
             eq.gainValue = gain;
-            try { eq.context.resume?.(); } catch (_) {}
+            try {
+                const resumed = eq.context.resume?.();
+                if (resumed && typeof resumed.catch === "function") resumed.catch(() => {});
+            } catch (_) {}
             try { eq.gain.gain.setValueAtTime(gain, eq.context.currentTime || 0); } catch (_) {
                 eq.gain.gain.value = gain;
             }
@@ -1589,7 +1601,10 @@ private external fun isWebEqualizerAttached(audio: HTMLAudioElement): Boolean
             gains.set(audio, entry);
         }
         if (!entry) return false;
-        try { entry.context.resume?.(); } catch (_) {}
+        try {
+            const resumed = entry.context.resume?.();
+            if (resumed && typeof resumed.catch === "function") resumed.catch(() => {});
+        } catch (_) {}
         try { entry.gain.gain.setValueAtTime(gain, entry.context.currentTime || 0); } catch (_) {
             entry.gain.gain.value = gain;
         }
@@ -1634,7 +1649,10 @@ private external fun stopWebAudioAnalysis(audio: HTMLAudioElement)
                 try { eq.gain.disconnect(); } catch (_) {}
             }
             if (eq.context && typeof eq.context.close === "function") {
-                try { eq.context.close(); } catch (_) {}
+                try {
+                    const closed = eq.context.close();
+                    if (closed && typeof closed.catch === "function") closed.catch(() => {});
+                } catch (_) {}
             }
             globalThis.__phoebeEqualizer = null;
         }
@@ -1644,7 +1662,10 @@ private external fun stopWebAudioAnalysis(audio: HTMLAudioElement)
             try { entry.source.disconnect(); } catch (_) {}
             try { entry.gain.disconnect(); } catch (_) {}
             if (entry.context && typeof entry.context.close === "function") {
-                try { entry.context.close(); } catch (_) {}
+                try {
+                    const closed = entry.context.close();
+                    if (closed && typeof closed.catch === "function") closed.catch(() => {});
+                } catch (_) {}
             }
             gains.delete(audio);
         }
@@ -1728,7 +1749,10 @@ private external fun setWebAudioCurrentTime(audio: HTMLAudioElement, seconds: Do
             }
             const eq = globalThis.__phoebeEqualizer;
             if (eq && eq.audio === audio && eq.source) {
-                eq.context?.resume?.();
+                try {
+                    const resumed = eq.context?.resume?.();
+                    if (resumed && typeof resumed.catch === "function") resumed.catch(() => {});
+                } catch (_) {}
             }
             const playResult = audio.play();
             if (playResult && typeof playResult.catch === "function") {

@@ -150,13 +150,22 @@ fun Track.boundToLivePlaybackOrigin(
     if (id.startsWith("radio:")) return this
     if (!localUri.isNullOrBlank()) return this
     val base = origin?.trimEnd('/')?.takeIf { it.isNotBlank() } ?: return this
+    val rawThumb = thumbUrl
+    // Re-binding an already-bound queue is the hot path on every skip: without this
+    // check each track runs a full Ktor URL parse + rebuild, which is enough work on a
+    // large queue to ANR the main thread. Everything below is a no-op for these tracks.
+    if (streamUrl.isBoundOrNonPlex(base, token) &&
+        downloadUrl.isBoundOrNonPlex(base, token) &&
+        (rawThumb.isNullOrBlank() || rawThumb.isBoundOrNonPlex(base, token))
+    ) {
+        return this
+    }
     val stream = if (streamUrl.isPlexMediaPathOrUrl()) bindPlexUrl(streamUrl, base, token) else streamUrl
     val download = if (downloadUrl.isPlexMediaPathOrUrl()) {
         bindPlexUrl(downloadUrl, base, token)
     } else {
         downloadUrl
     }
-    val rawThumb = thumbUrl
     val thumb = if (!rawThumb.isNullOrBlank() && rawThumb.isPlexMediaPathOrUrl()) {
         bindPlexUrl(rawThumb, base, token)
     } else {
@@ -164,6 +173,20 @@ fun Track.boundToLivePlaybackOrigin(
     }
     if (stream == streamUrl && download == downloadUrl && thumb == thumbUrl) return this
     return copy(streamUrl = stream, downloadUrl = download, thumbUrl = thumb)
+}
+
+/** True when [this] is already absolute on [base] (and carries [token] when one is set). */
+private fun String.isBoundOrNonPlex(base: String, token: String): Boolean =
+    !isPlexMediaPathOrUrl() || isBoundToPlaybackOrigin(base, token)
+
+private fun String.isBoundToPlaybackOrigin(base: String, token: String): Boolean {
+    if (!startsWith(base, ignoreCase = true)) return false
+    if (length > base.length && this[base.length] != '/') return false
+    if (token.isBlank()) return true
+    val marker = "X-Plex-Token="
+    val index = indexOf(marker, ignoreCase = true)
+    if (index < 0) return false
+    return substring(index + marker.length).substringBefore('&').substringBefore('#') == token
 }
 
 /**
