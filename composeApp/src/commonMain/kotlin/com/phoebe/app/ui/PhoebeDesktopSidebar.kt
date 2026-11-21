@@ -198,6 +198,17 @@ internal fun Sidebar(
     val playlistActions = LocalPlaylistActions.current
     val remoteSignedIn = session?.token?.isNotBlank() == true
     var profileExpanded by remember(remoteSignedIn) { mutableStateOf(false) }
+    var confirmSignOut by remember { mutableStateOf(false) }
+    if (confirmSignOut) {
+        SignOutConfirmationDialog(
+            serverName = session?.selectedServer?.name,
+            onDismiss = { confirmSignOut = false },
+            onConfirm = {
+                confirmSignOut = false
+                onSignOut()
+            },
+        )
+    }
     val mainNavEnabled = canBrowseMainSections(session, mediaSources)
     val providerName = session.providerLabel()
     val remoteSourceLabel = if (remoteSignedIn) "$providerName — streaming library" else "Streaming provider — Plex or Jellyfin"
@@ -413,7 +424,7 @@ internal fun Sidebar(
                         OutlinedButton(
                             onClick = {
                                 profileExpanded = false
-                                onSignOut()
+                                confirmSignOut = true
                             },
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                         ) { Text("Sign out", fontSize = 11.sp) }

@@ -422,6 +422,17 @@ internal fun MobileBrowseShell(
     showBottomChrome: Boolean = true,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    var confirmSignOut by remember { mutableStateOf(false) }
+    if (confirmSignOut) {
+        SignOutConfirmationDialog(
+            serverName = session?.selectedServer?.name,
+            onDismiss = { confirmSignOut = false },
+            onConfirm = {
+                confirmSignOut = false
+                onSignOut()
+            },
+        )
+    }
     var libraryFavoritesOnly by rememberSaveable { mutableStateOf(false) }
     var playlistsFavoritesOnly by rememberSaveable { mutableStateOf(false) }
     // The query itself resets on section change upstream; the expanded field should too.
@@ -656,8 +667,8 @@ internal fun MobileBrowseShell(
                     DropdownMenuItem(
                         text = { Text("Sign out") },
                         onClick = {
-                            onSignOut()
                             menuExpanded = false
+                            confirmSignOut = true
                         },
                     )
                 } else {
