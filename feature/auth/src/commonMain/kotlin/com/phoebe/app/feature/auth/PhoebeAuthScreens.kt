@@ -88,7 +88,13 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.TooltipAnchorPosition
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
@@ -481,16 +487,22 @@ fun MobileSignInWelcomeScreen(
     onFinishJellyfinQuickConnect: () -> Unit,
     onAddLocalFolder: (String?) -> Unit,
     onOpenRadio: () -> Unit = {},
+    signInError: String? = null,
+    onClearSignInError: () -> Unit = {},
     initialConnectProvider: MediaProviderType? = null,
     modifier: Modifier = Modifier,
 ) {
     var connectProvider by remember { mutableStateOf(initialConnectProvider) }
+    val clearError = { if (signInError != null) onClearSignInError() }
     val serverUrls = remember { mutableStateMapOf<MediaProviderType, String>() }
     val usernames = remember { mutableStateMapOf<MediaProviderType, String>() }
     val passwords = remember { mutableStateMapOf<MediaProviderType, String>() }
     val pickLocalFolder = rememberPickLocalFolder(onPicked = onAddLocalFolder)
 
-    PlatformBackHandler(enabled = connectProvider != null, onBack = { connectProvider = null })
+    PlatformBackHandler(enabled = connectProvider != null, onBack = {
+        clearError()
+        connectProvider = null
+    })
 
     Box(
         modifier
@@ -514,7 +526,10 @@ fun MobileSignInWelcomeScreen(
                     message = message,
                     pinCode = pinCode,
                     onPlex = { if (pinCode == null) onStartSignIn() else onFinishSignIn() },
-                    onServer = { selected -> connectProvider = selected },
+                    onServer = { selected ->
+                        clearError()
+                        connectProvider = selected
+                    },
                     onLocalFiles = { pickLocalFolder() },
                     onOpenRadio = onOpenRadio,
                 )
@@ -522,17 +537,29 @@ fun MobileSignInWelcomeScreen(
                 ServerConnectPage(
                     provider = provider,
                     url = serverUrls[provider].orEmpty(),
-                    onUrl = { serverUrls[provider] = it },
+                    onUrl = {
+                        clearError()
+                        serverUrls[provider] = it
+                    },
                     username = usernames[provider].orEmpty(),
-                    onUsername = { usernames[provider] = it },
+                    onUsername = {
+                        clearError()
+                        usernames[provider] = it
+                    },
                     password = passwords[provider].orEmpty(),
-                    onPassword = { passwords[provider] = it },
-                    message = message,
+                    onPassword = {
+                        clearError()
+                        passwords[provider] = it
+                    },
+                    signInError = signInError,
                     authInProgress = authInProgress,
                     jellyfinServers = jellyfinServers,
                     jellyfinDiscoveryLoading = jellyfinDiscoveryLoading,
                     jellyfinQuickConnect = jellyfinQuickConnect,
-                    onBack = { connectProvider = null },
+                    onBack = {
+                        clearError()
+                        connectProvider = null
+                    },
                     onSignIn = { mode ->
                         val url = serverUrls[provider].orEmpty()
                         val user = usernames[provider].orEmpty()
@@ -644,6 +671,11 @@ private fun SignInProviderPicker(
                     SignInTileSpec(
                         name = "Plex",
                         caption = if (pinCode == null) "Plex account" else "Waiting for approval",
+                        tooltip = if (pinCode == null) {
+                            "Sign in with your Plex account"
+                        } else {
+                            "Approve code $pinCode in your browser, then tap to finish"
+                        },
                         painter = painterResource(Res.drawable.plex),
                         tint = PlexBrandColor,
                         onClick = onPlex,
@@ -652,6 +684,7 @@ private fun SignInProviderPicker(
                     SignInTileSpec(
                         name = provider.tileName(),
                         caption = provider.tileCaption(),
+                        tooltip = provider.tileTooltip(),
                         painter = provider.logoPainter(),
                         tint = provider.brandColor(),
                         onClick = { onServer(provider) },
@@ -659,6 +692,7 @@ private fun SignInProviderPicker(
                 } + SignInTileSpec(
                     name = "Local files",
                     caption = "On this device",
+                    tooltip = "Choose a folder of music stored on this device",
                     icon = PhoebeIcon.Library,
                     onClick = onLocalFiles,
                 )
@@ -692,6 +726,8 @@ private fun SignInProviderPicker(
 private class SignInTileSpec(
     val name: String,
     val caption: String,
+    /** Full description, shown on long-press (hover on desktop) since the caption is kept short. */
+    val tooltip: String,
     val painter: androidx.compose.ui.graphics.painter.Painter? = null,
     val icon: PhoebeIcon? = null,
     val tint: Color? = null,
@@ -699,11 +735,28 @@ private class SignInTileSpec(
     val onClick: () -> Unit,
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SignInProviderTile(
     spec: SignInTileSpec,
     lightMode: Boolean,
     modifier: Modifier = Modifier,
+) {
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+        tooltip = { PlainTooltip { Text(spec.tooltip) } },
+        state = rememberTooltipState(),
+        modifier = modifier,
+    ) {
+        SignInProviderTileContent(spec, lightMode, Modifier.fillMaxSize())
+    }
+}
+
+@Composable
+private fun SignInProviderTileContent(
+    spec: SignInTileSpec,
+    lightMode: Boolean,
+    modifier: Modifier,
 ) {
     val shape = RoundedCornerShape(16.dp)
     val background = when {
@@ -807,7 +860,7 @@ private fun ServerConnectPage(
     onUsername: (String) -> Unit,
     password: String,
     onPassword: (String) -> Unit,
-    message: String,
+    signInError: String?,
     authInProgress: Boolean,
     jellyfinServers: List<PlexServer>,
     jellyfinDiscoveryLoading: Boolean,
@@ -938,6 +991,17 @@ private fun ServerConnectPage(
                     inProgress = authInProgress,
                     onClick = { onSignIn(if (provider == MediaProviderType.Navidrome) syncMode else null) },
                 )
+                if (signInError != null && !authInProgress) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(
+                        signInError,
+                        color = MaterialTheme.colorScheme.error,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
 
                 if (isJellyfin) {
                     Spacer(Modifier.height(18.dp))
@@ -971,10 +1035,6 @@ private fun ServerConnectPage(
                     }
                 }
 
-                if (message.isNotBlank()) {
-                    Spacer(Modifier.height(16.dp))
-                    AuthInlineStatus(message)
-                }
             }
         }
     }
@@ -1146,9 +1206,17 @@ private fun MediaProviderType.tileName(): String = when (this) {
 
 private fun MediaProviderType.tileCaption(): String = when (this) {
     MediaProviderType.Plex -> "Plex account"
-    MediaProviderType.Jellyfin, MediaProviderType.Emby -> "Self-hosted server"
-    MediaProviderType.Navidrome -> "Navidrome & more"
+    MediaProviderType.Jellyfin, MediaProviderType.Emby -> "Self-hosted"
+    MediaProviderType.Navidrome -> "Navidrome, etc."
     MediaProviderType.MusicAssistant -> "Alpha"
+}
+
+private fun MediaProviderType.tileTooltip(): String = when (this) {
+    MediaProviderType.Plex -> "Sign in with your Plex account"
+    MediaProviderType.Jellyfin -> "Connect to your self-hosted Jellyfin server"
+    MediaProviderType.Emby -> "Connect to your self-hosted Emby server"
+    MediaProviderType.Navidrome -> "Navidrome, Gonic, Airsonic and other Subsonic-compatible servers"
+    MediaProviderType.MusicAssistant -> "Alpha: sync library items and control Music Assistant players"
 }
 
 private fun MediaProviderType.connectDescription(): String = when (this) {

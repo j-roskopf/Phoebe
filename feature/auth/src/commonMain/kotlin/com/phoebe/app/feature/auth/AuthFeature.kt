@@ -17,6 +17,7 @@ data class AuthWelcomeRouteState(
     val jellyfinDiscoveryLoading: Boolean,
     val jellyfinQuickConnect: JellyfinQuickConnectResult?,
     val authInProgress: Boolean,
+    val signInError: String? = null,
     val showLocalFolderHint: Boolean = true,
     val initialConnectProvider: MediaProviderType? = null,
 )
@@ -31,6 +32,7 @@ class AuthWelcomeRouteActions(
     val onFinishJellyfinQuickConnect: () -> Unit,
     val onAddLocalFolder: (String?) -> Unit = {},
     val onOpenRadio: () -> Unit = {},
+    val onClearSignInError: () -> Unit = {},
 )
 
 @Immutable
@@ -112,6 +114,8 @@ fun AuthWelcomeMobileRoute(
         onFinishJellyfinQuickConnect = actions.onFinishJellyfinQuickConnect,
         onAddLocalFolder = actions.onAddLocalFolder,
         onOpenRadio = actions.onOpenRadio,
+        signInError = state.signInError,
+        onClearSignInError = actions.onClearSignInError,
         initialConnectProvider = state.initialConnectProvider,
         modifier = modifier,
     )

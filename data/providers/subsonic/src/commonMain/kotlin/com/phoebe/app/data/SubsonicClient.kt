@@ -603,8 +603,8 @@ class SubsonicClient(
             parameter("f", "json")
             block()
         }.body<T>().also { root ->
-            val status = (root as? SubsonicStatusCarrier)?.statusForCheck
-            if (status == "failed") error("Subsonic $method failed.")
+            val carrier = root as? SubsonicStatusCarrier
+            if (carrier?.statusForCheck == "failed") error(subsonicFailureMessage(method, carrier.errorForCheck))
         }
     }
 
@@ -652,13 +652,30 @@ private fun subsonicBinaryUrl(baseUrl: String, username: String, password: Strin
 
 private interface SubsonicStatusCarrier {
     val statusForCheck: String?
+    val errorForCheck: SubsonicErrorDto?
 }
+
+/** Subsonic API error codes: http://www.subsonic.org/pages/api.jsp (error codes table). */
+private fun subsonicFailureMessage(method: String, error: SubsonicErrorDto?): String = when (error?.code) {
+    40 -> "Wrong username or password."
+    41 -> "This server doesn't accept token sign-in (for example, when it uses LDAP)."
+    50 -> "This account isn't allowed to use the Subsonic API."
+    20, 30 -> "This server's Subsonic API version isn't compatible with Phoebe."
+    else -> error?.message?.takeIf { it.isNotBlank() }?.let { "Subsonic $method failed: $it" } ?: "Subsonic $method failed."
+}
+
+@Serializable
+private data class SubsonicErrorDto(
+    val code: Int? = null,
+    val message: String? = null,
+)
 
 @Serializable
 private data class SubsonicRoot(
     @SerialName("subsonic-response") val response: SubsonicResponse = SubsonicResponse(),
 ) : SubsonicStatusCarrier {
     override val statusForCheck: String? get() = response.status
+    override val errorForCheck: SubsonicErrorDto? get() = response.error
 }
 
 @Serializable
@@ -703,6 +720,7 @@ private data class SubsonicInternetRadioStationsRoot(@SerialName("subsonic-respo
 @Serializable
 private data class SubsonicResponse(
     val status: String? = null,
+    val error: SubsonicErrorDto? = null,
     val musicFolders: SubsonicMusicFolders? = null,
     val artists: SubsonicArtists? = null,
     val albumList2: SubsonicAlbumList? = null,

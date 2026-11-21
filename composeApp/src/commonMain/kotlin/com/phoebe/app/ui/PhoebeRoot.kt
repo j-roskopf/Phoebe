@@ -405,6 +405,7 @@ private fun PhoebeRootStateHolder(
     val cast by state.cast.collectAsState()
     val busy by state.busy.collectAsState()
     val authInProgress by state.authInProgress.collectAsState()
+    val signInError by state.signInError.collectAsState()
     val serversLoading by state.serversLoading.collectAsState()
     val librariesLoading by state.librariesLoading.collectAsState()
     val librariesLoadError by state.librariesLoadError.collectAsState()
@@ -1587,8 +1588,10 @@ private fun PhoebeRootStateHolder(
                             jellyfinDiscoveryLoading = jellyfinDiscoveryLoading,
                             jellyfinQuickConnect = jellyfinQuickConnect,
                             authInProgress = authInProgress,
+                            signInError = signInError,
                         ),
                         actions = AuthWelcomeRouteActions(
+                            onClearSignInError = state::clearSignInError,
                             onStartSignIn = state::startPlexSignIn,
                             onFinishSignIn = state::finishPlexSignIn,
                             onSignInJellyfin = state::signInJellyfin,
