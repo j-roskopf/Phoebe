@@ -16,6 +16,8 @@ import platform.Foundation.timeIntervalSince1970
 private val audioExt = setOf("mp3", "m4a", "flac", "wav", "aac", "ogg", "opus")
 
 actual object LocalLibraryIO {
+    actual val metadataVersion: Int = 0
+
     @OptIn(ExperimentalForeignApi::class)
     actual suspend fun listAudioFiles(rootUri: String): List<LocalAudioFile> = withContext(Dispatchers.Default) {
         if (!rootUri.startsWith("file:")) return@withContext emptyList()

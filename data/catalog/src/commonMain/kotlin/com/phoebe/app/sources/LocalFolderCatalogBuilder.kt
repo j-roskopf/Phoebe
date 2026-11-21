@@ -5,6 +5,7 @@ import com.phoebe.app.domain.Artist
 import com.phoebe.app.domain.CatalogSnapshot
 import com.phoebe.app.domain.LocalFolderMediaSourceConfig
 import com.phoebe.app.domain.Track
+import com.phoebe.app.domain.withReplayGain
 import com.phoebe.app.data.LocalFileMetadataCache
 import com.phoebe.app.data.LocalFileMetadataCacheEntry
 import com.phoebe.app.data.enrichArtistAlbumCountsOnly
@@ -132,7 +133,11 @@ object LocalFolderCatalogBuilder {
         val changedFiles = mutableListOf<Pair<Int, LocalAudioFile>>()
         for ((index, file) in files.withIndex()) {
             val cached = cachedByUri[file.uri]
-            if (cached?.fingerprintMatches(file.sizeBytes, file.modifiedAtMs) == true && cached.artworkScanned) {
+            if (
+                cached?.fingerprintMatches(file.sizeBytes, file.modifiedAtMs) == true &&
+                cached.artworkScanned &&
+                cached.metadataVersion >= reader.metadataVersion
+            ) {
                 entries[index] = cached.copy(
                     sizeBytes = file.sizeBytes,
                     modifiedAtMs = file.modifiedAtMs,
@@ -208,7 +213,7 @@ object LocalFolderCatalogBuilder {
             audioCodec = meta.audioCodec,
             bitrateKbps = meta.bitrateKbps,
             dateAddedMs = previous?.track?.dateAddedMs ?: indexedAtMs,
-        )
+        ).withReplayGain(meta.replayGain)
         return LocalFileMetadataCacheEntry(
             folderId = folderId,
             uri = file.uri,
@@ -216,6 +221,7 @@ object LocalFolderCatalogBuilder {
             modifiedAtMs = file.modifiedAtMs,
             albumId = albumId,
             track = track,
+            metadataVersion = reader.metadataVersion,
         )
     }
 

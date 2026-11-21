@@ -86,6 +86,10 @@ class DatabaseWiperDesktopTest {
                     dateAddedMs = null,
                     rating = null,
                     parentAlbumId = "album",
+                    replayGainTrackGainDb = null,
+                    replayGainTrackPeak = null,
+                    replayGainAlbumGainDb = null,
+                    replayGainAlbumPeak = null,
                 )
                 database.catalogQueries.upsertTrackParent("album", "track", 0L, null)
                 database.catalogQueries.upsertLibraryPopularTrack("plex:server:library", "track", 0L, 1L)
@@ -112,6 +116,11 @@ class DatabaseWiperDesktopTest {
                     filepath = null,
                     localArtworkUri = null,
                     dateAddedMs = 3L,
+                    replayGainTrackGainDb = null,
+                    replayGainTrackPeak = null,
+                    replayGainAlbumGainDb = null,
+                    replayGainAlbumPeak = null,
+                    metadataVersion = 0L,
                 )
             }
 

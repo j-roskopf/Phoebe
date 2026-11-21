@@ -70,6 +70,8 @@ import androidx.compose.ui.window.DialogProperties
 import com.phoebe.app.domain.AppSettings
 import com.phoebe.app.domain.AudioProcessingCapabilities
 import com.phoebe.app.domain.AudioProcessingSettings
+import com.phoebe.app.domain.LoudnessNormalization
+import com.phoebe.app.domain.NormalizationMode
 import com.phoebe.app.domain.DownloadItem
 import com.phoebe.app.domain.DownloadPolicySettings
 import com.phoebe.app.domain.DownloadState
@@ -1033,6 +1035,16 @@ private fun AudioPlaybackSettingsCard(
                 onAudioProcessingSettings(nextAudio)
             },
         )
+        Spacer(Modifier.height(12.dp))
+        NormalizationSettingsSection(
+            audio = audio,
+            onAudioChange = { nextAudio -> localAudio = nextAudio },
+            onAudioCommit = { nextAudio ->
+                localAudio = nextAudio
+                onAudioProcessingSettings(nextAudio)
+            },
+        )
+        Spacer(Modifier.height(12.dp))
         SettingsSwitchRow(
             title = "Keep Playing",
             subtitle = "Add related songs before the queue ends",
@@ -1067,6 +1079,161 @@ private fun AudioPlaybackSettingsCard(
             onCheckedChange = onScanLibraryOnLaunch,
         )
     }
+}
+
+@Composable
+private fun NormalizationSettingsSection(
+    audio: AudioProcessingSettings,
+    onAudioChange: (AudioProcessingSettings) -> Unit,
+    onAudioCommit: (AudioProcessingSettings) -> Unit,
+) {
+    Text("Volume normalization", color = PhoebeUi.secondaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    Text(
+        "Evens out loudness using ReplayGain data from your server or file tags. Loud tracks are " +
+            "turned down; quiet tracks are only raised when the volume is below max.",
+        color = PhoebeUi.mutedText,
+        fontSize = 12.sp,
+        modifier = Modifier.padding(bottom = 8.dp),
+    )
+    NormalizationModeControl(
+        selected = audio.normalizationMode,
+        onSelected = { mode -> onAudioCommit(audio.copy(normalizationMode = mode).normalized()) },
+    )
+    Text(
+        when (audio.normalizationMode) {
+            NormalizationMode.Off -> "Tracks play at their mastered level"
+            NormalizationMode.Track -> "Every track is levelled on its own"
+            NormalizationMode.Album -> "Albums keep their internal dynamics"
+            NormalizationMode.Auto -> "Album gain while playing through an album, track gain otherwise"
+        },
+        color = PhoebeUi.mutedText,
+        fontSize = 12.sp,
+        modifier = Modifier.padding(top = 6.dp),
+    )
+    if (!audio.normalizationEnabled) return
+    GainDbSlider(
+        label = "Pre-amp",
+        valueDb = audio.normalizationPreampDb,
+        range = LoudnessNormalization.MinPreampDb..LoudnessNormalization.MaxPreampDb,
+        testTag = "settings:normalizationPreamp",
+        onChange = { db -> onAudioChange(audio.copy(normalizationPreampDb = db).normalized()) },
+        onCommit = { db -> onAudioCommit(audio.copy(normalizationPreampDb = db).normalized()) },
+    )
+    GainDbSlider(
+        label = "Tracks without loudness data",
+        valueDb = audio.normalizationFallbackGainDb,
+        range = LoudnessNormalization.MinFallbackGainDb..LoudnessNormalization.MaxFallbackGainDb,
+        testTag = "settings:normalizationFallback",
+        onChange = { db -> onAudioChange(audio.copy(normalizationFallbackGainDb = db).normalized()) },
+        onCommit = { db -> onAudioCommit(audio.copy(normalizationFallbackGainDb = db).normalized()) },
+    )
+    SettingsSwitchRow(
+        title = "Prevent clipping",
+        subtitle = "Limit gain using peak values so boosted tracks never distort",
+        checked = audio.normalizationPreventClipping,
+        onCheckedChange = { checked ->
+            onAudioCommit(audio.copy(normalizationPreventClipping = checked).normalized())
+        },
+    )
+}
+
+@Composable
+private fun NormalizationModeControl(
+    selected: NormalizationMode,
+    onSelected: (NormalizationMode) -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(PhoebeUi.subtleFill)
+            .border(BorderStroke(1.dp, PhoebeUi.border), RoundedCornerShape(10.dp))
+            .selectableGroup()
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        NormalizationMode.Options.forEach { mode ->
+            val isSelected = mode == selected
+            Row(
+                Modifier
+                    .weight(1f)
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .selectable(
+                        selected = isSelected,
+                        onClick = { onSelected(mode) },
+                        role = Role.RadioButton,
+                    )
+                    .testTag("settings:normalizationMode:${mode.name}")
+                    .background(if (isSelected) PhoebeUi.accent.copy(alpha = 0.16f) else Color.Transparent)
+                    .border(
+                        BorderStroke(
+                            1.dp,
+                            if (isSelected) PhoebeUi.accent.copy(alpha = 0.32f) else Color.Transparent,
+                        ),
+                        RoundedCornerShape(8.dp),
+                    ),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    mode.label,
+                    color = if (isSelected) PhoebeUi.accentLight else PhoebeUi.secondaryText,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun GainDbSlider(
+    label: String,
+    valueDb: Float,
+    range: ClosedFloatingPointRange<Float>,
+    testTag: String,
+    onChange: (Float) -> Unit,
+    onCommit: (Float) -> Unit,
+) {
+    val stepCount = ((range.endInclusive - range.start) / LoudnessNormalization.GainStepDb).roundToInt()
+    fun snap(raw: Float): Float =
+        ((raw / LoudnessNormalization.GainStepDb).roundToInt() * LoudnessNormalization.GainStepDb)
+            .coerceIn(range.start, range.endInclusive)
+    Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Text(label, color = PhoebeUi.secondaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(formatGainDb(valueDb), color = PhoebeUi.accentLight, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+        }
+        Slider(
+            value = valueDb.coerceIn(range.start, range.endInclusive),
+            onValueChange = { onChange(snap(it)) },
+            onValueChangeFinished = { onCommit(snap(valueDb)) },
+            valueRange = range,
+            steps = (stepCount - 1).coerceAtLeast(0),
+            modifier = Modifier.testTag(testTag),
+            colors = SliderDefaults.colors(
+                thumbColor = PhoebeUi.accentLight,
+                activeTrackColor = PhoebeUi.accentLight,
+                inactiveTrackColor = PhoebeUi.progressTrack,
+            ),
+        )
+    }
+}
+
+private fun formatGainDb(db: Float): String {
+    val tenths = (db * 10f).roundToInt()
+    val sign = when {
+        tenths > 0 -> "+"
+        tenths < 0 -> "−"
+        else -> ""
+    }
+    val magnitude = kotlin.math.abs(tenths)
+    val whole = magnitude / 10
+    val fraction = magnitude % 10
+    return if (fraction == 0) "$sign$whole dB" else "$sign$whole.$fraction dB"
 }
 
 @Composable

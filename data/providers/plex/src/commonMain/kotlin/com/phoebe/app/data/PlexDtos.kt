@@ -183,6 +183,21 @@ data class PlexPartDto(
     val key: String,
     val file: String? = null,
     val size: Long? = null,
+    /** Present on metadata detail responses; audio streams carry loudness analysis. */
+    @SerialName("Stream") val streams: List<PlexStreamDto> = emptyList(),
+)
+
+/**
+ * Plex reports loudness analysis (when the server has run it) as `gain` / `albumGain` in dB and
+ * `peak` / `albumPeak` as linear amplitude. Values may arrive as strings or numbers.
+ */
+@Serializable
+data class PlexStreamDto(
+    val streamType: Int? = null,
+    @Serializable(with = FlexibleStringSerializer::class) val gain: String? = null,
+    @Serializable(with = FlexibleStringSerializer::class) val albumGain: String? = null,
+    @Serializable(with = FlexibleStringSerializer::class) val peak: String? = null,
+    @Serializable(with = FlexibleStringSerializer::class) val albumPeak: String? = null,
 )
 
 @OptIn(ExperimentalSerializationApi::class)

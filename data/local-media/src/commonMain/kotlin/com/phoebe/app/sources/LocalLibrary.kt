@@ -1,6 +1,7 @@
 package com.phoebe.app.sources
 
 import androidx.compose.runtime.Composable
+import com.phoebe.app.domain.ReplayGainInfo
 
 data class AudioMetadata(
     val title: String?,
@@ -14,6 +15,7 @@ data class AudioMetadata(
     val bitrateKbps: Int? = null,
     val audioCodec: String? = null,
     val artworkUri: String? = null,
+    val replayGain: ReplayGainInfo? = null,
 )
 
 data class LocalAudioFile(
@@ -24,11 +26,20 @@ data class LocalAudioFile(
 )
 
 interface LocalAudioLibraryReader {
+    /**
+     * Revision of the tags this reader extracts. Cached rows written by an older revision are
+     * re-read even when the file's size/mtime fingerprint is unchanged.
+     */
+    val metadataVersion: Int get() = 0
+
     suspend fun listAudioFiles(rootUri: String): List<LocalAudioFile>
     suspend fun readAudioMetadata(uri: String): AudioMetadata
 }
 
 object PlatformLocalAudioLibraryReader : LocalAudioLibraryReader {
+    override val metadataVersion: Int
+        get() = LocalLibraryIO.metadataVersion
+
     override suspend fun listAudioFiles(rootUri: String): List<LocalAudioFile> =
         LocalLibraryIO.listAudioFiles(rootUri)
 
@@ -37,6 +48,8 @@ object PlatformLocalAudioLibraryReader : LocalAudioLibraryReader {
 }
 
 expect object LocalLibraryIO {
+    /** See [LocalAudioLibraryReader.metadataVersion]. */
+    val metadataVersion: Int
     suspend fun listAudioFiles(rootUri: String): List<LocalAudioFile>
     suspend fun listAudioUris(rootUri: String): List<String>
     suspend fun fileExists(uri: String): Boolean

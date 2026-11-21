@@ -7777,6 +7777,10 @@ class CatalogRepository(
             dateAddedMs = dateAddedMs,
             rating = rating?.toFloat(),
             parentAlbumId = parentAlbumId,
+            replayGainTrackGainDb = replayGainTrackGainDb?.toFloat(),
+            replayGainTrackPeak = replayGainTrackPeak?.toFloat(),
+            replayGainAlbumGainDb = replayGainAlbumGainDb?.toFloat(),
+            replayGainAlbumPeak = replayGainAlbumPeak?.toFloat(),
         )
 
     private fun warmLikelyClickedContent(session: PlexSession?, snapshot: CatalogSnapshot) {
@@ -7940,6 +7944,10 @@ class CatalogRepository(
                         dateAddedMs = dateAddedMs,
                         rating = track.rating?.toDouble(),
                         parentAlbumId = track.parentAlbumId,
+                        replayGainTrackGainDb = track.replayGainTrackGainDb?.toDouble(),
+                        replayGainTrackPeak = track.replayGainTrackPeak?.toDouble(),
+                        replayGainAlbumGainDb = track.replayGainAlbumGainDb?.toDouble(),
+                        replayGainAlbumPeak = track.replayGainAlbumPeak?.toDouble(),
                     )
                     syncedTrackIdsDuringRefresh.add(track.id)
                 }
@@ -8239,6 +8247,10 @@ class CatalogRepository(
                     dateAddedMs = track.dateAddedMs,
                     rating = track.rating?.toDouble(),
                     parentAlbumId = track.parentAlbumId,
+                    replayGainTrackGainDb = track.replayGainTrackGainDb?.toDouble(),
+                    replayGainTrackPeak = track.replayGainTrackPeak?.toDouble(),
+                    replayGainAlbumGainDb = track.replayGainAlbumGainDb?.toDouble(),
+                    replayGainAlbumPeak = track.replayGainAlbumPeak?.toDouble(),
                 )
             }
             database.catalogQueries.deleteTrackParents(playlistId)
@@ -8303,6 +8315,10 @@ class CatalogRepository(
                     dateAddedMs = track.dateAddedMs,
                     rating = track.rating?.toDouble(),
                     parentAlbumId = track.parentAlbumId,
+                    replayGainTrackGainDb = track.replayGainTrackGainDb?.toDouble(),
+                    replayGainTrackPeak = track.replayGainTrackPeak?.toDouble(),
+                    replayGainAlbumGainDb = track.replayGainAlbumGainDb?.toDouble(),
+                    replayGainAlbumPeak = track.replayGainAlbumPeak?.toDouble(),
                 )
             }
             tracksByParent.forEach { (parentId, tracks) ->
@@ -8405,6 +8421,10 @@ class CatalogRepository(
             dateAddedMs = track.dateAddedMs,
             rating = track.rating?.toDouble(),
             parentAlbumId = track.parentAlbumId,
+            replayGainTrackGainDb = track.replayGainTrackGainDb?.toDouble(),
+            replayGainTrackPeak = track.replayGainTrackPeak?.toDouble(),
+            replayGainAlbumGainDb = track.replayGainAlbumGainDb?.toDouble(),
+            replayGainAlbumPeak = track.replayGainAlbumPeak?.toDouble(),
         )
     }
 
@@ -8520,6 +8540,10 @@ class CatalogRepository(
                     dateAddedMs = track.dateAddedMs,
                     rating = track.rating?.toDouble(),
                     parentAlbumId = track.parentAlbumId,
+                    replayGainTrackGainDb = track.replayGainTrackGainDb?.toDouble(),
+                    replayGainTrackPeak = track.replayGainTrackPeak?.toDouble(),
+                    replayGainAlbumGainDb = track.replayGainAlbumGainDb?.toDouble(),
+                    replayGainAlbumPeak = track.replayGainAlbumPeak?.toDouble(),
                 )
             }
             snapshot.tracksByParent.forEach { (parentId, tracks) ->

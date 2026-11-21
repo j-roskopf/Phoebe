@@ -1496,17 +1496,33 @@ data class AudioProcessingSettings(
     val selectedOutputDeviceId: String? = null,
     val exclusiveMode: Boolean = false,
     val bitPerfectPreference: Boolean = false,
+    val normalizationMode: NormalizationMode = NormalizationMode.Off,
+    /** Added to the ReplayGain value of tracks that have loudness data. */
+    val normalizationPreampDb: Float = 0f,
+    /** Applied instead of ReplayGain to tracks with no loudness data. */
+    val normalizationFallbackGainDb: Float = 0f,
+    /** Cap the applied gain using peak values so boosted tracks do not clip. */
+    val normalizationPreventClipping: Boolean = true,
 ) {
     fun normalized(): AudioProcessingSettings =
         copy(
             crossfeedAmount = crossfeedAmount.coerceIn(0f, 1f),
+            normalizationPreampDb = normalizationPreampDb.finiteOrZero()
+                .coerceIn(LoudnessNormalization.MinPreampDb, LoudnessNormalization.MaxPreampDb),
+            normalizationFallbackGainDb = normalizationFallbackGainDb.finiteOrZero()
+                .coerceIn(LoudnessNormalization.MinFallbackGainDb, LoudnessNormalization.MaxFallbackGainDb),
             exclusiveMode = exclusiveMode && !hasLocalDspEnabled,
             bitPerfectPreference = bitPerfectPreference && !hasLocalDspEnabled,
         )
 
     val hasLocalDspEnabled: Boolean
         get() = crossfeedEnabled
+
+    val normalizationEnabled: Boolean
+        get() = normalizationMode != NormalizationMode.Off
 }
+
+private fun Float.finiteOrZero(): Float = if (isFinite()) this else 0f
 
 @Serializable
 data class AudioProcessingCapabilities(

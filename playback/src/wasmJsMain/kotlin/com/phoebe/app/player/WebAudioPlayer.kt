@@ -296,7 +296,7 @@ private class WebAudioPlayer(
                         prepared.pause()
                         setWebAudioCurrentTime(prepared, 0.0)
                         prepared.muted = false
-                        prepared.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+                        prepared.volume = effectiveOutputVolume(queue, targetIndex).toDouble().coerceIn(0.0, 1.0)
                         webGaplessPrerolled = true
                     }
                 }
@@ -315,7 +315,7 @@ private class WebAudioPlayer(
                 return@playWebAudio
             }
             prepared.muted = false
-            prepared.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+            prepared.volume = effectiveOutputVolume(queue, targetIndex).toDouble().coerceIn(0.0, 1.0)
         }
         webGaplessHotStartJob?.cancel()
         webGaplessHotStartJob = scope.launch {
@@ -362,7 +362,7 @@ private class WebAudioPlayer(
         webGaplessTrackId = null
         webGaplessUri = null
         incoming.muted = false
-        incoming.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+        incoming.volume = effectiveOutputVolume(queue, targetIndex).toDouble().coerceIn(0.0, 1.0)
         if (!hotStarted) {
             setWebAudioCurrentTime(incoming, 0.0)
         }
@@ -370,7 +370,7 @@ private class WebAudioPlayer(
         installAudioEventHandlers(generation)
         prepareAudioElementForCurrentEqualizer()
         applyCurrentEqualizer()
-        setOutputVolume(effectiveOutputVolume())
+        setOutputVolume(effectiveOutputVolume(queue, targetIndex))
         disposeWebAudioElement(outgoing)
         if (playWhenReady && !hotStarted) {
             playWebAudio(generation)
@@ -564,6 +564,7 @@ private class WebAudioPlayer(
         outgoingUsesWebAudioGain: Boolean,
         incomingUsesWebAudioGain: Boolean,
     ) {
+        val incomingTargetVolume = effectiveOutputVolume(queue, targetIndex)
         webCrossfadeJob?.cancel()
         webCrossfadeJob = scope.launch {
             try {
@@ -573,7 +574,7 @@ private class WebAudioPlayer(
                     if (!isWebCrossfadeCurrent(generation, outgoing, incoming)) return@launch
                     val progress = (index + 1).toFloat() / WebCrossfadeSteps.toFloat()
                     val outgoingVolume = (baseVolume * (1f - progress)).coerceIn(0f, 1f)
-                    val incomingVolume = (baseVolume * progress).coerceIn(0f, 1f)
+                    val incomingVolume = (incomingTargetVolume * progress).coerceIn(0f, 1f)
                     diagnostics.crossfadeVolume(
                         engine = PlaybackEnginePath.WebAudioElement,
                         step = index + 1,
@@ -639,7 +640,7 @@ private class WebAudioPlayer(
         installAudioEventHandlers(generation)
         prepareAudioElementForCurrentEqualizer()
         applyCurrentEqualizer()
-        setOutputVolume(effectiveOutputVolume())
+        setOutputVolume(effectiveOutputVolume(queue, targetIndex))
         adoptCrossfadeTarget(
             queue = queue,
             targetIndex = targetIndex,

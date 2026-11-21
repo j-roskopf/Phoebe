@@ -23,6 +23,8 @@ private val lastSidecarParentCache = AtomicReference<Pair<File, Map<String, File
 private const val MaxEmbeddedArtworkBytes = 12 * 1024 * 1024
 
 actual object LocalLibraryIO {
+    actual val metadataVersion: Int = 0
+
     actual suspend fun listAudioFiles(rootUri: String): List<LocalAudioFile> = withContext(Dispatchers.IO) {
         val fileRoot = rootUri.toFileOrNull()
         if (fileRoot != null) {

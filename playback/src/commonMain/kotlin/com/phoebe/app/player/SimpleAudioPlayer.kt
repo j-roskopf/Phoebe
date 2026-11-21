@@ -4,6 +4,7 @@ import com.phoebe.app.domain.AudioAnalysisFrame
 import com.phoebe.app.domain.AudioAnalysisSource
 import com.phoebe.app.domain.AudioProcessingSettings
 import com.phoebe.app.domain.EqualizerProfile
+import com.phoebe.app.domain.LoudnessNormalization
 import com.phoebe.app.domain.PlayerState
 import com.phoebe.app.domain.RepeatMode
 import com.phoebe.app.domain.StreamingPolicySettings
@@ -18,6 +19,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 
 internal const val PlaybackReadyBufferedAheadMs = 500L
@@ -76,6 +79,9 @@ abstract class SimpleAudioPlayer(
     private var crossfadeRequestKey: String? = null
     private var manualSeekCrossfadeSuppression: ManualSeekCrossfadeSuppression? = null
     private var audioProcessingSettings = AudioProcessingSettings().normalized()
+    /** Bumped when normalization settings change so the gain watcher re-applies volume. */
+    private var normalizationSettingsRevision = 0
+    private var normalizationWatchJob: Job? = null
     private var gaplessEnabled = false
     private var gaplessPrepareRequest: GaplessPrepareRequest? = null
     protected var equalizerProfile: EqualizerProfile = EqualizerProfile.Default.normalized()
@@ -759,9 +765,33 @@ abstract class SimpleAudioPlayer(
     override fun setAudioProcessing(settings: AudioProcessingSettings) {
         val normalized = settings.normalized()
         if (audioProcessingSettings == normalized) return
+        val previous = audioProcessingSettings
         audioProcessingSettings = normalized
-        gaplessEnabled = normalized.gaplessEnabled
-        cancelGaplessPrepare()
+        if (previous.withoutNormalization() != normalized.withoutNormalization()) {
+            gaplessEnabled = normalized.gaplessEnabled
+            cancelGaplessPrepare()
+        }
+        if (previous.normalizationSettingsDiffer(normalized)) {
+            normalizationSettingsRevision++
+            if (normalized.normalizationEnabled) ensureNormalizationWatcher()
+            setOutputVolume(effectiveOutputVolume())
+        }
+    }
+
+    /**
+     * Re-applies output volume whenever the current track's normalization gain changes: platform
+     * driven transitions (gapless commits, MediaSession playlist advances, crossfade adoption) and
+     * queue edits that flip Auto between album and track gain. Started lazily from
+     * [setAudioProcessing] so it never runs while a subclass is still being constructed.
+     */
+    private fun ensureNormalizationWatcher() {
+        if (normalizationWatchJob != null) return
+        normalizationWatchJob = scope.launch {
+            mutableState
+                .map { state -> normalizationSettingsRevision to normalizationGain(state.queue, state.currentIndex) }
+                .distinctUntilChanged()
+                .collect { setOutputVolume(effectiveOutputVolume()) }
+        }
     }
 
     override fun setStreamingPolicy(settings: StreamingPolicySettings) {
@@ -1167,9 +1197,35 @@ abstract class SimpleAudioPlayer(
         clearGaplessPrepareState()
     }
 
+    /** Output level for the current track: app/system volume times its normalization gain. */
     protected fun effectiveOutputVolume(): Float {
+        val state = mutableState.value
+        return effectiveOutputVolume(state.queue, state.currentIndex)
+    }
+
+    /**
+     * Output level for the track at [index] in [queue]. Platforms use this for an incoming
+     * crossfade/gapless player, which must not inherit the outgoing track's normalization gain.
+     *
+     * Normalization rides on the platform volume, which cannot exceed unity, so positive gains only
+     * take effect when the app volume leaves headroom.
+     */
+    protected fun effectiveOutputVolume(queue: List<Track>, index: Int): Float =
+        (baseOutputVolume() * normalizationGain(queue, index)).coerceIn(0f, 1f)
+
+    private fun baseOutputVolume(): Float {
         val playerLevel = if (preferUnityOutputVolume) 1f else mutableState.value.volume.coerceIn(0f, 1f)
         return (playerLevel * systemVolumeScale).coerceIn(0f, 1f)
+    }
+
+    private fun normalizationGain(queue: List<Track>, index: Int): Float {
+        val settings = audioProcessingSettings
+        if (!settings.normalizationEnabled) return 1f
+        val track = queue.getOrNull(index) ?: return 1f
+        // Live radio has no loudness data; leave it at the plain volume instead of the fallback gain.
+        if (track.id.startsWith("radio:")) return 1f
+        val useAlbumGain = LoudnessNormalization.useAlbumGain(settings.normalizationMode, queue, index)
+        return LoudnessNormalization.linearGain(track, settings, useAlbumGain)
     }
 
     private fun startProgressTicker() {
@@ -1750,3 +1806,17 @@ private fun Track.isGaplessCandidate(): Boolean {
         !lower.contains("/radio/") &&
         !lower.endsWith("/radio")
 }
+
+private fun AudioProcessingSettings.normalizationSettingsDiffer(other: AudioProcessingSettings): Boolean =
+    normalizationMode != other.normalizationMode ||
+        normalizationPreampDb != other.normalizationPreampDb ||
+        normalizationFallbackGainDb != other.normalizationFallbackGainDb ||
+        normalizationPreventClipping != other.normalizationPreventClipping
+
+private fun AudioProcessingSettings.withoutNormalization(): AudioProcessingSettings =
+    copy(
+        normalizationMode = AudioProcessingSettings().normalizationMode,
+        normalizationPreampDb = AudioProcessingSettings().normalizationPreampDb,
+        normalizationFallbackGainDb = AudioProcessingSettings().normalizationFallbackGainDb,
+        normalizationPreventClipping = AudioProcessingSettings().normalizationPreventClipping,
+    )

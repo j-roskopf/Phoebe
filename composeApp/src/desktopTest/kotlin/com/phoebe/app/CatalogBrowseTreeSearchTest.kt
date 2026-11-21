@@ -260,6 +260,10 @@ class CatalogBrowseTreeSearchTest {
             dateAddedMs = dateAddedMs,
             rating = null,
             parentAlbumId = parentAlbumId,
+            replayGainTrackGainDb = null,
+            replayGainTrackPeak = null,
+            replayGainAlbumGainDb = null,
+            replayGainAlbumPeak = null,
         )
     }
 }

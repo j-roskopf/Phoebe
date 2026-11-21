@@ -862,6 +862,10 @@ class PlexPlaylistEndToEndDesktopTest {
             dateAddedMs = null,
             rating = null,
             parentAlbumId = null,
+            replayGainTrackGainDb = null,
+            replayGainTrackPeak = null,
+            replayGainAlbumGainDb = null,
+            replayGainAlbumPeak = null,
         )
         db.downloadsQueries.upsert(
             trackId = track.id,
@@ -1010,6 +1014,10 @@ class PlexPlaylistEndToEndDesktopTest {
             dateAddedMs = null,
             rating = null,
             parentAlbumId = null,
+            replayGainTrackGainDb = null,
+            replayGainTrackPeak = null,
+            replayGainAlbumGainDb = null,
+            replayGainAlbumPeak = null,
         )
         val staleTrack = Track(
             id = "plex:t-persisted-download",
