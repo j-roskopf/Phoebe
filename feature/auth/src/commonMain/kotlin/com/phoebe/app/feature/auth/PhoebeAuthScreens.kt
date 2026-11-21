@@ -89,6 +89,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
@@ -1180,9 +1181,22 @@ private fun JellyfinServerDiscoveryControls(
     onDiscover: () -> Unit,
     onSelect: (PlexServer) -> Unit,
 ) {
+    // Only report "none found" after a search this screen started has actually run.
+    var searchRan by remember { mutableStateOf(false) }
+    var sawLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(loading) {
+        if (loading) sawLoading = true else if (sawLoading) searchRan = true
+    }
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = onDiscover, enabled = !loading) {
+            OutlinedButton(
+                onClick = {
+                    searchRan = false
+                    sawLoading = false
+                    onDiscover()
+                },
+                enabled = !loading,
+            ) {
                 Text(if (loading) "Searching…" else "Find servers on my network", fontSize = 13.sp)
             }
             if (loading) {
@@ -1192,6 +1206,15 @@ private fun JellyfinServerDiscoveryControls(
                     color = PhoebeUi.accent,
                 )
             }
+        }
+        if (searchRan && !loading && servers.isEmpty()) {
+            Text(
+                "No Jellyfin servers found on this network. Enter the server address above.",
+                color = MaterialTheme.colorScheme.error,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
+                modifier = Modifier.padding(start = 2.dp),
+            )
         }
         servers.take(4).forEach { server ->
             Surface(

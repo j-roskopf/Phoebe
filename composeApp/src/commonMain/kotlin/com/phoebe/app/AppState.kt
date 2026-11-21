@@ -1538,21 +1538,14 @@ class AppState(
             else -> MusicLibrary("music", "Music")
         }
 
+    /** Results show inline under the sign-in screen's "Find servers" button, not in the shared status message. */
     fun discoverJellyfinServers() = scope.launch {
         mutableJellyfinDiscoveryLoading.value = true
-        mutableMessage.value = "Searching your local network for Jellyfin servers…"
         val found = runCatching { discoverJellyfinServersOnNetwork() }
-            .onFailure { error ->
-                mutableMessage.value = error.message ?: "Couldn't search for Jellyfin servers."
-            }
+            .onFailure { error -> PhoebeLog.d("AppState") { "Jellyfin discovery failed: ${error.message}" } }
             .getOrDefault(emptyList())
         mutableJellyfinServers.value = found
         mutableJellyfinDiscoveryLoading.value = false
-        mutableMessage.value = if (found.isEmpty()) {
-            "No Jellyfin servers found on this network. Enter the server URL manually to continue."
-        } else {
-            "Found ${found.size} Jellyfin server${if (found.size == 1) "" else "s"} nearby."
-        }
     }
 
     fun startJellyfinQuickConnect(serverUrl: String) = scope.launch {
