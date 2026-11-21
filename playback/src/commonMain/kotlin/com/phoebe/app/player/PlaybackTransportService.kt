@@ -133,9 +133,26 @@ class PlaybackTransportService(
     fun toggleShuffle(currentShuffle: Boolean) {
         if (remoteControlClient.state.value.isConnected) {
             serviceScope.launch { remoteControlClient.setShuffle(!currentShuffle) }
+        } else if (castController.state.value.isPlaybackActive) {
+            setCastShuffle(!currentShuffle)
         } else {
             audioPlayer.setShuffle(!currentShuffle)
         }
+    }
+
+    /**
+     * The speaker plays its own copy of the queue, so reordering only the local player would
+     * light the shuffle button without changing what plays next. Reshuffle the cast queue after
+     * the current song and hand it back to the speaker at the current position.
+     */
+    private fun setCastShuffle(enabled: Boolean) {
+        // The local player holds the shuffle flag the UI shows; its own queue is replaced
+        // from the cast queue when casting ends.
+        audioPlayer.setShuffle(enabled)
+        if (!enabled) return
+        val cast = castController.state.value
+        val shuffled = shuffleQueueAroundCurrent(cast.queue, cast.currentIndex) ?: return
+        castController.loadQueue(shuffled.queue, shuffled.currentIndex, cast.positionMs)
     }
 
     fun cycleRepeat(currentRepeat: RepeatMode) {

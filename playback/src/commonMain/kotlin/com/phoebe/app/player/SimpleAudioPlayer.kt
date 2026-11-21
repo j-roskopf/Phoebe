@@ -707,31 +707,15 @@ abstract class SimpleAudioPlayer(
             cancelGaplessPrepare()
             return
         }
-        // Keep the current track playing and reshuffle what comes next so Up Next
-        // reflects the new order. When nothing is left upcoming (last track / ended
-        // queue), move the already-played tracks behind the current one in shuffled
-        // order — otherwise enabling shuffle is a no-op flag flip with no visible change.
-        if (state.currentIndex !in state.queue.indices || state.queue.size <= 1) {
+        val shuffled = shuffleQueueAroundCurrent(state.queue, state.currentIndex)
+        if (shuffled == null) {
             mutableState.value = state.copy(shuffle = true)
             cancelGaplessPrepare()
             return
         }
-        val current = state.queue[state.currentIndex]
-        val nextQueue: List<Track>
-        val nextIndex: Int
-        if (state.currentIndex >= state.queue.lastIndex) {
-            val rest = state.queue.filterIndexed { index, _ -> index != state.currentIndex }.shuffled()
-            nextQueue = listOf(current) + rest
-            nextIndex = 0
-        } else {
-            val head = state.queue.subList(0, state.currentIndex + 1).toList()
-            val tail = state.queue.subList(state.currentIndex + 1, state.queue.size).shuffled()
-            nextQueue = head + tail
-            nextIndex = state.currentIndex
-        }
-        mutableState.value = state.copy(shuffle = true, queue = nextQueue, currentIndex = nextIndex)
+        mutableState.value = state.copy(shuffle = true, queue = shuffled.queue, currentIndex = shuffled.currentIndex)
         cancelGaplessPrepare()
-        onQueueEdited(nextQueue, nextIndex)
+        onQueueEdited(shuffled.queue, shuffled.currentIndex)
     }
 
     override fun setRepeat(mode: RepeatMode) {

@@ -285,6 +285,7 @@ import com.phoebe.app.domain.telemetryName
 import com.phoebe.app.domain.UpNextDividerMarker
 import com.phoebe.app.domain.providerTypeFromCatalogId
 import com.phoebe.app.player.CastState
+import com.phoebe.app.player.startingAtWithRestShuffled
 import com.phoebe.app.platform.createPlatformHttpClient
 import com.phoebe.app.platform.currentNetworkMeteringStatus
 import com.phoebe.app.platform.currentTimeMs
@@ -884,9 +885,10 @@ private fun PhoebeRootStateHolder(
     }
     val playTracks: (List<Track>, Int) -> Unit = { tracks, index ->
         val collectionMixSeed = navigator.routes.collectionMixSeed()
+        val shuffle = playerTransport.shuffle && tracks.size > 1
         state.playTracks(
-            tracks = tracks,
-            index = index,
+            tracks = if (shuffle) tracks.startingAtWithRestShuffled(index) else tracks,
+            index = if (shuffle) 0 else index,
             collectionMixSeed = collectionMixSeed,
             queueOrigin = playbackOriginForCurrentSurface(
                 screen = screen,
@@ -895,6 +897,7 @@ private fun PhoebeRootStateHolder(
                 tracks = tracks,
                 collectionMixSeed = collectionMixSeed,
             ),
+            shuffleEnabled = shuffle,
         )
     }
     val playAllTracks: (List<Track>) -> Unit = { tracks ->
@@ -993,7 +996,23 @@ private fun PhoebeRootStateHolder(
         }
     }
     val playTracksFromMobile: (List<Track>, Int) -> Unit = { tracks, index ->
-        requestMobilePlayback(tracks, index)
+        // A lit shuffle button means "shuffle": play the tapped song, then the rest shuffled.
+        if (playerTransport.shuffle && tracks.size > 1) {
+            requestMobilePlayback(
+                tracks.startingAtWithRestShuffled(index),
+                0,
+                shuffleEnabled = true,
+                queueOrigin = playbackOriginForCurrentSurface(
+                    screen = screen,
+                    selectedPlaylistId = selectedPlaylistId,
+                    catalog = catalog,
+                    tracks = tracks,
+                    collectionMixSeed = navigator.routes.collectionMixSeed(),
+                ),
+            )
+        } else {
+            requestMobilePlayback(tracks, index)
+        }
     }
     val playAllTracksFromMobile: (List<Track>) -> Unit = { tracks ->
         requestMobilePlayback(tracks, 0, clearShuffle = true)
