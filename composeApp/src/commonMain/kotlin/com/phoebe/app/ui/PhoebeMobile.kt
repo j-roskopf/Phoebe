@@ -637,18 +637,20 @@ internal fun MobileBrowseShell(
                         menuExpanded = false
                     },
                 )
-                DropdownMenuItem(
-                    text = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            PhoebeIconView(PhoebeIcon.Settings, tint = PhoebeUi.secondaryText, modifier = Modifier.size(18.dp))
-                            Text("Settings")
-                        }
-                    },
-                    onClick = {
-                        onNavigate(BrowseSection.Settings)
-                        menuExpanded = false
-                    },
-                )
+                if (!(section == BrowseSection.Settings && selectedPlaylistId == null)) {
+                    DropdownMenuItem(
+                        text = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                PhoebeIconView(PhoebeIcon.Settings, tint = PhoebeUi.secondaryText, modifier = Modifier.size(18.dp))
+                                Text("Settings")
+                            }
+                        },
+                        onClick = {
+                            onNavigate(BrowseSection.Settings)
+                            menuExpanded = false
+                        },
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("Refresh library") },
                     onClick = {
@@ -710,11 +712,7 @@ internal fun MobileBrowseShell(
                         appUpdateState = appUpdateState,
                         pairedDevices = pairedDevices,
                         remoteControlClientState = remoteControlClientState,
-                        initialCategory = if (section == BrowseSection.Downloads) {
-                            SettingsCategory.Downloads
-                        } else {
-                            SettingsCategory.Account
-                        },
+                        initialCategory = SettingsCategory.Downloads.takeIf { section == BrowseSection.Downloads },
                     ),
                     actions = SettingsRouteActions(
                         onLightModeChange = onUseLightAppearanceChange,
