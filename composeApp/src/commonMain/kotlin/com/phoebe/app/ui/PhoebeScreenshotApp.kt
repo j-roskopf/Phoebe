@@ -688,7 +688,7 @@ internal fun PhoebeMobileScreenshotScenario(
                     jellyfinDiscoveryLoading = false,
                     jellyfinQuickConnect = null,
                     authInProgress = false,
-                    initialProvidersExpanded = true,
+                    initialConnectProvider = com.phoebe.app.domain.MediaProviderType.Jellyfin,
                 ),
                 actions = screenshotAuthActions(),
                 modifier = Modifier.fillMaxSize(),

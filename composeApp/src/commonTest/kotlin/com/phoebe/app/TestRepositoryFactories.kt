@@ -48,6 +48,7 @@ fun testSessionRepository(
     jellyfinClient: JellyfinClient = JellyfinClient(httpClient),
     providerRegistry: MusicProviderRegistry = MusicProviderRegistry(emptyList()),
     databaseWriteGate: DatabaseWriteGate = DatabaseWriteGate(),
+    serverUrlResolver: com.phoebe.app.data.ServerUrlResolver = com.phoebe.app.data.ServerUrlResolver(httpClient),
 ): SessionRepository =
     SessionRepository(
         plexClient = plexClient,
@@ -56,6 +57,7 @@ fun testSessionRepository(
         database = database,
         storage = storage,
         databaseWriteGate = databaseWriteGate,
+        serverUrlResolver = serverUrlResolver,
     )
 
 fun testRadioRepository(
