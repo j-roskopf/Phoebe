@@ -56,6 +56,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.input.key.Key
@@ -100,6 +101,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val RadioSearchDebounceMillis = 450L
+private val SectionIndexTopInset = 16.dp
 
 val LocalRadioStationRemoteArtworkEnabled = staticCompositionLocalOf { true }
 
@@ -201,6 +203,7 @@ fun RadioRoute(
             listState.isScrollInProgress
         }
     }
+    val sectionIndexTopInsetPx = with(LocalDensity.current) { SectionIndexTopInset.toPx() }
     val showMobileAddButton = sectionIndexMode == LibrarySectionIndexMode.MobileScrollbar && mobileAddButtonVisible
     val listContentPadding = if (sectionIndexMode == LibrarySectionIndexMode.MobileScrollbar) {
         PaddingValues(
@@ -539,10 +542,18 @@ fun RadioRoute(
                 revealSignal = revealIndex,
                 keepLabelsVisible = keepSectionIndexLabelsVisible,
                 scrollbarState = scrollbarState,
+                touchExclusionTopPx = {
+                    // Rail starts SectionIndexTopInset below the list's top padding; skip touches on the top bar.
+                    listState.layoutInfo.visibleItemsInfo
+                        .firstOrNull { it.key == "top-bar" }
+                        ?.let { (it.offset + it.size).toFloat() - sectionIndexTopInsetPx }
+                        ?.coerceAtLeast(0f)
+                        ?: 0f
+                },
                 modifier = Modifier
                     .align(Alignment.CenterEnd)
                     .padding(
-                        top = contentPadding.calculateTopPadding() + 16.dp,
+                        top = contentPadding.calculateTopPadding() + SectionIndexTopInset,
                         bottom = contentPadding.calculateBottomPadding() + 24.dp,
                     ),
             )
