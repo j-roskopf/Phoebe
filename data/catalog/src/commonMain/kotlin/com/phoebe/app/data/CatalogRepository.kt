@@ -30,6 +30,7 @@ import com.phoebe.app.domain.LocalMetadataOverride
 import com.phoebe.app.domain.MetadataOverrideSyncStatus
 import com.phoebe.app.domain.MusicLibrary
 import com.phoebe.app.domain.MediaProviderType
+import com.phoebe.app.domain.providerTypeFromCatalogId
 import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.PlexSession
 import com.phoebe.app.domain.LIKED_SONGS_PLAYLIST_BARE_ID
@@ -4885,6 +4886,36 @@ class CatalogRepository(
         return tracks
     }
 
+    /**
+     * Server-picked tracks similar to [track] for a song radio. The seed itself is not included.
+     * Navidrome tops up thin `getSimilarSongs` results (no Last.fm agent) with the song's artist radio.
+     */
+    suspend fun songRadio(session: PlexSession?, track: Track): List<Track> {
+        val providerType = track.id.providerTypeFromCatalogId() ?: return emptyList()
+        if (session?.providerType != providerType) return emptyList()
+        val similar = when (providerType) {
+            MediaProviderType.Plex -> plexSimilarTracksForItem(session, track.id)
+            MediaProviderType.Jellyfin,
+            MediaProviderType.Emby -> instantMixForItem(session, track.id)
+            MediaProviderType.Navidrome -> navidromeSongRadio(session, track)
+            MediaProviderType.MusicAssistant -> emptyList()
+        }
+        return similar.filterNot { it.id == track.id }.distinctBy { it.id }
+    }
+
+    private suspend fun navidromeSongRadio(session: PlexSession, track: Track): List<Track> {
+        val similar = runCatching { navidromeSimilarTracksForItem(session, track.id) }
+            .onFailure { error -> PhoebeLog.d("CatalogRepository") { "Navidrome similar songs failed for ${track.id}: ${error.message}" } }
+            .getOrDefault(emptyList())
+        if (similar.size >= SongRadioMinSimilarTracks || track.artist.isBlank()) return similar
+        val catalogArtist = mutableCatalog.value.artists.firstOrNull {
+            it.id.startsWith("navidrome:") && it.title.equals(track.artist, ignoreCase = true)
+        }
+        // A synthetic "artist:" id makes navidromeArtistRadio resolve the artist by name on the server.
+        val artist = catalogArtist ?: Artist(id = "navidrome:artist:${track.artist}", title = track.artist, genre = track.genre)
+        return (similar + navidromeArtistRadio(session, artist)).distinctBy { it.id }
+    }
+
     suspend fun artistRadioStation(session: PlexSession?, artist: Artist): PlexRadioStation? {
         val providerPrefix = session?.providerType?.catalogPrefix
         if (session.isEmbyFamily() && providerPrefix != null && artist.id.startsWith("$providerPrefix:")) {
@@ -8879,6 +8910,7 @@ class CatalogRepository(
         const val DecadeFirstPageSize = 80
         const val DecadeTrackLimit = 500
         const val ArtistStationLookupTimeoutMs = 8_000L
+        const val SongRadioMinSimilarTracks = 10
         const val JellyfinQuickSyncPlaylistsTimeoutMs = 30_000L
         const val MaxDecadeTrackPages = 4
         const val CollectionFacetTrackPageSize = 250

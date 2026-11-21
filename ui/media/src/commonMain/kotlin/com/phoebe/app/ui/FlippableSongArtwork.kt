@@ -59,6 +59,8 @@ fun FlippableSongArtwork(
     maxDecodeDimension: Int = ListArtworkMaxDecodeDimension,
     forceSquare: Boolean = true,
     onFlipRotationChange: (Float) -> Unit = {},
+    /** Replaces the default long-press flip to the details side when set. */
+    onLongClick: (() -> Unit)? = null,
     frontOverlay: @Composable BoxScope.() -> Unit = {},
 ) {
     var showingDetails by remember(track.id) { mutableStateOf(false) }
@@ -96,7 +98,7 @@ fun FlippableSongArtwork(
                     .then(artworkModifier)
                     .combinedClickable(
                         onClick = {},
-                        onLongClick = { showingDetails = true },
+                        onLongClick = { onLongClick?.invoke() ?: run { showingDetails = true } },
                     ),
                 radius = radius,
                 shape = shape,
@@ -166,7 +168,10 @@ fun SongDetailMetadataRows(
     labelWidth: Dp = 108.dp,
     labelFontSize: TextUnit = 12.sp,
     valueFontSize: TextUnit = 13.sp,
+    /** Makes the Artist and Album rows open their pages (off on the flipped artwork, where a tap flips back). */
+    linkArtistAndAlbum: Boolean = false,
 ) {
+    val navigationActions = LocalTrackNavigationActions.current
     val downloads = LocalDownloadStatus.current
     val downloadedFile = downloads.itemFor(track)
         ?.takeIf { it.state == DownloadState.Complete && !it.localUri.isNullOrBlank() }
@@ -186,7 +191,13 @@ fun SongDetailMetadataRows(
         track.filepath?.let { add("File" to it) }
     }
     rows.forEachIndexed { index, (label, value) ->
-        DetailMetaRow(label, value, labelWidth, labelFontSize, valueFontSize)
+        val onClick: (() -> Unit)? = when {
+            !linkArtistAndAlbum || value.isBlank() -> null
+            label == "Artist" -> { { navigationActions.onOpenArtistForTrack(track) } }
+            label == "Album" -> { { navigationActions.onOpenAlbumForTrack(track) } }
+            else -> null
+        }
+        DetailMetaRow(label, value, labelWidth, labelFontSize, valueFontSize, onClick)
         if (index != rows.lastIndex) {
             Box(
                 Modifier
@@ -211,17 +222,19 @@ private fun DetailMetaRow(
     labelWidth: Dp = 108.dp,
     labelFontSize: TextUnit = 12.sp,
     valueFontSize: TextUnit = 13.sp,
+    onClick: (() -> Unit)? = null,
 ) {
     Row(
         Modifier
             .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .padding(vertical = 9.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(label, color = PhoebeUi.mutedText, fontSize = labelFontSize, modifier = Modifier.width(labelWidth))
         Text(
             value,
-            color = PhoebeUi.primaryText,
+            color = if (onClick != null) PhoebeUi.accentLight else PhoebeUi.primaryText,
             fontSize = valueFontSize,
             textAlign = TextAlign.End,
             maxLines = 2,

@@ -206,6 +206,8 @@ internal data class BrowseActions(
     val onDownloadArtist: (Artist) -> Unit,
     val onProbeArtistRadio: (Artist) -> Unit = {},
     val onPlayArtistRadio: (Artist) -> Unit,
+    val canStartSongRadio: (Track) -> Boolean = { false },
+    val onPlaySongRadio: (Track) -> Unit = {},
     val onLoadArtistEventAvailability: (Artist) -> Unit = {},
     val onLoadArtistEvents: (Artist) -> Unit = {},
     val onLoadAlbumMusicBrainzMetadata: (Album, List<Track>) -> Unit = { _, _ -> },

@@ -361,6 +361,14 @@ data class TrackNavigationActions(
 
 val LocalTrackNavigationActions = compositionLocalOf { TrackNavigationActions() }
 
+/** Starts a radio seeded by a song; [canStart] is false for servers without similar-track support. */
+data class SongRadioActions(
+    val canStart: (Track) -> Boolean = { false },
+    val onStart: (Track) -> Unit = {},
+)
+
+val LocalSongRadioActions = compositionLocalOf { SongRadioActions() }
+
 data class MetadataEditorActions(
     val onRequestEdit: (Track) -> Unit = {},
 )

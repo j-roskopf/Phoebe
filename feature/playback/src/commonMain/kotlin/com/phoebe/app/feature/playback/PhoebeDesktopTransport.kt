@@ -102,6 +102,7 @@ fun DesktopTransport(
         isBuffering = isBuffering,
     )
     val likeActions = LocalLikeActions.current
+    val songRadioActions = LocalSongRadioActions.current
     val trackNavigationActions = LocalTrackNavigationActions.current
     val canLike = track != null && (track.id.startsWith("radio:") || (likeActions.likesEnabled && track.canTogglePlexLike()))
     val liked = track != null && likeActions.isLiked(track)
@@ -344,6 +345,7 @@ fun DesktopTransport(
                         upNextVisible = upNextVisible,
                         upNextToggleEnabled = upNextToggleEnabled,
                         ultimateGuitarTrack = ultimateGuitarTrack,
+                        songRadioTrack = track?.takeIf(songRadioActions.canStart),
                         onDismiss = { transportOptionsOpen = false },
                         onVolume = onVolume,
                         onCast = onCast,
@@ -351,6 +353,7 @@ fun DesktopTransport(
                         onVisualizerPreset = onVisualizerPreset,
                         onLyrics = onLyrics,
                         onUltimateGuitar = onUltimateGuitar,
+                        onStartSongRadio = songRadioActions.onStart,
                         onToggleUpNext = onToggleUpNext,
                     )
                 }
@@ -649,6 +652,7 @@ private fun PlaybackOptionsMenu(
     upNextVisible: Boolean,
     upNextToggleEnabled: Boolean,
     ultimateGuitarTrack: Track?,
+    songRadioTrack: Track?,
     onDismiss: () -> Unit,
     onVolume: (Float) -> Unit,
     onCast: () -> Unit,
@@ -656,6 +660,7 @@ private fun PlaybackOptionsMenu(
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit,
     onLyrics: () -> Unit,
     onUltimateGuitar: (Track) -> Unit,
+    onStartSongRadio: (Track) -> Unit,
     onToggleUpNext: () -> Unit,
 ) {
     SuppressVisualizerHtmlOverlay(expanded)
@@ -730,6 +735,17 @@ private fun PlaybackOptionsMenu(
                 active = false,
                 onClick = {
                     onUltimateGuitar(ultimateGuitarTrack)
+                    onDismiss()
+                },
+            )
+        }
+        if (songRadioTrack != null) {
+            PlaybackOptionsMenuItem(
+                icon = PhoebeIcon.Radio,
+                text = "Start Song Radio",
+                active = false,
+                onClick = {
+                    onStartSongRadio(songRadioTrack)
                     onDismiss()
                 },
             )

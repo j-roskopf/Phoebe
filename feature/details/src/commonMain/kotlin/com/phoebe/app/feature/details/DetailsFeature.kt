@@ -89,6 +89,9 @@ class AlbumDetailRouteActions(
 @Immutable
 data class SongDetailRouteState(
     val track: Track,
+    /** Whether the track's server can build a radio from it (Plex, Jellyfin, Emby, Navidrome). */
+    val canStartRadio: Boolean = false,
+    val radioStarting: Boolean = false,
 )
 
 class SongDetailRouteActions(
@@ -97,6 +100,7 @@ class SongDetailRouteActions(
     val onAddToUpNext: (Track) -> Unit,
     val onDownload: (Track) -> Unit,
     val onOpenLyrics: (Track) -> Unit = {},
+    val onStartRadio: (Track) -> Unit = {},
 )
 
 @Immutable
@@ -218,6 +222,11 @@ fun SongDetailRoute(
         onAddToUpNext = actions.onAddToUpNext,
         onDownload = actions.onDownload,
         onOpenLyrics = actions.onOpenLyrics,
+        radio = if (state.canStartRadio) {
+            SongRadioAction(starting = state.radioStarting, onStart = actions.onStartRadio)
+        } else {
+            null
+        },
     )
 }
 

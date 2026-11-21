@@ -147,6 +147,13 @@ data class PendingDuplicatePlaylistAdd(
     val message: String,
 )
 
+/** Up Next as it was before a song radio replaced it in place, for the Undo snackbar. */
+data class SongRadioUndo(
+    val message: String,
+    val previousUpcoming: List<Track>,
+    val previousOrigin: PlaybackQueueOrigin?,
+)
+
 data class PlaybackSnackbarNotice(
     val message: String,
     val streamUrl: String? = null,
@@ -361,6 +368,8 @@ class AppState(
     val radioStations: StateFlow<List<PlexRadioStation>> = mutableRadioStations
 
     private val mutableRadioStartingIds = MutableStateFlow<Set<String>>(emptySet())
+    private val mutableSongRadioUndo = MutableStateFlow<SongRadioUndo?>(null)
+    val songRadioUndo: StateFlow<SongRadioUndo?> = mutableSongRadioUndo.asStateFlow()
     val radioStartingIds: StateFlow<Set<String>> = mutableRadioStartingIds
 
     private val mutableInternetRadioStartingIds = MutableStateFlow<Set<String>>(emptySet())
@@ -1141,6 +1150,14 @@ class AppState(
                         ),
                     )
                 }
+            }
+            is PlaybackQueueOrigin.SongRadio -> {
+                nativeKeepPlayingCandidatesForItems(
+                    providerType = origin.providerType,
+                    primaryItemId = origin.id,
+                    seedTrackIds = origin.seedTrackIds,
+                    currentQueue = currentQueue,
+                )
             }
             is PlaybackQueueOrigin.Mix,
             is PlaybackQueueOrigin.TrackList -> emptyList()
@@ -2806,6 +2823,116 @@ class AppState(
         }
     }
 
+    /**
+     * Starts a radio seeded by [track]. When [track] is already playing on this device, only Up Next
+     * is replaced so playback continues uninterrupted, and an Undo snackbar restores the old queue.
+     */
+    fun playSongRadio(track: Track) = scope.launch {
+        if (!track.id.supportsArtistRadio()) {
+            mutableMessage.value = "Radio is available for streaming-library songs."
+            return@launch
+        }
+        if (track.id in mutableRadioStartingIds.value) return@launch
+        mutableRadioStartingIds.update { it + track.id }
+        try {
+            val similar = try {
+                withTimeoutOrNull(SongRadioLoadTimeoutMs) {
+                    dependencies.catalogRepository.songRadio(session.value, track)
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                surfaceTransientNotice(error.message ?: "Couldn't start radio for ${track.title}.")
+                return@launch
+            }
+            if (similar == null) {
+                surfaceTransientNotice("Radio for ${track.title} took too long. Try again.")
+                return@launch
+            }
+            if (similar.isEmpty()) {
+                surfaceTransientNotice("Radio isn't available for ${track.title}.")
+                return@launch
+            }
+            val radioTitle = "${track.title} Radio"
+            val queue = listOf(track) + similar
+            val origin = PlaybackQueueOrigin.SongRadio(
+                id = track.id,
+                title = radioTitle,
+                seedTrackIds = queue.take(SongRadioSeedTrackLimit).map { it.id },
+            )
+            if (replaceUpNextWithSongRadio(track, similar, origin)) {
+                requestNavigation(AppNavigationRequest.Player)
+                return@launch
+            }
+            if (playTracks(queue, 0, queueOrigin = origin)) {
+                requestNavigation(AppNavigationRequest.Player)
+                mutableMessage.value = "Playing $radioTitle."
+            }
+        } finally {
+            mutableRadioStartingIds.update { it - track.id }
+        }
+    }
+
+    /** Returns false when [seed] isn't the local player's current track, so the caller starts a fresh queue. */
+    private fun replaceUpNextWithSongRadio(
+        seed: Track,
+        similar: List<Track>,
+        origin: PlaybackQueueOrigin.SongRadio,
+    ): Boolean {
+        if (!canEditLocalQueueInPlace()) return false
+        val current = player.value
+        if (current.queue.getOrNull(current.currentIndex)?.id != seed.id) return false
+        val previousUpcoming = current.queue.drop(current.currentIndex + 1)
+        val previousOrigin = keepPlayingOrigin
+        replaceLocalUpNext(similar, origin, listOf(seed) + similar)
+        mutableSongRadioUndo.value = SongRadioUndo(
+            message = "Up Next replaced with ${origin.title}",
+            previousUpcoming = previousUpcoming,
+            previousOrigin = previousOrigin,
+        )
+        return true
+    }
+
+    /** Song radio needs a streaming server that can suggest similar tracks. */
+    fun supportsSongRadio(track: Track): Boolean = track.id.supportsArtistRadio()
+
+    fun undoSongRadio() {
+        val undo = mutableSongRadioUndo.value ?: return
+        mutableSongRadioUndo.value = null
+        if (!canEditLocalQueueInPlace()) return
+        val current = player.value.queue.getOrNull(player.value.currentIndex)
+        replaceLocalUpNext(undo.previousUpcoming, undo.previousOrigin, listOfNotNull(current) + undo.previousUpcoming)
+    }
+
+    fun dismissSongRadioUndo() {
+        mutableSongRadioUndo.value = null
+    }
+
+    private fun canEditLocalQueueInPlace(): Boolean =
+        !dependencies.remoteControlClient.state.value.isConnected &&
+            !dependencies.castController.state.value.isPlaybackActive &&
+            mutableMusicAssistantRemotePlayback.value == null
+
+    private fun replaceLocalUpNext(
+        upcoming: List<Track>,
+        origin: PlaybackQueueOrigin?,
+        keepPlayingQueue: List<Track>,
+    ) {
+        cancelLibraryRadioFill()
+        collectionMixGeneration++
+        dependencies.audioPlayer.clearQueue()
+        startKeepPlayingQueue(origin, keepPlayingQueue)
+        if (upcoming.isNotEmpty()) {
+            dependencies.audioPlayer.appendToQueue(upcoming.withFreshPlaybackUrls(session.value, currentPlaybackOrigin()))
+        }
+        if (appSettings.value.keepPlayingEnabled) {
+            keepPlayingPreviewPendingGeneration = keepPlayingQueueGeneration
+            if (requestKeepPlayingPreview()) {
+                keepPlayingPreviewPendingGeneration = null
+            }
+        }
+    }
+
     fun playPlaylistShuffled(playlist: Playlist) = scope.launch {
         val tracks = runCatching {
             dependencies.catalogRepository.tracksForPlaylist(session.value, playlist)
@@ -3133,6 +3260,7 @@ class AppState(
     ): Boolean {
         cancelLibraryRadioFill()
         collectionMixGeneration++
+        mutableSongRadioUndo.value = null
         val playbackTracks = tracks.withFreshPlaybackUrls(session.value, currentPlaybackOrigin())
         if (playbackTracks.isEmpty()) return false
         val startIndex = index.coerceIn(playbackTracks.indices)
@@ -3319,8 +3447,15 @@ class AppState(
         dependencies.playbackTransportService.stopPlayback()
     }
     fun addToUpNext(track: Track) {
+        // The queue holds each track once, so "adding" the playing song would just move it past
+        // the next track (dropping that track out of Up Next).
+        if (player.value.currentTrack?.id == track.id) {
+            surfaceTransientNotice("${track.title} is already playing.")
+            return
+        }
         markKeepPlayingQueueEditedByUser()
         dependencies.playbackTransportService.addToUpNext(track)
+        surfaceTransientNotice("${track.title} will play next.")
     }
     fun appendToQueue(tracks: List<Track>) = dependencies.playbackTransportService.appendToQueue(tracks)
     fun addToEndOfQueue(track: Track) = dependencies.playbackTransportService.appendToQueue(listOf(track))
@@ -4676,6 +4811,10 @@ private const val KeepPlayingNativeCandidateTimeoutMs = 5_000L
 private const val KeepPlayingNativeItemsBudgetMs = 4_000L
 private const val KeepPlayingNativeItemTimeoutMs = 1_200L
 private const val KeepPlayingRecentTrackLimit = 25
+
+private const val SongRadioLoadTimeoutMs = 15_000L
+/** Leading radio tracks Keep Playing seeds from once the song radio runs out. */
+private const val SongRadioSeedTrackLimit = 10
 
 private const val PopularMixSeedTrackLimit = 50
 private const val PopularMixTrackLimit = 500

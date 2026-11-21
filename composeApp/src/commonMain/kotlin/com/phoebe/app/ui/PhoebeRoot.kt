@@ -158,6 +158,7 @@ import kotlin.math.roundToInt
 import com.phoebe.app.AppState
 import com.phoebe.app.PendingDuplicatePlaylistAdd
 import com.phoebe.app.PlaybackSnackbarNotice
+import com.phoebe.app.SongRadioUndo
 import com.phoebe.app.feature.auth.AuthWelcomeMobileRoute
 import com.phoebe.app.feature.auth.AuthWelcomeRouteActions
 import com.phoebe.app.feature.auth.AuthWelcomeRouteState
@@ -411,6 +412,7 @@ private fun PhoebeRootStateHolder(
     val message by state.message.collectAsState()
     val pendingDuplicatePlaylistAdd by state.pendingDuplicatePlaylistAdd.collectAsState()
     val playbackSnackbar by state.playbackSnackbar.collectAsState()
+    val songRadioUndo by state.songRadioUndo.collectAsState()
     val appUpdateState by state.appUpdateState.collectAsState()
     val pendingUpdateInstallConfirmation by state.pendingUpdateInstallConfirmation.collectAsState()
     val decadeMixNotice by state.decadeMixNotice.collectAsState()
@@ -1361,6 +1363,12 @@ private fun PhoebeRootStateHolder(
             },
         )
     }
+    val songRadioActions = remember(state) {
+        SongRadioActions(
+            canStart = state::supportsSongRadio,
+            onStart = { track -> state.playSongRadio(track) },
+        )
+    }
     val metadataEditorActions = remember {
         MetadataEditorActions(onRequestEdit = { track -> metadataEditorTrack = track })
     }
@@ -1390,6 +1398,7 @@ private fun PhoebeRootStateHolder(
         LocalFavoriteActions provides favoriteActions,
         LocalRatingActions provides ratingActions,
         LocalTrackNavigationActions provides trackNavigationActions,
+        LocalSongRadioActions provides songRadioActions,
         LocalMetadataEditorActions provides metadataEditorActions,
         LocalDragDrop provides dragDrop,
         LocalSearchHistory provides searchHistory,
@@ -1702,13 +1711,18 @@ private fun PhoebeRootStateHolder(
                         )
                     }
                     is AppScreen.SongDetail -> SongDetailRoute(
-                        state = SongDetailRouteState(track = scr.track),
+                        state = SongDetailRouteState(
+                            track = scr.track,
+                            canStartRadio = state.supportsSongRadio(scr.track),
+                            radioStarting = scr.track.id in radioStartingIds,
+                        ),
                         actions = SongDetailRouteActions(
                             onBack = { navigator.pop() },
                             onPlay = { playTracksFromMobile(listOf(scr.track), 0) },
                             onAddToUpNext = state::addToUpNext,
                             onDownload = state::download,
                             onOpenLyrics = { navigator.open(PhoebeRoute.Lyrics(it.id)) },
+                            onStartRadio = { state.playSongRadio(it) },
                         ),
                         modifier = Modifier.fillMaxSize(),
                     )
@@ -2527,6 +2541,8 @@ private fun PhoebeRootStateHolder(
                         onDownloadArtist = state::download,
                         onProbeArtistRadio = state::probeArtistRadio,
                         onPlayArtistRadio = state::playArtistRadio,
+                        canStartSongRadio = state::supportsSongRadio,
+                        onPlaySongRadio = { state.playSongRadio(it) },
                         onLoadArtistEventAvailability = state::loadArtistEventAvailability,
                         onLoadArtistEvents = { artist -> state.loadArtistEvents(artist, force = true) },
                         onLoadAlbumMusicBrainzMetadata = state::loadAlbumMusicBrainzMetadata,
@@ -2720,6 +2736,12 @@ private fun PhoebeRootStateHolder(
             onDismiss = state::dismissPlaybackSnackbar,
             modifier = Modifier.align(Alignment.BottomCenter),
         )
+        SongRadioUndoSnackbar(
+            undo = songRadioUndo,
+            onDismiss = state::dismissSongRadioUndo,
+            onUndo = state::undoSongRadio,
+            modifier = Modifier.align(Alignment.BottomCenter),
+        )
         PlaylistDuplicateSnackbar(
             pendingAdd = pendingDuplicatePlaylistAdd,
             onDismiss = state::dismissDuplicatePlaylistAdd,
@@ -2790,6 +2812,42 @@ private fun PlaybackFailureSnackbar(
                 }
             },
         )
+    }
+}
+
+@Composable
+private fun SongRadioUndoSnackbar(
+    undo: SongRadioUndo?,
+    onDismiss: () -> Unit,
+    onUndo: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LaunchedEffect(undo) {
+        if (undo != null) {
+            delay(8_000L)
+            onDismiss()
+        }
+    }
+    var lastUndo by remember { mutableStateOf<SongRadioUndo?>(null) }
+    if (undo != null) {
+        lastUndo = undo
+    }
+    AnimatedVisibility(
+        visible = undo != null,
+        enter = slideInVertically(tween(180, easing = FastOutSlowInEasing)) { it / 2 } + fadeIn(tween(180)),
+        exit = slideOutVertically(tween(160, easing = FastOutSlowInEasing)) { it / 2 } + fadeOut(tween(160)),
+        modifier = modifier
+            .navigationBarsPadding()
+            .padding(horizontal = 18.dp, vertical = 18.dp)
+            .zIndex(21f),
+    ) {
+        lastUndo?.let { shown ->
+            PhoebeActionSnackbar(
+                message = shown.message,
+                actionLabel = "Undo",
+                onAction = onUndo,
+            )
+        }
     }
 }
 
@@ -3062,6 +3120,7 @@ private fun MobilePlayerHost(
     val equalizerProfile by appState.equalizerProfile.collectAsState()
     val equalizerRemoteUnavailable by appState.equalizerRemoteUnavailable.collectAsState()
     val listenBrainzFeedbackTarget by appState.listenBrainzFeedbackTarget.collectAsState()
+    val radioStartingIds by appState.radioStartingIds.collectAsState()
     val showStartingState = playbackStarting && track?.id != player.currentTrackId
     MobilePlaybackRoute(
         state = MobilePlaybackRouteState(
@@ -3092,6 +3151,7 @@ private fun MobilePlayerHost(
             effectiveStreamingQuality = appSettings.streamingPolicy.effectiveQuality(
                 currentNetworkMeteringStatus().let { it.isMetered || it.isCellular },
             ),
+            songRadioStartingIds = radioStartingIds,
         ),
         actions = MobilePlaybackRouteActions(
             onToggle = onToggle,
@@ -3106,6 +3166,8 @@ private fun MobilePlayerHost(
             onMoveUpNext = onMoveUpNext,
             onRemoveUpNext = onRemoveUpNext,
             onOpenSongDetail = onOpenSongDetail,
+            canStartSongRadio = appState::supportsSongRadio,
+            onStartSongRadio = { appState.playSongRadio(it) },
             onCast = onCast,
             onLyrics = onLyrics,
             onUltimateGuitar = onUltimateGuitar,

@@ -101,7 +101,7 @@ private fun filteredNativeCandidates(
 }
 
 private fun PlaybackQueueOrigin?.trustsNativeCandidates(): Boolean =
-    this is PlaybackQueueOrigin.Artist || this is PlaybackQueueOrigin.Radio
+    this is PlaybackQueueOrigin.Artist || this is PlaybackQueueOrigin.Radio || this is PlaybackQueueOrigin.SongRadio
 
 private fun loadedPlayableTracks(catalog: CatalogSnapshot): List<Track> =
     catalog.tracksByParent.values
@@ -176,6 +176,7 @@ private fun seedTracks(
         is PlaybackQueueOrigin.Album -> catalog.tracksByParent[origin.id].orEmpty()
         is PlaybackQueueOrigin.Artist -> catalog.tracksForArtistTitle(origin.title)
         is PlaybackQueueOrigin.Playlist -> catalog.tracksByParent[origin.id].orEmpty()
+        is PlaybackQueueOrigin.SongRadio,
         is PlaybackQueueOrigin.Radio,
         is PlaybackQueueOrigin.Mix,
         is PlaybackQueueOrigin.TrackList,
@@ -370,6 +371,7 @@ private fun PlaybackQueueOrigin?.keepPlayingSourceLabel(): String =
         is PlaybackQueueOrigin.Artist -> title
         is PlaybackQueueOrigin.Playlist -> title
         is PlaybackQueueOrigin.Radio -> title
+        is PlaybackQueueOrigin.SongRadio -> title
         is PlaybackQueueOrigin.Mix -> title
         is PlaybackQueueOrigin.TrackList,
         null -> "Keep Playing"
