@@ -742,13 +742,17 @@ private fun SignInProviderTile(
     lightMode: Boolean,
     modifier: Modifier = Modifier,
 ) {
-    TooltipBox(
-        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
-        tooltip = { PlainTooltip { Text(spec.tooltip) } },
-        state = rememberTooltipState(),
-        modifier = modifier,
-    ) {
-        SignInProviderTileContent(spec, lightMode, Modifier.fillMaxSize())
+    // The caller's modifier carries the Row weight; TooltipBox wraps its content in its own layout and
+    // drops that parent data, so the weight goes on this outer Box instead.
+    Box(modifier) {
+        TooltipBox(
+            positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+            tooltip = { PlainTooltip { Text(spec.tooltip) } },
+            state = rememberTooltipState(),
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            SignInProviderTileContent(spec, lightMode, Modifier.fillMaxSize())
+        }
     }
 }
 
