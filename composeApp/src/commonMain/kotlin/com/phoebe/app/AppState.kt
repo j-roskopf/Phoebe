@@ -102,6 +102,7 @@ import com.phoebe.app.platform.currentNetworkIdentity
 import com.phoebe.app.platform.currentNetworkMeteringStatus
 import com.phoebe.app.platform.currentTimeMs
 import com.phoebe.app.platform.defaultDownloadWifiOnly
+import com.phoebe.app.platform.isDebugBuild
 import com.phoebe.app.platform.isDesktopPlatform
 import com.phoebe.app.platform.discoverJellyfinServers as discoverJellyfinServersOnNetwork
 import com.phoebe.app.platform.openExternalUrl
@@ -747,6 +748,9 @@ class AppState(
     }
 
     private fun checkForUpdatesInBackground() {
+        // Local builds report the gradle.properties version, which falls behind as soon as
+        // upstream publishes a release. "Check for updates" in Settings still works.
+        if (isDebugBuild()) return
         scope.launch {
             dependencies.appUpdateService.checkForUpdates { error ->
                 PhoebeLog.d("Update") { "release check failed: ${error.message}" }
