@@ -1443,7 +1443,6 @@ private fun MobilePlaylistDetailHeader(
                     enabled = visibleTracks.isNotEmpty(),
                     modifier = Modifier.weight(1f),
                     onClick = { onPlayAllTracks(visibleTracks) },
-                    onLongClick = { onShuffleAllTracks(visibleTracks) },
                 )
                 MobileDetailSecondaryButton(
                     icon = PhoebeIcon.InterwovenArrows,
