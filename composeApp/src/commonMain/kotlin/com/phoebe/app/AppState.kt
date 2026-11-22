@@ -3286,7 +3286,9 @@ class AppState(
                 mutableMessage.value = support.message ?: "This queue can't be cast to Chromecast."
                 return false
             }
-            val currentPlayer = dependencies.audioPlayer.state.value
+            // The merged player follows the receiver while casting; the local player is suspended
+            // then, so its position is stale and the playing song would restart from 0.
+            val currentPlayer = player.value
             val startPositionMs = currentPlayer.positionMs.takeIf {
                 currentPlayer.queue.getOrNull(currentPlayer.currentIndex)?.id == track.id
             } ?: 0L

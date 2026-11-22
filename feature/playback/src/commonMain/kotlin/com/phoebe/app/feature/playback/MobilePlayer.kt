@@ -6,7 +6,10 @@ import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.PlainTooltip
 import androidx.compose.material3.TooltipAnchorPosition
 import androidx.compose.material3.TooltipBox
@@ -188,12 +191,26 @@ private fun MobileExpandedUtilityControls(
         }
         if (songRadio != null) {
             MobileUtilityControl(tooltip = if (songRadio.starting) "Starting radio…" else "Start radio from this song") {
-                TransportIcon(
-                    PhoebeIcon.Radio,
-                    if (songRadio.starting) "Starting radio" else "Start radio from this song",
-                    { if (!songRadio.starting) songRadio.onStart() },
-                    active = songRadio.starting,
-                )
+                if (songRadio.starting) {
+                    // Finding similar songs can take a few seconds (several server calls, then a cast
+                    // reload), so swap the icon for a spinner like the Cast icon's connecting state.
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(PhoebeUi.accent.copy(alpha = 0.14f))
+                            .semantics { contentDescription = "Starting radio" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = PhoebeUi.accentLight,
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                } else {
+                    TransportIcon(PhoebeIcon.Radio, "Start radio from this song", songRadio.onStart)
+                }
             }
         }
         MobileUtilityControl(tooltip = if (castState.isConnected) "Casting" else "Cast") {
