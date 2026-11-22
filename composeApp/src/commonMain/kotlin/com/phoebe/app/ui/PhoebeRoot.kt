@@ -1922,6 +1922,8 @@ private fun PhoebeRootStateHolder(
                             onDeleteDownloadPlaylist = state::deleteDownloads,
                             onMovePlaylistTrack = state::movePlaylistTrack,
                             onLibraryColumns = state::setLibraryColumns,
+                            onPlayAllTracks = playAllTracksFromMobile,
+                            onShuffleAllTracks = shuffleAllTracksFromMobile,
                         ),
                         modifier = Modifier.fillMaxSize(),
                     )

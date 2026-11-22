@@ -124,6 +124,8 @@ class PlaylistDetailRouteActions(
     val onDeleteDownloadPlaylist: (Playlist) -> Unit = {},
     val onMovePlaylistTrack: (Playlist, Int, Int) -> Unit = { _, _, _ -> },
     val onAddToEndOfQueue: (Track) -> Unit = {},
+    val onPlayAllTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks, 0) },
+    val onShuffleAllTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks.shuffled(), 0) },
 )
 
 @Composable
@@ -246,6 +248,8 @@ fun PlaylistDetailRoute(
         onSearchQuery = actions.onSearchQuery,
         onBack = actions.onBack,
         onPlayTracks = actions.onPlayTracks,
+        onPlayAllTracks = actions.onPlayAllTracks,
+        onShuffleAllTracks = actions.onShuffleAllTracks,
         onAddToUpNext = actions.onAddToUpNext,
         onDownload = actions.onDownload,
         onDownloadPlaylist = actions.onDownloadPlaylist,

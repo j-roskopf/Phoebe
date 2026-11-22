@@ -1325,7 +1325,8 @@ private fun MobilePlaylistDetailHeader(
     ratingActions: RatingActions,
     onBack: () -> Unit,
     onSearchQuery: (String) -> Unit,
-    onPlayTracks: (List<Track>, Int) -> Unit,
+    onPlayAllTracks: (List<Track>) -> Unit,
+    onShuffleAllTracks: (List<Track>) -> Unit,
     onDownloadPlaylist: (Playlist) -> Unit,
     onCancelDownloadPlaylist: (Playlist) -> Unit,
     onDeleteDownloadPlaylist: (Playlist) -> Unit,
@@ -1433,11 +1434,25 @@ private fun MobilePlaylistDetailHeader(
                     placeholder = "Search songs and artists",
                 )
             }
-            MobileDetailPrimaryPlayButton(
-                enabled = visibleTracks.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth().padding(contentPadding).padding(top = 18.dp),
-                onClick = { onPlayTracks(visibleTracks, 0) },
-            )
+            Row(
+                Modifier.fillMaxWidth().padding(contentPadding).padding(top = 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MobileDetailPrimaryPlayButton(
+                    enabled = visibleTracks.isNotEmpty(),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPlayAllTracks(visibleTracks) },
+                    onLongClick = { onShuffleAllTracks(visibleTracks) },
+                )
+                MobileDetailSecondaryButton(
+                    icon = PhoebeIcon.InterwovenArrows,
+                    label = "Shuffle",
+                    enabled = visibleTracks.isNotEmpty(),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onShuffleAllTracks(visibleTracks) },
+                )
+            }
         }
     }
 }
@@ -4253,6 +4268,8 @@ fun PlaylistDetailPanel(
     onMovePlaylistTrack: (Playlist, Int, Int) -> Unit = { _, _, _ -> },
     onLibraryColumns: (LibraryColumnVisibility) -> Unit,
     onAddToEndOfQueue: (Track) -> Unit = {},
+    onPlayAllTracks: (List<Track>) -> Unit = { tracksToPlay -> onPlayTracks(tracksToPlay, 0) },
+    onShuffleAllTracks: (List<Track>) -> Unit = { tracksToShuffle -> onPlayTracks(tracksToShuffle.shuffled(), 0) },
 ) {
     val tracks = remember(catalog.tracksByParent, playlist.id) {
         catalog.tracksByParent[playlist.id].orEmpty()
@@ -4389,7 +4406,8 @@ fun PlaylistDetailPanel(
                                 ratingActions = ratingActions,
                                 onBack = onBack,
                                 onSearchQuery = onSearchQuery,
-                                onPlayTracks = onPlayTracks,
+                                onPlayAllTracks = onPlayAllTracks,
+                                onShuffleAllTracks = onShuffleAllTracks,
                                 onDownloadPlaylist = onDownloadPlaylist,
                                 onCancelDownloadPlaylist = onCancelDownloadPlaylist,
                                 onDeleteDownloadPlaylist = onDeleteDownloadPlaylist,
