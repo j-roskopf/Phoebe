@@ -1449,13 +1449,14 @@ private fun ExpandedRecentArtistsShelf(
     onArtist: (Artist) -> Unit,
     onViewAll: () -> Unit,
 ) {
+    val shuffleActions = LocalShuffleActions.current
     val displayArtists = remember(artists) { artists.take(10) }
     if (displayArtists.isEmpty()) {
         ExpandedHomeEmptyShelf("RECENT ARTISTS", "Recently added artists will appear here.", action = "View all", onAction = onViewAll)
     } else {
         ExpandedHomeShelf("RECENT ARTISTS", action = "View all", onAction = onViewAll, horizontalSpacing = 12.dp) {
             items(displayArtists, key = { "recent-artist:${it.id}" }, contentType = { "expanded-recent-artist" }) { artist ->
-                MobileArtistTile(artist, artistThumbs[artist.id], "artist:${artist.id}") {
+                MobileArtistTile(artist, artistThumbs[artist.id], "artist:${artist.id}", onLongClick = { shuffleActions.onShuffleArtist(artist) }) {
                     onArtist(artist)
                 }
             }
@@ -1470,13 +1471,14 @@ private fun ExpandedRecentAlbumsShelf(
     onAlbum: (Album) -> Unit,
     onViewAll: () -> Unit,
 ) {
+    val shuffleActions = LocalShuffleActions.current
     val displayAlbums = remember(albums) { albums.take(10) }
     if (displayAlbums.isEmpty()) {
         ExpandedHomeEmptyShelf("RECENT ALBUMS", "Recently added albums will appear here.", action = "View all", onAction = onViewAll)
     } else {
         ExpandedHomeShelf("RECENT ALBUMS", action = "View all", onAction = onViewAll, horizontalSpacing = 10.dp) {
             items(displayAlbums, key = { "recent-album:${it.id}" }, contentType = { "expanded-recent-album" }) { album ->
-                HomeArtworkTile(album.title, album.artist, album.thumbUrl, fallbackThumbUrl = albumArtworkFallbacks[album.id], modifier = Modifier.width(92.dp), maxDecodeDimension = 180, sharedKey = "album:${album.id}") {
+                HomeArtworkTile(album.title, album.artist, album.thumbUrl, fallbackThumbUrl = albumArtworkFallbacks[album.id], modifier = Modifier.width(92.dp), maxDecodeDimension = 180, sharedKey = "album:${album.id}", onLongClick = { shuffleActions.onShuffleAlbum(album) }) {
                     onAlbum(album)
                 }
             }
@@ -2610,6 +2612,7 @@ private fun DesktopRecentArtistsPanel(
     onArtist: (Artist) -> Unit,
     panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
+    val shuffleActions = LocalShuffleActions.current
     HomePanel(Modifier.fillMaxWidth(), style = panelStyle) {
         SectionHeader("RECENTLY ADDED ARTISTS", "See all", onRecentArtists)
         if (artists.isEmpty()) {
@@ -2617,7 +2620,7 @@ private fun DesktopRecentArtistsPanel(
         } else {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 items(artists.take(10), key = { it.id }, contentType = { "desktop-recent-artist" }) { artist ->
-                    MobileArtistTile(artist, artistThumbs[artist.id], "artist:${artist.id}", width = 112.dp) { onArtist(artist) }
+                    MobileArtistTile(artist, artistThumbs[artist.id], "artist:${artist.id}", width = 112.dp, onLongClick = { shuffleActions.onShuffleArtist(artist) }) { onArtist(artist) }
                 }
             }
         }
@@ -2632,6 +2635,7 @@ private fun DesktopRecentAlbumsPanel(
     onAlbum: (Album) -> Unit,
     panelStyle: HomePanelStyle = HomePanelStyle.Card,
 ) {
+    val shuffleActions = LocalShuffleActions.current
     HomePanel(Modifier.fillMaxWidth(), style = panelStyle) {
         SectionHeader("RECENTLY ADDED ALBUMS", "See all", onRecentAlbums)
         if (albums.isEmpty()) {
@@ -2639,7 +2643,7 @@ private fun DesktopRecentAlbumsPanel(
         } else {
             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(albums.take(10), key = { it.id }, contentType = { "desktop-recent-album" }) { album ->
-                    HomeArtworkTile(album.title, album.artist, album.thumbUrl, fallbackThumbUrl = albumArtworkFallbacks[album.id], modifier = Modifier.width(112.dp), sharedKey = "album:${album.id}") { onAlbum(album) }
+                    HomeArtworkTile(album.title, album.artist, album.thumbUrl, fallbackThumbUrl = albumArtworkFallbacks[album.id], modifier = Modifier.width(112.dp), sharedKey = "album:${album.id}", onLongClick = { shuffleActions.onShuffleAlbum(album) }) { onAlbum(album) }
                 }
             }
         }
