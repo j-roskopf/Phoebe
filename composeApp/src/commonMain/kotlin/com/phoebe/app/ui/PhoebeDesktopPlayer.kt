@@ -601,6 +601,7 @@ internal fun DesktopPlayer(
                                         actions = AlbumDetailRouteActions(
                                             onBack = onPopDetail,
                                             onPlayTracks = onPlayTracks,
+                                            onShuffleAllTracks = onShuffleAllTracks,
                                             onAddToUpNext = onAddToUpNext,
                                             onDownload = onDownload,
                                             onDownloadAlbum = onDownloadAlbum,
