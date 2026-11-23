@@ -327,6 +327,14 @@ data class FavoriteActions(
 
 val LocalFavoriteActions = compositionLocalOf { FavoriteActions() }
 
+/** Quick "shuffle everything" entry points for artist and album tiles (e.g. long-press on home). */
+data class ShuffleActions(
+    val onShuffleArtist: (Artist) -> Unit = {},
+    val onShuffleAlbum: (Album) -> Unit = {},
+)
+
+val LocalShuffleActions = compositionLocalOf { ShuffleActions() }
+
 data class RatingActions(
     val ratingsEnabled: Boolean = false,
     val catalog: CatalogSnapshot = CatalogSnapshot(),

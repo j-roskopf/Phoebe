@@ -72,6 +72,7 @@ import com.phoebe.app.domain.providerTypeFromCatalogId
 import com.phoebe.app.domain.parseAdvancedSearchQuery
 import com.phoebe.app.data.DownloadServiceResult
 import com.phoebe.app.data.ArtworkAuthHolder
+import com.phoebe.app.data.catalogTracksForArtist
 import com.phoebe.app.data.ArtworkOriginHolder
 import com.phoebe.app.data.isLocalOnlyServerOrigin
 import com.phoebe.app.data.BackupRestoreMode
@@ -2959,6 +2960,67 @@ class AppState(
         ) {
             requestNavigation(AppNavigationRequest.Player)
             mutableMessage.value = "Shuffling ${playlist.title}."
+        }
+    }
+
+    fun playAlbumShuffled(album: Album) = scope.launch {
+        val tracks = runCatching {
+            dependencies.catalogRepository.tracksForAlbum(session.value, album)
+        }.getOrElse { error ->
+            mutableMessage.value = error.message ?: "Couldn't load ${album.title}."
+            return@launch
+        }
+        if (tracks.isEmpty()) {
+            mutableMessage.value = "${album.title} has no songs to shuffle."
+            return@launch
+        }
+        if (playTracks(
+                tracks.shuffled(),
+                0,
+                queueOrigin = PlaybackQueueOrigin.Album(
+                    id = album.id,
+                    title = album.title,
+                    artist = album.artist,
+                    providerType = album.id.providerTypeFromCatalogId(),
+                    seedTrackIds = tracks.map { it.id },
+                ),
+                shuffleEnabled = true,
+            )
+        ) {
+            requestNavigation(AppNavigationRequest.Player)
+            mutableMessage.value = "Shuffling ${album.title}."
+        }
+    }
+
+    fun playArtistShuffled(artist: Artist) = scope.launch {
+        val tracks = runCatching {
+            withContext(Dispatchers.Default) {
+                dependencies.catalogRepository.ensureTracksForArtistAlbums(session.value, artist.title)
+                catalogTracksForArtist(dependencies.catalogRepository.catalog.value, artist.title)
+            }
+        }.getOrElse { error ->
+            if (error is CancellationException) throw error
+            mutableMessage.value = error.message ?: "Couldn't load ${artist.title}."
+            return@launch
+        }
+        if (tracks.isEmpty()) {
+            mutableMessage.value = "${artist.title} has no songs to shuffle."
+            return@launch
+        }
+        if (playTracks(
+                tracks.shuffled(),
+                0,
+                queueOrigin = PlaybackQueueOrigin.Artist(
+                    id = artist.id,
+                    title = artist.title,
+                    providerType = artist.id.providerTypeFromCatalogId(),
+                    seedTrackIds = tracks.map { it.id },
+                ),
+                shuffleEnabled = true,
+            )
+        ) {
+            requestNavigation(AppNavigationRequest.Player)
+            mutableMessage.value = "Shuffling ${artist.title}."
         }
     }
 
