@@ -739,8 +739,11 @@ fun libraryArtistScrollIndex(
     sortBy: LibrarySortBy,
     ascending: Boolean,
 ): List<LibraryScrollIndexEntry> =
-    when (sortBy) {
-        LibrarySortBy.DateAdded -> buildGroupedScrollIndex(artists) { monthYearLabelFromEpochMs(it.dateAddedMs) ?: "Unknown" }
+    when {
+        // With no dates at all the date sort falls back to title A-Z, so index it alphabetically.
+        sortBy == LibrarySortBy.DateAdded && artists.any { it.dateAddedMs != null } ->
+            buildGroupedScrollIndex(artists) { monthYearLabelFromEpochMs(it.dateAddedMs) ?: "Unknown" }
+        sortBy == LibrarySortBy.DateAdded -> buildAlphaScrollIndex(artists, ascending = true) { it.title }
         else -> buildAlphaScrollIndex(artists, ascending) { it.title }
     }
 
