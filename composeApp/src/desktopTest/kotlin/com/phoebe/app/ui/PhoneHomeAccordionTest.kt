@@ -10,6 +10,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.ComposeUiTest
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
@@ -349,6 +350,7 @@ class PhoneHomeAccordionTest {
             }
         }
 
+        openSettingsCategory("Home & tabs")
         onNode(hasText("Expanded") and hasClickAction())
             .performScrollTo()
             .performClick()
@@ -392,6 +394,7 @@ class PhoneHomeAccordionTest {
             }
         }
 
+        openSettingsCategory("Appearance")
         onNodeWithTag("settings:tinted-background-switch", useUnmergedTree = true)
             .performScrollTo()
             .performClick()
@@ -441,6 +444,7 @@ class PhoneHomeAccordionTest {
             }
         }
 
+        openSettingsCategory("Appearance")
         onNodeWithTag("settings:design:nocturne", useUnmergedTree = true)
             .performScrollTo()
             .performClick()
@@ -449,6 +453,15 @@ class PhoneHomeAccordionTest {
         assertEquals(PhoebeDesignSystem.Nocturne.id, selectedDesign.value)
         assertTrue(onAllNodesWithTag("settings:tint:nocturne-brass", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty())
         assertTrue(onAllNodesWithTag("settings:tint:purple", useUnmergedTree = true).fetchSemanticsNodes().isEmpty())
+    }
+
+    /** Mobile Settings opens to a hub of categories; tap one to open its page. */
+    @OptIn(ExperimentalTestApi::class)
+    private fun ComposeUiTest.openSettingsCategory(label: String) {
+        onNode(hasText(label) and hasClickAction())
+            .performScrollTo()
+            .performClick()
+        waitForIdle()
     }
 
     private fun testTrack(id: String, title: String): Track =
