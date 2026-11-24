@@ -129,7 +129,15 @@ fun SettingsDesktopRoute(
 fun SettingsMobileRoute(
     state: SettingsRouteState,
     actions: SettingsRouteActions,
+    page: SettingsCategory?,
+    onPageChange: (SettingsCategory?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    SettingsMobileScreen(state = state, actions = actions, modifier = modifier)
+    SettingsMobileScreen(
+        state = state,
+        actions = actions,
+        page = page,
+        onPageChange = onPageChange,
+        modifier = modifier,
+    )
 }

@@ -55,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -186,17 +187,21 @@ internal fun SettingsDesktopScreen(
 /**
  * Phone settings: a hub of categories that each open a short page. When [SettingsRouteState.initialCategory]
  * is set (for example the Downloads destination), that page is shown on its own without the hub.
+ *
+ * The open [page] is owned by the caller so its toolbar can show the page title and step back to the hub.
  */
 @Composable
 internal fun SettingsMobileScreen(
     state: SettingsRouteState,
     actions: SettingsRouteActions,
+    page: SettingsCategory?,
+    onPageChange: (SettingsCategory?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val pinnedCategory = state.initialCategory
-    var page by rememberSaveable(pinnedCategory) { mutableStateOf(pinnedCategory) }
-    PlatformBackHandler(enabled = pinnedCategory == null && page != null, onBack = { page = null })
-    key(page) {
+    PlatformBackHandler(enabled = pinnedCategory == null && page != null, onBack = { onPageChange(null) })
+    val shownPage = pinnedCategory ?: page
+    key(shownPage) {
         Column(
             modifier
                 .fillMaxSize()
@@ -204,14 +209,10 @@ internal fun SettingsMobileScreen(
                 .padding(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            val current = page
-            if (current == null) {
-                SettingsHub(state = state, onOpen = { page = it })
+            if (shownPage == null) {
+                SettingsHub(state = state, onOpen = onPageChange)
             } else {
-                if (pinnedCategory == null) {
-                    SettingsBackRow(onBack = { page = null })
-                }
-                SettingsCategoryContent(category = current, state = state, actions = actions, compact = true)
+                SettingsCategoryContent(category = shownPage, state = state, actions = actions, compact = true)
             }
         }
     }
@@ -412,19 +413,7 @@ private fun SettingsHubAccountCard(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Box(
-            Modifier
-                .size(46.dp)
-                .clip(CircleShape)
-                .background(Brush.linearGradient(listOf(Color(0xFF3876C8), Color(0xFFB87C5C)))),
-            contentAlignment = Alignment.Center,
-        ) {
-            if (name != null) {
-                Text(name.take(1).uppercase(), color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            } else {
-                PhoebeIconView(PhoebeIcon.Person, tint = Color.White, modifier = Modifier.size(20.dp))
-            }
-        }
+        SettingsAccountAvatar(name = name, size = 46.dp)
         Column(Modifier.weight(1f)) {
             Text(
                 name ?: "Not signed in",
@@ -502,22 +491,6 @@ private fun SettingsHubRow(
             )
         }
         PhoebeIconView(PhoebeIcon.ChevronRight, tint = PhoebeUi.mutedText, modifier = Modifier.size(16.dp))
-    }
-}
-
-@Composable
-private fun SettingsBackRow(onBack: () -> Unit) {
-    Row(
-        Modifier
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onBack)
-            .testTag("settings:back")
-            .padding(end = 8.dp, top = 6.dp, bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        PhoebeIconView(PhoebeIcon.Back, tint = PhoebeUi.accentLight, modifier = Modifier.size(18.dp))
-        Text("Settings", color = PhoebeUi.accentLight, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -672,7 +645,10 @@ fun SettingsMobileView(
     modifier: Modifier = Modifier,
     initialCategory: SettingsCategory? = null,
 ) {
+    var page by rememberSaveable(initialCategory) { mutableStateOf<SettingsCategory?>(null) }
     SettingsMobileScreen(
+        page = page,
+        onPageChange = { page = it },
         state = SettingsRouteState(
             isLightMode = isLightMode,
             designId = designId,
@@ -811,8 +787,7 @@ private fun AppearanceSettingsCard(
     val selectedDesign = PhoebeDesignSystem.fromId(designId)
     val tintOptions = PhoebeTintOption.optionsForDesign(selectedDesign)
     SettingsCard {
-        Text("Appearance", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text("Theme and visuals", color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
+        if (!compact) SettingsCardHeader(title = "Appearance", subtitle = "Theme and visuals")
         Text("Design", color = PhoebeUi.primaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         Text("Choose the visual system used across Phoebe", color = PhoebeUi.secondaryText, fontSize = 12.sp)
         Spacer(Modifier.height(10.dp))
@@ -1166,15 +1141,12 @@ private fun AudioPlaybackSettingsCard(
     var localAudio by remember(settings.audioProcessing) { mutableStateOf(settings.audioProcessing.normalized()) }
     val audio = localAudio.normalized()
     val streamingPolicy = settings.streamingPolicy.normalized()
+    // The Playback page title already names this category, so each topic gets its own card instead of
+    // one "Audio Playback" card with sub-headings, matching how Home & tabs and Backup are laid out.
     SettingsCard {
-        Text("Audio Playback", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text("Transitions and library scan", color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
-        Text("Streaming quality", color = PhoebeUi.secondaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        Text(
-            "Controls remote stream bitrate. Local and already-downloaded files stay original.",
-            color = PhoebeUi.mutedText,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(bottom = 8.dp),
+        SettingsCardHeader(
+            title = "Streaming quality",
+            subtitle = "Controls remote stream bitrate. Local and already-downloaded files stay original.",
         )
         StreamingQualitySelector(
             selected = streamingPolicy.quality,
@@ -1199,8 +1171,12 @@ private fun AudioPlaybackSettingsCard(
                 onStreamingPolicySettings(streamingPolicy.copy(preferLocalNetwork = checked))
             },
         )
-        Spacer(Modifier.height(12.dp))
-        Text("Crossfade", color = PhoebeUi.secondaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+    SettingsCard {
+        SettingsCardHeader(
+            title = "Crossfade",
+            subtitle = "Overlap songs as one ends, or play albums gapless",
+        )
         Slider(
             value = localCrossfade.toFloat(),
             onValueChange = {
@@ -1253,6 +1229,12 @@ private fun AudioPlaybackSettingsCard(
                 localAudio = nextAudio
                 onAudioProcessingSettings(nextAudio)
             },
+        )
+    }
+    SettingsCard {
+        SettingsCardHeader(
+            title = "General",
+            subtitle = "Queue, player buttons and startup",
         )
         SettingsSwitchRow(
             title = "Keep Playing",
@@ -1390,8 +1372,7 @@ private fun DownloadsSettingsCard(
             .sortedWith(compareBy<DownloadItem> { it.state.sortOrder }.thenByDescending { it.updatedAtMs }.thenBy { it.title })
     }
     SettingsCard {
-        Text("Downloads", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text("Offline songs", color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
+        if (!compact) SettingsCardHeader(title = "Downloads", subtitle = "Offline songs")
         Text("Download Location", color = PhoebeUi.secondaryText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         Column(
             Modifier
@@ -2428,13 +2409,12 @@ private fun AccountSettingsCard(
     val signedIn = session?.token?.isNotBlank() == true
     val providerName = session.providerLabel()
     SettingsCard {
-        Text("Account", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text(
-            if (signedIn) "Your signed-in media provider" else "Connect a media provider to browse your library",
-            color = PhoebeUi.mutedText,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(bottom = if (compact) 10.dp else 14.dp),
-        )
+        if (!compact) {
+            SettingsCardHeader(
+                title = "Account",
+                subtitle = if (signedIn) "Your signed-in media provider" else "Connect a media provider to browse your library",
+            )
+        }
         if (!signedIn) {
             Text("Not signed in", color = PhoebeUi.secondaryText, fontSize = 13.sp)
         } else {
@@ -2445,11 +2425,9 @@ private fun AccountSettingsCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Box(
-                    Modifier
-                        .size(if (compact) 40.dp else 48.dp)
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(Color(0xFF3876C8), Color(0xFFB87C5C)))),
+                SettingsAccountAvatar(
+                    name = session.userName.takeIf { it.isNotBlank() },
+                    size = if (compact) 40.dp else 48.dp,
                 )
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -2510,13 +2488,9 @@ private fun ScrobblingSettingsCard(
     compact: Boolean = false,
 ) {
     SettingsCard {
-        Text("Scrobbling", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text(
-            "Share what you play with ListenBrainz and Last.fm",
-            color = PhoebeUi.mutedText,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(bottom = if (compact) 10.dp else 14.dp),
-        )
+        if (!compact) {
+            SettingsCardHeader(title = "Scrobbling", subtitle = "Share what you play with ListenBrainz and Last.fm")
+        }
         ListenBrainzSettingsSection(
             appSettings = appSettings,
             credentialAvailability = credentialAvailability,
@@ -2943,13 +2917,7 @@ private fun AboutSettingsCard(
     val checking = updateState == AppUpdateState.Checking
     val installing = updateState is AppUpdateState.Installing
     SettingsCard {
-        Text("About Phoebe", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text(
-            "Version and project links",
-            color = PhoebeUi.mutedText,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(bottom = if (compact) 10.dp else 14.dp),
-        )
+        if (!compact) SettingsCardHeader(title = "About Phoebe", subtitle = "Version and project links")
         Column(
             Modifier
                 .fillMaxWidth()
@@ -3192,6 +3160,36 @@ private val UnsplashImageCredits = listOf(
         url = "https://unsplash.com/photos/a-black-shelf-with-a-bunch-of-cds-on-it-IGrl4aw5VQ8$UnsplashReferral",
     ),
 )
+
+/** Gradient circle with the account's initial, or a person icon when there is no user name. */
+@Composable
+private fun SettingsAccountAvatar(name: String?, size: Dp) {
+    Box(
+        Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(Brush.linearGradient(listOf(Color(0xFF3876C8), Color(0xFFB87C5C)))),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (name != null) {
+            Text(
+                name.take(1).uppercase(),
+                color = Color.White,
+                fontSize = (size.value * 0.4f).sp,
+                fontWeight = FontWeight.Bold,
+            )
+        } else {
+            PhoebeIconView(PhoebeIcon.Person, tint = Color.White, modifier = Modifier.size(size * 0.44f))
+        }
+    }
+}
+
+/** The bold title and muted subtitle that open a settings card. */
+@Composable
+private fun SettingsCardHeader(title: String, subtitle: String) {
+    Text(title, color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+    Text(subtitle, color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
+}
 
 @Composable
 private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {

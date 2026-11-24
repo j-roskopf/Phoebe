@@ -430,7 +430,7 @@ private fun MediaProviderType.providerButtonLabel(): String = when (this) {
     MediaProviderType.Plex -> "Plex"
     MediaProviderType.Jellyfin -> "Jellyfin"
     MediaProviderType.Emby -> "Emby"
-    MediaProviderType.Navidrome -> "Subsonic (Navidrome, etc)"
+    MediaProviderType.Navidrome -> "Subsonic (Navidrome)"
     MediaProviderType.MusicAssistant -> "Music Assistant"
 }
 
@@ -1211,7 +1211,7 @@ private fun MediaProviderType.tileName(): String = when (this) {
 private fun MediaProviderType.tileCaption(): String = when (this) {
     MediaProviderType.Plex -> "Plex account"
     MediaProviderType.Jellyfin, MediaProviderType.Emby -> "Self-hosted"
-    MediaProviderType.Navidrome -> "Navidrome, etc."
+    MediaProviderType.Navidrome -> "Navidrome"
     MediaProviderType.MusicAssistant -> "Alpha"
 }
 

@@ -73,6 +73,8 @@ private val ToolbarActionSize = 40.dp
 fun MobileScreenToolbar(
     title: String,
     onBack: (() -> Unit)? = null,
+    /** Optional one-line description shown under the title, such as a settings page's summary. */
+    subtitle: String? = null,
     menuExpanded: Boolean,
     onMenuExpandedChange: (Boolean) -> Unit,
     menuContent: @Composable () -> Unit,
@@ -100,15 +102,27 @@ fun MobileScreenToolbar(
         // between the leading actions and the menu rather than truncating it.
         Layout(
             content = {
-                Text(
-                    title,
-                    color = PhoebeUi.primaryText,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    textAlign = TextAlign.Center,
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(
+                        title,
+                        color = PhoebeUi.primaryText,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                    )
+                    if (subtitle != null) {
+                        Text(
+                            subtitle,
+                            color = PhoebeUi.mutedText,
+                            fontSize = 12.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
             },
             modifier = Modifier.fillMaxWidth(),
         ) { measurables, constraints ->
