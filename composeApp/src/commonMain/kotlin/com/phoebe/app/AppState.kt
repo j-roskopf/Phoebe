@@ -2829,7 +2829,7 @@ class AppState(
      * is replaced so playback continues uninterrupted, and an Undo snackbar restores the old queue.
      */
     fun playSongRadio(track: Track) = scope.launch {
-        if (!track.id.supportsArtistRadio()) {
+        if (!supportsSongRadio(track)) {
             mutableMessage.value = "Radio is available for streaming-library songs."
             return@launch
         }
@@ -2894,8 +2894,9 @@ class AppState(
         return true
     }
 
-    /** Song radio needs a streaming server that can suggest similar tracks. */
-    fun supportsSongRadio(track: Track): Boolean = track.id.supportsArtistRadio()
+    /** Song radio needs a streaming server that can reliably suggest similar tracks. */
+    fun supportsSongRadio(track: Track): Boolean =
+        SongRadioCatalogPrefixes.any { track.id.startsWith(it) }
 
     fun undoSongRadio() {
         val undo = mutableSongRadioUndo.value ?: return
@@ -4871,6 +4872,10 @@ private const val KeepPlayingRemainingThresholdMs = 8L * 60L * 1000L
 private const val KeepPlayingEndedTailSlackMs = 1_500L
 private const val KeepPlayingNativeSeedItemLimit = 4
 private val ArtistRadioCatalogPrefixes = listOf("plex:", "jellyfin:", "emby:", "navidrome:")
+
+// Plex is left out: its /similar endpoint only returns tracks once Sonic Analysis (Plex Pass) has run
+// on the library, and there's no cheap way to tell beforehand, so the Radio button would often fail.
+private val SongRadioCatalogPrefixes = listOf("jellyfin:", "emby:", "navidrome:")
 private const val KeepPlayingNativeCandidateTimeoutMs = 5_000L
 private const val KeepPlayingNativeItemsBudgetMs = 4_000L
 private const val KeepPlayingNativeItemTimeoutMs = 1_200L
