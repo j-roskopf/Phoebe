@@ -65,7 +65,7 @@ val MediaProviderType.displayName: String
         MediaProviderType.Plex -> "Plex"
         MediaProviderType.Jellyfin -> "Jellyfin"
         MediaProviderType.Emby -> "Emby"
-        MediaProviderType.Navidrome -> "Subsonic (Navidrome, etc)"
+        MediaProviderType.Navidrome -> "Subsonic (Navidrome)"
         MediaProviderType.MusicAssistant -> "Music Assistant"
     }
 

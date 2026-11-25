@@ -131,8 +131,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.mutableStateMapOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
@@ -422,6 +422,24 @@ internal fun MobileBrowseShell(
     showBottomChrome: Boolean = true,
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
+    var confirmSignOut by remember { mutableStateOf(false) }
+    if (confirmSignOut) {
+        SignOutConfirmationDialog(
+            serverName = session?.selectedServer?.name,
+            onDismiss = { confirmSignOut = false },
+            onConfirm = {
+                confirmSignOut = false
+                onSignOut()
+            },
+        )
+    }
+    var libraryFavoritesOnly by rememberSaveable { mutableStateOf(false) }
+    var playlistsFavoritesOnly by rememberSaveable { mutableStateOf(false) }
+    // The open Settings sub-page lives here so the toolbar can title it and step back to the hub.
+    var settingsPage by rememberSaveable(section) { mutableStateOf<SettingsCategory?>(null) }
+    val onSettingsSubPage = section == BrowseSection.Settings && selectedPlaylistId == null && settingsPage != null
+    // The query itself resets on section change upstream; the expanded field should too.
+    var toolbarSearchExpanded by remember(section, selectedPlaylistId) { mutableStateOf(false) }
     val mobileLibraryViewMode = libraryUi.resolvedViewMode()
     val pickLocalFolder = rememberPickLocalFolder(onPicked = onAddLocalFolder)
     val availableUpdate = when (val updateState = appUpdateState) {
@@ -433,7 +451,7 @@ internal fun MobileBrowseShell(
     val installingUpdateState = appUpdateState as? AppUpdateState.Installing
     val updateInstalling = installingUpdateState != null
     val toolbarTitle = when {
-        section == BrowseSection.Settings -> "Settings"
+        section == BrowseSection.Settings -> settingsPage?.label ?: "Settings"
         section == BrowseSection.Downloads -> "Downloads"
         selectedPlaylistId != null -> "Playlist"
         section == BrowseSection.Radio -> when (internetRadioRouteMode) {
@@ -443,6 +461,13 @@ internal fun MobileBrowseShell(
             RadioRouteMode.Map -> "Radio map"
         }
         else -> mobileSectionTitle(section)
+    }
+    // Settings pages drop their repeated card title on phones, so the toolbar carries the page summary.
+    val toolbarSubtitle = when {
+        selectedPlaylistId != null -> null
+        section == BrowseSection.Settings -> settingsPage?.subtitle
+        section == BrowseSection.Downloads -> SettingsCategory.Downloads.subtitle
+        else -> null
     }
     val density = LocalDensity.current
     val navigationBottomPadding = with(density) {
@@ -470,13 +495,48 @@ internal fun MobileBrowseShell(
             section == BrowseSection.Charts ||
             section == BrowseSection.Playlists ||
             section == BrowseSection.Radio)
+    val toolbarFilters = selectedPlaylistId == null &&
+        (section == BrowseSection.Library || section == BrowseSection.Playlists)
+    val toolbarSearch = if (toolbarFilters) {
+        MobileToolbarSearch(
+            query = searchQuery,
+            onQueryChange = onSearchQuery,
+            expanded = toolbarSearchExpanded,
+            onExpandedChange = { toolbarSearchExpanded = it },
+            placeholder = if (section == BrowseSection.Playlists) {
+                "Search playlists"
+            } else {
+                when (libraryFilter) {
+                    LibraryFilterTab.Artists -> "Search artists"
+                    LibraryFilterTab.Albums -> "Search albums"
+                    LibraryFilterTab.Songs -> "Search songs"
+                }
+            },
+        )
+    } else {
+        null
+    }
+    val toolbarFavoritesFilter = when {
+        !toolbarFilters -> null
+        section == BrowseSection.Playlists -> MobileToolbarFavoritesFilter(
+            enabled = playlistsFavoritesOnly,
+            onEnabledChange = { playlistsFavoritesOnly = it },
+        )
+        else -> MobileToolbarFavoritesFilter(
+            enabled = libraryFavoritesOnly,
+            onEnabledChange = { libraryFavoritesOnly = it },
+        )
+    }
     val browseTopBar: @Composable () -> Unit = {
         val debugEventsMenu = onOpenEventsDebugMenu.takeIf {
             isDebugBuild() && section == BrowseSection.Settings && selectedPlaylistId == null
         }
         MobileScreenToolbar(
             title = toolbarTitle,
-            onBack = if (
+            subtitle = toolbarSubtitle,
+            onBack = if (onSettingsSubPage) {
+                { settingsPage = null }
+            } else if (
                 (section == BrowseSection.Settings || section == BrowseSection.Charts) &&
                 selectedPlaylistId == null
             ) {
@@ -493,6 +553,8 @@ internal fun MobileBrowseShell(
                 !(section == BrowseSection.Settings && selectedPlaylistId == null),
             menuTint = if (availableUpdate != null) PhoebeUpdateBlue else PhoebeUi.primaryText,
             onMenuLongClick = debugEventsMenu,
+            search = toolbarSearch,
+            favoritesFilter = toolbarFavoritesFilter,
             menuContent = {
                 if (section == BrowseSection.Library && selectedPlaylistId == null) {
                     DropdownMenuItem(
@@ -588,18 +650,20 @@ internal fun MobileBrowseShell(
                         menuExpanded = false
                     },
                 )
-                DropdownMenuItem(
-                    text = {
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            PhoebeIconView(PhoebeIcon.Settings, tint = PhoebeUi.secondaryText, modifier = Modifier.size(18.dp))
-                            Text("Settings")
-                        }
-                    },
-                    onClick = {
-                        onNavigate(BrowseSection.Settings)
-                        menuExpanded = false
-                    },
-                )
+                if (!(section == BrowseSection.Settings && selectedPlaylistId == null)) {
+                    DropdownMenuItem(
+                        text = {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                                PhoebeIconView(PhoebeIcon.Settings, tint = PhoebeUi.secondaryText, modifier = Modifier.size(18.dp))
+                                Text("Settings")
+                            }
+                        },
+                        onClick = {
+                            onNavigate(BrowseSection.Settings)
+                            menuExpanded = false
+                        },
+                    )
+                }
                 DropdownMenuItem(
                     text = { Text("Refresh library") },
                     onClick = {
@@ -618,8 +682,8 @@ internal fun MobileBrowseShell(
                     DropdownMenuItem(
                         text = { Text("Sign out") },
                         onClick = {
-                            onSignOut()
                             menuExpanded = false
+                            confirmSignOut = true
                         },
                     )
                 } else {
@@ -661,11 +725,7 @@ internal fun MobileBrowseShell(
                         appUpdateState = appUpdateState,
                         pairedDevices = pairedDevices,
                         remoteControlClientState = remoteControlClientState,
-                        initialCategory = if (section == BrowseSection.Downloads) {
-                            SettingsCategory.Downloads
-                        } else {
-                            SettingsCategory.Account
-                        },
+                        initialCategory = SettingsCategory.Downloads.takeIf { section == BrowseSection.Downloads },
                     ),
                     actions = SettingsRouteActions(
                         onLightModeChange = onUseLightAppearanceChange,
@@ -723,6 +783,8 @@ internal fun MobileBrowseShell(
                         onConnectRemoteControl = onOpenRemoteControl,
                         onDisconnectRemoteControl = onDisconnectRemoteControl,
                     ),
+                    page = settingsPage,
+                    onPageChange = { settingsPage = it },
                     modifier = Modifier.fillMaxSize().padding(top = chromePadding.top, bottom = chromePadding.bottom),
                 )
                 section == BrowseSection.Home && selectedPlaylistId == null -> {
@@ -827,6 +889,7 @@ internal fun MobileBrowseShell(
                         libraryUi = libraryUi,
                         searchQuery = searchQuery,
                         jellyfinPagination = (session.isEmbyFamily() || session.isNavidrome()) && session?.jellyfinSyncMode == JellyfinSyncMode.Quick,
+                        favoritesOnly = libraryFavoritesOnly,
                     ),
                     actions = LibraryRouteActions(
                         onJellyfinPage = onJellyfinPage,
@@ -897,6 +960,7 @@ internal fun MobileBrowseShell(
                         catalog = catalog,
                         catalogRefreshing = catalogRefreshing,
                         searchQuery = searchQuery,
+                        favoritesOnly = playlistsFavoritesOnly,
                     ),
                     actions = PlaylistsRouteActions(
                         onSearchQuery = onSearchQuery,

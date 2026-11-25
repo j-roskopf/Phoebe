@@ -73,7 +73,6 @@ import com.phoebe.app.feature.search.LocalSearchHistory
 import com.phoebe.app.feature.search.SearchResultsFactory
 import com.phoebe.app.feature.search.SearchHistoryState
 import com.phoebe.app.feature.settings.SettingsCategory
-import com.phoebe.app.feature.settings.SettingsDesktopView
 import com.phoebe.app.di.RouteViewModelFactory
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.background
@@ -306,7 +305,7 @@ internal fun PhoebeScreenshotApp(
     ) {
         SettingsCategory.Appearance
     } else {
-        SettingsCategory.AudioPlayback
+        SettingsCategory.Playback
     }
     PhoebeTheme(useLightAppearance = useLightAppearance, tintId = tintId, designId = designId) {
         CompositionLocalProvider(
@@ -386,7 +385,7 @@ internal fun PhoebeDesktopScreenshotScenario(
     designId: String = PhoebeDesignSystem.Default.id,
     tintId: String = PhoebeTintOption.Purple.id,
     tintedBackgroundGradient: Boolean = AppSettings.Default.tintedBackgroundGradient,
-    settingsInitialCategory: SettingsCategory = SettingsCategory.AudioPlayback,
+    settingsInitialCategory: SettingsCategory = SettingsCategory.Playback,
     showQueue: Boolean,
     compact: Boolean,
     modifier: Modifier = Modifier,
@@ -688,7 +687,7 @@ internal fun PhoebeMobileScreenshotScenario(
                     jellyfinDiscoveryLoading = false,
                     jellyfinQuickConnect = null,
                     authInProgress = false,
-                    initialProvidersExpanded = true,
+                    initialConnectProvider = com.phoebe.app.domain.MediaProviderType.Jellyfin,
                 ),
                 actions = screenshotAuthActions(),
                 modifier = Modifier.fillMaxSize(),

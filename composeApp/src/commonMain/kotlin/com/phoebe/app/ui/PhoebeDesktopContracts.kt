@@ -268,7 +268,7 @@ internal data class SettingsUiState(
     val appearanceDesignId: String = PhoebeDesignSystem.Default.id,
     val appearanceTintId: String,
     val homeScreenLayoutMode: HomeScreenLayoutMode = HomeScreenLayoutMode.Default,
-    val settingsInitialCategory: SettingsCategory = SettingsCategory.AudioPlayback,
+    val settingsInitialCategory: SettingsCategory = SettingsCategory.Playback,
     val listenBrainzCredentialAvailability: SecureCredentialAvailability = SecureCredentialAvailability.Unavailable,
     val appUpdateState: AppUpdateState = AppUpdateState.Idle,
     val pairedDevices: List<com.phoebe.app.remote.PairedRemoteDevice> = emptyList(),

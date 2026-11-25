@@ -40,11 +40,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,6 +55,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -98,107 +101,48 @@ import com.phoebe.app.ui.PhoebeIcon
 import com.phoebe.app.ui.PhoebeIconView
 import com.phoebe.app.ui.PhoebeTintOption
 import com.phoebe.app.ui.PhoebeUi
+import com.phoebe.app.ui.PlatformBackHandler
 import com.phoebe.app.ui.SectionLabel
 import com.phoebe.app.ui.formatLastPlayed
+import com.phoebe.app.remote.RemoteConnectionStatus
 import com.phoebe.app.updates.AppUpdateState
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
+
+enum class SettingsCategoryGroup(val label: String) {
+    Listening("Listening"),
+    LookAndLayout("Look & layout"),
+    LibraryAndData("Library & data"),
+    Connections("Connections"),
+    About("About"),
+}
 
 enum class SettingsCategory(
     val label: String,
     val subtitle: String,
     val icon: PhoebeIcon,
+    /** Hub group on mobile. Account has none because it renders as the profile card above the groups. */
+    val group: SettingsCategoryGroup?,
 ) {
-    Account("Account", "Profile and plans", PhoebeIcon.Music),
-    Personalization("Personalization", "Mixes and recommendations", PhoebeIcon.Person),
-    AudioPlayback("Audio Playback", "Transitions and EQ", PhoebeIcon.Equalizer),
-    RemoteControl("Remote Control", "LAN host and devices", PhoebeIcon.RemoteDevice),
-    Library("Library", "Organize your library", PhoebeIcon.Library),
-    Downloads("Downloads", "Manage downloads", PhoebeIcon.Download),
-    Appearance("Appearance", "Theme and visuals", PhoebeIcon.Grid),
-    Notifications("Notifications", "Manage alerts", PhoebeIcon.Bell),
-    About("About", "Version and links", PhoebeIcon.Settings),
-    Advanced("Advanced", "Developer and advanced", PhoebeIcon.More),
+    Account("Account", "Server and sign-in", PhoebeIcon.Person, null),
+    Playback("Playback", "Streaming, crossfade and queue", PhoebeIcon.Equalizer, SettingsCategoryGroup.Listening),
+    PersonalMix("Personal Mix", "Mix size and weights", PhoebeIcon.Music, SettingsCategoryGroup.Listening),
+    Appearance("Appearance", "Design, theme and tint", PhoebeIcon.Grid, SettingsCategoryGroup.LookAndLayout),
+    HomeAndTabs("Home & tabs", "Home sections, tabs and grids", PhoebeIcon.Home, SettingsCategoryGroup.LookAndLayout),
+    Downloads("Downloads", "Offline songs and rules", PhoebeIcon.Download, SettingsCategoryGroup.LibraryAndData),
+    Backup("Backup & restore", "Playlists, radio and full backup", PhoebeIcon.Update, SettingsCategoryGroup.LibraryAndData),
+    Scrobbling("Scrobbling", "ListenBrainz and Last.fm", PhoebeIcon.Visualizer, SettingsCategoryGroup.Connections),
+    RemoteControl("Remote control", "LAN host and devices", PhoebeIcon.RemoteDevice, SettingsCategoryGroup.Connections),
+    About("About", "Version, updates and links", PhoebeIcon.Settings, SettingsCategoryGroup.About),
 }
 
 @Composable
-fun SettingsDesktopView(
-    isLightMode: Boolean,
-    onLightModeChange: (Boolean) -> Unit,
-    designId: String = PhoebeDesignSystem.Default.id,
-    onDesignChange: (String) -> Unit = {},
-    tintId: String,
-    onTintChange: (String) -> Unit,
-    downloadDirectory: String?,
-    downloadCount: Int,
-    downloadItems: List<DownloadItem> = emptyList(),
-    downloadManager: DownloadManagerUiSummary = DownloadManagerUiSummary(total = downloadCount, complete = downloadCount),
-    appSettings: AppSettings,
-    audioProcessingCapabilities: AudioProcessingCapabilities = AudioProcessingCapabilities(),
-    libraryUi: LibraryUiPreferences,
-    defaultDownloadDirectoryLabel: String,
-    onDownloadDirectory: (String?) -> Unit,
-    onDeleteAllDownloads: () -> Unit,
-    onDeleteCompletedDownloads: () -> Unit = {},
-    onClearFailedDownloads: () -> Unit = {},
-    onRetryFailedDownloads: () -> Unit = {},
-    onRetryDownloads: (Set<String>) -> Unit = {},
-    onCancelDownloads: (Set<String>) -> Unit = {},
-    onDeleteDownloads: (Set<String>) -> Unit = {},
-    onDownloadPolicySettings: (DownloadPolicySettings) -> Unit = {},
-    onStreamingPolicySettings: (StreamingPolicySettings) -> Unit = {},
-    onCrossfadeSeconds: (Int) -> Unit,
-    onScanLibraryOnLaunch: (Boolean) -> Unit,
-    onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
-    onKeepPlayingEnabled: (Boolean) -> Unit = {},
-    onPersistEqualizerSettings: (Boolean) -> Unit = {},
-    onPersistVolumeSettings: (Boolean) -> Unit = {},
-    onAudioProcessingSettings: (AudioProcessingSettings) -> Unit = {},
-    onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit = {},
-    onShowUltimateGuitarButton: (Boolean) -> Unit = {},
-    onBlurredArtworkAppearance: (Boolean) -> Unit = {},
-    onFullBleedDetailArtwork: (Boolean) -> Unit = {},
-    onTintedBackgroundGradient: (Boolean) -> Unit = {},
-    onHomeSections: (List<HomeSection>) -> Unit,
-    onMobileBottomTabs: (List<MobileBottomTab>) -> Unit = {},
-    onPersonalMix: (PersonalMixPreferences) -> Unit,
-    onAlbumGridItemSize: (Int) -> Unit,
-    onArtistGridItemSize: (Int) -> Unit,
-    onExportFavoritePlaylists: () -> Unit,
-    onImportFavoritePlaylists: () -> Unit,
-    onExportRadioStations: () -> Unit,
-    onImportRadioStations: () -> Unit,
-    onExportBackupPackage: () -> Unit = {},
-    onImportBackupPackage: () -> Unit = {},
-    onReplaceFromBackupPackage: () -> Unit = {},
-    homeScreenLayoutMode: HomeScreenLayoutMode = HomeScreenLayoutMode.Default,
-    onHomeScreenLayoutModeChange: (HomeScreenLayoutMode) -> Unit = {},
-    session: PlexSession? = null,
-    listenBrainzCredentialAvailability: SecureCredentialAvailability = SecureCredentialAvailability.Unavailable,
-    onConnectListenBrainz: (String) -> Unit = {},
-    onDisconnectListenBrainz: () -> Unit = {},
-    onListenBrainzSubmitNowPlaying: (Boolean) -> Unit = {},
-    onListenBrainzSubmitListens: (Boolean) -> Unit = {},
-    onListenBrainzSubmitCurrentTrackFeedback: (Boolean) -> Unit = {},
-    onStartLastFmAuthorization: (String, String) -> Unit = { _, _ -> },
-    onFinishLastFmAuthorization: () -> Unit = {},
-    onDisconnectLastFm: () -> Unit = {},
-    onLastFmSubmitNowPlaying: (Boolean) -> Unit = {},
-    onLastFmSubmitScrobbles: (Boolean) -> Unit = {},
-    onEventSettings: (EventSettings) -> Unit = {},
-    appUpdateState: AppUpdateState = AppUpdateState.Idle,
-    onCheckForUpdates: () -> Unit = {},
-    onInstallUpdate: () -> Unit = {},
-    pairedDevices: List<com.phoebe.app.remote.PairedRemoteDevice> = emptyList(),
-    onRemoteControlHostEnabled: (Boolean) -> Unit = {},
-    onRemoteControlHostName: (String) -> Unit = {},
-    onRevokePairedDevice: (String) -> Unit = {},
-    remoteControlClientState: com.phoebe.app.remote.RemoteControlSessionState = com.phoebe.app.remote.RemoteControlSessionState(),
-    onConnectRemoteControl: () -> Unit = {},
-    onDisconnectRemoteControl: () -> Unit = {},
+internal fun SettingsDesktopScreen(
+    state: SettingsRouteState,
+    actions: SettingsRouteActions,
     modifier: Modifier = Modifier,
-    initialCategory: SettingsCategory = SettingsCategory.AudioPlayback,
 ) {
+    val initialCategory = state.initialCategory ?: SettingsCategory.Playback
     var category by remember(initialCategory) { mutableStateOf(initialCategory) }
     val scroll = rememberScrollState()
     Column(
@@ -229,117 +173,398 @@ fun SettingsDesktopView(
                     }
                 }
             }
-            Column(
+            Box(
                 Modifier
                     .weight(1f)
                     .padding(bottom = 24.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp),
             ) {
-                when (category) {
-                    SettingsCategory.Appearance -> AppearanceSettingsCard(
-                        isLightMode,
-                        onLightModeChange,
-                        designId,
-                        onDesignChange,
-                        tintId,
-                        onTintChange,
-                        homeScreenLayoutMode,
-                        onHomeScreenLayoutModeChange,
-                        appSettings.nowPlayingVisualizerPreset,
-                        onVisualizerPreset,
-                        appSettings.blurredArtworkAppearance,
-                        onBlurredArtworkAppearance,
-                        appSettings.fullBleedDetailArtwork,
-                        onFullBleedDetailArtwork,
-                        appSettings.tintedBackgroundGradient,
-                        onTintedBackgroundGradient,
-                        showFullBleedDetailArtwork = true,
-                    )
-                    SettingsCategory.AudioPlayback -> AudioPlaybackSettingsCard(
-                        settings = appSettings,
-                        capabilities = audioProcessingCapabilities,
-                        onCrossfadeSeconds = onCrossfadeSeconds,
-                        onScanLibraryOnLaunch = onScanLibraryOnLaunch,
-                        onKeepPlayingEnabled = onKeepPlayingEnabled,
-                        onPersistEqualizerSettings = onPersistEqualizerSettings,
-                        onPersistVolumeSettings = onPersistVolumeSettings,
-                        onAudioProcessingSettings = onAudioProcessingSettings,
-                        onStreamingPolicySettings = onStreamingPolicySettings,
-                        onShowUltimateGuitarButton = onShowUltimateGuitarButton,
-                    )
-                    SettingsCategory.Account -> AccountSettingsCard(
-                        session = session,
-                        appSettings = appSettings,
-                        listenBrainzCredentialAvailability = listenBrainzCredentialAvailability,
-                        onConnectListenBrainz = onConnectListenBrainz,
-                        onDisconnectListenBrainz = onDisconnectListenBrainz,
-                        onListenBrainzSubmitNowPlaying = onListenBrainzSubmitNowPlaying,
-                        onListenBrainzSubmitListens = onListenBrainzSubmitListens,
-                        onListenBrainzSubmitCurrentTrackFeedback = onListenBrainzSubmitCurrentTrackFeedback,
-                        onStartLastFmAuthorization = onStartLastFmAuthorization,
-                        onFinishLastFmAuthorization = onFinishLastFmAuthorization,
-                        onDisconnectLastFm = onDisconnectLastFm,
-                        onLastFmSubmitNowPlaying = onLastFmSubmitNowPlaying,
-                        onLastFmSubmitScrobbles = onLastFmSubmitScrobbles,
-                    )
-                    SettingsCategory.Library -> {
-                        LibraryGridSizeSettingsCard(
-                            albumGridItemSizeDp = libraryUi.albumGridItemSizeDp,
-                            artistGridItemSizeDp = libraryUi.artistGridItemSizeDp,
-                            onAlbumGridItemSize = onAlbumGridItemSize,
-                            onArtistGridItemSize = onArtistGridItemSize,
-                        )
-                        HomeSettingsCard(libraryUi.homeSections, onHomeSections)
-                        BottomTabSettingsCard(libraryUi.mobileBottomTabs, onMobileBottomTabs)
-                        FavoritePlaylistSettingsCard(onExportFavoritePlaylists, onImportFavoritePlaylists)
-                        RadioStationsSettingsCard(onExportRadioStations, onImportRadioStations)
-                        BackupSettingsCard(
-                            onExportBackupPackage = onExportBackupPackage,
-                            onImportBackupPackage = onImportBackupPackage,
-                            onReplaceFromBackupPackage = onReplaceFromBackupPackage,
-                        )
+                SettingsCategoryContent(category = category, state = state, actions = actions, compact = false)
+            }
+        }
+    }
+}
+
+/**
+ * Phone settings: a hub of categories that each open a short page. When [SettingsRouteState.initialCategory]
+ * is set (for example the Downloads destination), that page is shown on its own without the hub.
+ *
+ * The open [page] is owned by the caller so its toolbar can show the page title and step back to the hub.
+ */
+@Composable
+internal fun SettingsMobileScreen(
+    state: SettingsRouteState,
+    actions: SettingsRouteActions,
+    page: SettingsCategory?,
+    onPageChange: (SettingsCategory?) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val pinnedCategory = state.initialCategory
+    PlatformBackHandler(enabled = pinnedCategory == null && page != null, onBack = { onPageChange(null) })
+    val shownPage = pinnedCategory ?: page
+    key(shownPage) {
+        Column(
+            modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            if (shownPage == null) {
+                SettingsHub(state = state, onOpen = onPageChange)
+            } else {
+                SettingsCategoryContent(category = shownPage, state = state, actions = actions, compact = true)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsCategoryContent(
+    category: SettingsCategory,
+    state: SettingsRouteState,
+    actions: SettingsRouteActions,
+    compact: Boolean,
+) {
+    val appSettings = state.appSettings
+    val libraryUi = state.libraryUi
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        when (category) {
+            SettingsCategory.Account -> AccountSettingsCard(session = state.session, compact = compact)
+            SettingsCategory.Playback -> AudioPlaybackSettingsCard(
+                settings = appSettings,
+                capabilities = state.audioProcessingCapabilities,
+                onCrossfadeSeconds = actions.onCrossfadeSeconds,
+                onScanLibraryOnLaunch = actions.onScanLibraryOnLaunch,
+                onKeepPlayingEnabled = actions.onKeepPlayingEnabled,
+                onPersistEqualizerSettings = actions.onPersistEqualizerSettings,
+                onPersistVolumeSettings = actions.onPersistVolumeSettings,
+                onAudioProcessingSettings = actions.onAudioProcessingSettings,
+                onStreamingPolicySettings = actions.onStreamingPolicySettings,
+                onShowUltimateGuitarButton = actions.onShowUltimateGuitarButton,
+                compact = compact,
+            )
+            SettingsCategory.PersonalMix -> PersonalMixSettingsCard(libraryUi.personalMix, actions.onPersonalMix, compact = compact)
+            SettingsCategory.Appearance -> AppearanceSettingsCard(
+                isLightMode = state.isLightMode,
+                onLightModeChange = actions.onLightModeChange,
+                designId = state.designId,
+                onDesignChange = actions.onDesignChange,
+                tintId = state.tintId,
+                onTintChange = actions.onTintChange,
+                nowPlayingVisualizerPreset = appSettings.nowPlayingVisualizerPreset,
+                onVisualizerPreset = actions.onVisualizerPreset,
+                blurredArtworkAppearance = appSettings.blurredArtworkAppearance,
+                onBlurredArtworkAppearance = actions.onBlurredArtworkAppearance,
+                fullBleedDetailArtwork = appSettings.fullBleedDetailArtwork,
+                onFullBleedDetailArtwork = actions.onFullBleedDetailArtwork,
+                tintedBackgroundGradient = appSettings.tintedBackgroundGradient,
+                onTintedBackgroundGradient = actions.onTintedBackgroundGradient,
+                showFullBleedDetailArtwork = !compact,
+                compact = compact,
+            )
+            SettingsCategory.HomeAndTabs -> {
+                HomeLayoutSettingsCard(state.homeScreenLayoutMode, actions.onHomeScreenLayoutModeChange)
+                HomeSettingsCard(libraryUi.homeSections, actions.onHomeSections, compact = compact)
+                BottomTabSettingsCard(libraryUi.mobileBottomTabs, actions.onMobileBottomTabs, compact = compact)
+                LibraryGridSizeSettingsCard(
+                    albumGridItemSizeDp = libraryUi.albumGridItemSizeDp,
+                    artistGridItemSizeDp = libraryUi.artistGridItemSizeDp,
+                    onAlbumGridItemSize = actions.onAlbumGridItemSize,
+                    onArtistGridItemSize = actions.onArtistGridItemSize,
+                    compact = compact,
+                )
+            }
+            SettingsCategory.Downloads -> DownloadsSettingsCard(
+                downloadDirectory = state.downloadDirectory,
+                downloadCount = state.downloadCount,
+                downloadItems = state.downloadItems,
+                downloadManager = state.downloadManager,
+                appSettings = appSettings,
+                defaultDownloadDirectoryLabel = state.defaultDownloadDirectoryLabel,
+                onDownloadDirectory = actions.onDownloadDirectory,
+                onDeleteAllDownloads = actions.onDeleteAllDownloads,
+                onDeleteCompletedDownloads = actions.onDeleteCompletedDownloads,
+                onClearFailedDownloads = actions.onClearFailedDownloads,
+                onRetryFailedDownloads = actions.onRetryFailedDownloads,
+                onRetryDownloads = actions.onRetryDownloads,
+                onCancelDownloads = actions.onCancelDownloads,
+                onDeleteDownloads = actions.onDeleteDownloads,
+                onDownloadPolicySettings = actions.onDownloadPolicySettings,
+                onNotifyWhenDownloadFinishes = actions.onNotifyWhenDownloadFinishes,
+                compact = compact,
+            )
+            SettingsCategory.Backup -> {
+                BackupSettingsCard(
+                    onExportBackupPackage = actions.onExportBackupPackage,
+                    onImportBackupPackage = actions.onImportBackupPackage,
+                    onReplaceFromBackupPackage = actions.onReplaceFromBackupPackage,
+                    compact = compact,
+                )
+                FavoritePlaylistSettingsCard(actions.onExportFavoritePlaylists, actions.onImportFavoritePlaylists, compact = compact)
+                RadioStationsSettingsCard(actions.onExportRadioStations, actions.onImportRadioStations, compact = compact)
+            }
+            SettingsCategory.Scrobbling -> ScrobblingSettingsCard(
+                appSettings = appSettings,
+                credentialAvailability = state.listenBrainzCredentialAvailability,
+                onConnectListenBrainz = actions.onConnectListenBrainz,
+                onDisconnectListenBrainz = actions.onDisconnectListenBrainz,
+                onListenBrainzSubmitNowPlaying = actions.onListenBrainzSubmitNowPlaying,
+                onListenBrainzSubmitListens = actions.onListenBrainzSubmitListens,
+                onListenBrainzSubmitCurrentTrackFeedback = actions.onListenBrainzSubmitCurrentTrackFeedback,
+                onStartLastFmAuthorization = actions.onStartLastFmAuthorization,
+                onFinishLastFmAuthorization = actions.onFinishLastFmAuthorization,
+                onDisconnectLastFm = actions.onDisconnectLastFm,
+                onLastFmSubmitNowPlaying = actions.onLastFmSubmitNowPlaying,
+                onLastFmSubmitScrobbles = actions.onLastFmSubmitScrobbles,
+                compact = compact,
+            )
+            SettingsCategory.RemoteControl -> RemoteControlSettingsCard(
+                appSettings = appSettings,
+                pairedDevices = state.pairedDevices,
+                onRemoteControlHostEnabled = actions.onRemoteControlHostEnabled,
+                onRemoteControlHostName = actions.onRemoteControlHostName,
+                onRevokePairedDevice = actions.onRevokePairedDevice,
+                remoteControlClientState = state.remoteControlClientState,
+                onConnectRemoteControl = actions.onConnectRemoteControl,
+                onDisconnectRemoteControl = actions.onDisconnectRemoteControl,
+                compact = compact,
+            )
+            SettingsCategory.About -> AboutSettingsCard(
+                compact = compact,
+                updateState = state.appUpdateState,
+                onCheckForUpdates = actions.onCheckForUpdates,
+                onInstallUpdate = actions.onInstallUpdate,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsHub(
+    state: SettingsRouteState,
+    onOpen: (SettingsCategory) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        SettingsHubAccountCard(session = state.session, onClick = { onOpen(SettingsCategory.Account) })
+        SettingsCategoryGroup.entries.forEach { group ->
+            val categories = SettingsCategory.entries.filter { it.group == group }
+            if (categories.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Box(Modifier.padding(start = 4.dp)) {
+                        SectionLabel(group.label, PhoebeUi.accentLight)
                     }
-                    SettingsCategory.Downloads -> DownloadsSettingsCard(
-                        downloadDirectory = downloadDirectory,
-                        downloadCount = downloadCount,
-                        downloadItems = downloadItems,
-                        downloadManager = downloadManager,
-                        appSettings = appSettings,
-                        defaultDownloadDirectoryLabel = defaultDownloadDirectoryLabel,
-                        onDownloadDirectory = onDownloadDirectory,
-                        onDeleteAllDownloads = onDeleteAllDownloads,
-                        onDeleteCompletedDownloads = onDeleteCompletedDownloads,
-                        onClearFailedDownloads = onClearFailedDownloads,
-                        onRetryFailedDownloads = onRetryFailedDownloads,
-                        onRetryDownloads = onRetryDownloads,
-                        onCancelDownloads = onCancelDownloads,
-                        onDeleteDownloads = onDeleteDownloads,
-                        onDownloadPolicySettings = onDownloadPolicySettings,
-                    )
-                    SettingsCategory.Personalization -> PersonalMixSettingsCard(libraryUi.personalMix, onPersonalMix)
-                    SettingsCategory.Notifications -> NotificationsSettingsCard(
-                        settings = appSettings,
-                        onNotifyWhenDownloadFinishes = onNotifyWhenDownloadFinishes,
-                    )
-                    SettingsCategory.RemoteControl -> RemoteControlSettingsCard(
-                        appSettings = appSettings,
-                        pairedDevices = pairedDevices,
-                        onRemoteControlHostEnabled = onRemoteControlHostEnabled,
-                        onRemoteControlHostName = onRemoteControlHostName,
-                        onRevokePairedDevice = onRevokePairedDevice,
-                        remoteControlClientState = remoteControlClientState,
-                        onConnectRemoteControl = onConnectRemoteControl,
-                        onDisconnectRemoteControl = onDisconnectRemoteControl,
-                    )
-                    SettingsCategory.About -> AboutSettingsCard(
-                        updateState = appUpdateState,
-                        onCheckForUpdates = onCheckForUpdates,
-                        onInstallUpdate = onInstallUpdate,
-                    )
-                    SettingsCategory.Advanced -> GenericPlaceholderCard(category.label)
+                    val shape = RoundedCornerShape(PhoebeUi.shapes.panelRadius)
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .clip(shape)
+                            .background(PhoebeUi.panel)
+                            .border(BorderStroke(1.dp, PhoebeUi.border), shape),
+                    ) {
+                        categories.forEachIndexed { index, category ->
+                            if (index > 0) {
+                                Box(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .padding(start = 60.dp)
+                                        .height(1.dp)
+                                        .background(PhoebeUi.border),
+                                )
+                            }
+                            SettingsHubRow(
+                                category = category,
+                                summary = category.hubSummary(state),
+                                onClick = { onOpen(category) },
+                            )
+                        }
+                    }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun SettingsHubAccountCard(
+    session: PlexSession?,
+    onClick: () -> Unit,
+) {
+    val signedIn = session?.token?.isNotBlank() == true
+    val shape = RoundedCornerShape(PhoebeUi.shapes.panelRadius)
+    val name = session?.userName?.takeIf { signedIn && it.isNotBlank() }
+    val details = if (signedIn) {
+        listOfNotNull(
+            session.providerLabel(),
+            session.selectedServer?.name?.takeIf { it.isNotBlank() },
+            session.selectedLibrary?.title?.takeIf { it.isNotBlank() },
+        ).joinToString(" · ")
+    } else {
+        "Connect a media provider to browse your library"
+    }
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(Brush.linearGradient(listOf(PhoebeUi.accent.copy(alpha = 0.20f), PhoebeUi.panel)))
+            .border(BorderStroke(1.dp, PhoebeUi.border), shape)
+            .clickable(onClick = onClick)
+            .testTag("settings:hub:${SettingsCategory.Account.name}")
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        SettingsAccountAvatar(name = name, size = 46.dp)
+        Column(Modifier.weight(1f)) {
+            Text(
+                name ?: "Not signed in",
+                color = PhoebeUi.primaryText,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                details,
+                color = PhoebeUi.secondaryText,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        PhoebeIconView(PhoebeIcon.ChevronRight, tint = PhoebeUi.mutedText, modifier = Modifier.size(16.dp))
+    }
+}
+
+@Composable
+private fun SettingsHubRow(
+    category: SettingsCategory,
+    summary: SettingsHubSummary,
+    onClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag("settings:hub:${category.name}")
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Box(
+            Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(9.dp))
+                .background(PhoebeUi.accent.copy(alpha = 0.12f)),
+            contentAlignment = Alignment.Center,
+        ) {
+            PhoebeIconView(category.icon, tint = PhoebeUi.accentLight, modifier = Modifier.size(18.dp))
+        }
+        Column(Modifier.weight(1f)) {
+            Text(
+                category.label,
+                color = PhoebeUi.primaryText,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                summary.text,
+                color = PhoebeUi.secondaryText,
+                fontSize = 12.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        summary.badge?.let { badge ->
+            val badgeColor = if (summary.badgeIsAlert) Color(0xFFEF4444) else PhoebeUi.accentLight
+            Text(
+                badge,
+                color = badgeColor,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(999.dp))
+                    .background(badgeColor.copy(alpha = 0.14f))
+                    .padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+        }
+        PhoebeIconView(PhoebeIcon.ChevronRight, tint = PhoebeUi.mutedText, modifier = Modifier.size(16.dp))
+    }
+}
+
+private data class SettingsHubSummary(
+    val text: String,
+    val badge: String? = null,
+    val badgeIsAlert: Boolean = false,
+)
+
+private fun SettingsCategory.hubSummary(state: SettingsRouteState): SettingsHubSummary {
+    val settings = state.appSettings
+    return when (this) {
+        SettingsCategory.Account -> SettingsHubSummary(subtitle)
+        SettingsCategory.Playback -> {
+            val crossfade = if (settings.crossfadeSeconds > 0) "Crossfade ${settings.crossfadeSeconds}s" else "No crossfade"
+            val gapless = "Gapless".takeIf { settings.audioProcessing.gaplessEnabled }
+            val keepPlaying = "Keep Playing".takeIf { settings.keepPlayingEnabled }
+            SettingsHubSummary(listOfNotNull(crossfade, gapless, keepPlaying).joinToString(" · "))
+        }
+        SettingsCategory.PersonalMix -> {
+            val mix = state.libraryUi.personalMix.normalized()
+            SettingsHubSummary("${mix.limit} songs · Discovery ${mix.discoveryWeight}%")
+        }
+        SettingsCategory.Appearance -> {
+            val design = PhoebeDesignSystem.fromId(state.designId)
+            val tint = PhoebeTintOption.fromId(state.tintId, design)
+            val mode = if (state.isLightMode) "Light" else "Dark"
+            SettingsHubSummary("${design.label} · $mode · ${tint.label}")
+        }
+        SettingsCategory.HomeAndTabs -> {
+            val tabCount = state.libraryUi.mobileBottomTabs.size
+            SettingsHubSummary("${state.homeScreenLayoutMode.label} Home · $tabCount tabs")
+        }
+        SettingsCategory.Downloads -> {
+            val manager = state.downloadManager
+            val text = if (manager.total == 0) {
+                "No downloads yet"
+            } else {
+                listOfNotNull(
+                    "${manager.complete} songs",
+                    formatBytes(manager.estimatedBytes).takeIf { manager.estimatedBytes > 0 },
+                    "${manager.active} active".takeIf { manager.active > 0 },
+                ).joinToString(" · ")
+            }
+            SettingsHubSummary(
+                text = text,
+                badge = "${manager.failed} failed".takeIf { manager.failed > 0 },
+                badgeIsAlert = true,
+            )
+        }
+        SettingsCategory.Backup -> SettingsHubSummary(subtitle)
+        SettingsCategory.Scrobbling -> {
+            val services = listOfNotNull(
+                "ListenBrainz".takeIf { settings.listenBrainz.connected },
+                "Last.fm".takeIf { settings.lastFm.connected },
+            )
+            SettingsHubSummary(if (services.isEmpty()) "Not connected" else "${services.joinToString(" and ")} connected")
+        }
+        SettingsCategory.RemoteControl -> {
+            val client = state.remoteControlClientState
+            val pairedCount = state.pairedDevices.size
+            val text = when {
+                client.status == RemoteConnectionStatus.Connected -> "Controlling ${client.hostName ?: "another device"}"
+                settings.remoteControlHostEnabled && pairedCount > 0 ->
+                    "On · $pairedCount paired ${if (pairedCount == 1) "device" else "devices"}"
+                settings.remoteControlHostEnabled -> "On"
+                else -> "Off"
+            }
+            SettingsHubSummary(text)
+        }
+        SettingsCategory.About -> SettingsHubSummary(
+            text = "Version ${PhoebeBuildInfo.versionName}",
+            badge = "Update".takeIf { state.appUpdateState is AppUpdateState.Available },
+        )
     }
 }
 
@@ -418,19 +643,70 @@ fun SettingsMobileView(
     onConnectRemoteControl: () -> Unit = {},
     onDisconnectRemoteControl: () -> Unit = {},
     modifier: Modifier = Modifier,
+    initialCategory: SettingsCategory? = null,
 ) {
-    Column(
-        modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(20.dp),
-    ) {
-        SectionLabel("ACCOUNT", PhoebeUi.accentLight)
-        AccountSettingsCard(
-            session = session,
+    var page by rememberSaveable(initialCategory) { mutableStateOf<SettingsCategory?>(null) }
+    SettingsMobileScreen(
+        page = page,
+        onPageChange = { page = it },
+        state = SettingsRouteState(
+            isLightMode = isLightMode,
+            designId = designId,
+            tintId = tintId,
+            downloadDirectory = downloadDirectory,
+            downloadCount = downloadCount,
+            downloadItems = downloadItems,
+            downloadManager = downloadManager,
             appSettings = appSettings,
+            audioProcessingCapabilities = audioProcessingCapabilities,
+            libraryUi = libraryUi,
+            defaultDownloadDirectoryLabel = defaultDownloadDirectoryLabel,
+            homeScreenLayoutMode = homeScreenLayoutMode,
+            session = session,
             listenBrainzCredentialAvailability = listenBrainzCredentialAvailability,
+            initialCategory = initialCategory,
+            appUpdateState = appUpdateState,
+            pairedDevices = pairedDevices,
+            remoteControlClientState = remoteControlClientState,
+        ),
+        actions = SettingsRouteActions(
+            onLightModeChange = onLightModeChange,
+            onDesignChange = onDesignChange,
+            onTintChange = onTintChange,
+            onDownloadDirectory = onDownloadDirectory,
+            onDeleteAllDownloads = onDeleteAllDownloads,
+            onDeleteCompletedDownloads = onDeleteCompletedDownloads,
+            onClearFailedDownloads = onClearFailedDownloads,
+            onRetryFailedDownloads = onRetryFailedDownloads,
+            onRetryDownloads = onRetryDownloads,
+            onCancelDownloads = onCancelDownloads,
+            onDeleteDownloads = onDeleteDownloads,
+            onDownloadPolicySettings = onDownloadPolicySettings,
+            onStreamingPolicySettings = onStreamingPolicySettings,
+            onCrossfadeSeconds = onCrossfadeSeconds,
+            onScanLibraryOnLaunch = onScanLibraryOnLaunch,
+            onNotifyWhenDownloadFinishes = onNotifyWhenDownloadFinishes,
+            onKeepPlayingEnabled = onKeepPlayingEnabled,
+            onPersistEqualizerSettings = onPersistEqualizerSettings,
+            onPersistVolumeSettings = onPersistVolumeSettings,
+            onAudioProcessingSettings = onAudioProcessingSettings,
+            onVisualizerPreset = onVisualizerPreset,
+            onShowUltimateGuitarButton = onShowUltimateGuitarButton,
+            onBlurredArtworkAppearance = onBlurredArtworkAppearance,
+            onTintedBackgroundGradient = onTintedBackgroundGradient,
+            onHomeSections = onHomeSections,
+            onMobileBottomTabs = onMobileBottomTabs,
+            onPersonalMix = onPersonalMix,
+            onAlbumGridItemSize = onAlbumGridItemSize,
+            onArtistGridItemSize = onArtistGridItemSize,
+            onExportFavoritePlaylists = onExportFavoritePlaylists,
+            onImportFavoritePlaylists = onImportFavoritePlaylists,
+            onExportRadioStations = onExportRadioStations,
+            onImportRadioStations = onImportRadioStations,
+            onExportBackupPackage = onExportBackupPackage,
+            onImportBackupPackage = onImportBackupPackage,
+            onReplaceFromBackupPackage = onReplaceFromBackupPackage,
+            onHomeScreenLayoutModeChange = onHomeScreenLayoutModeChange,
             onConnectListenBrainz = onConnectListenBrainz,
             onDisconnectListenBrainz = onDisconnectListenBrainz,
             onListenBrainzSubmitNowPlaying = onListenBrainzSubmitNowPlaying,
@@ -441,104 +717,17 @@ fun SettingsMobileView(
             onDisconnectLastFm = onDisconnectLastFm,
             onLastFmSubmitNowPlaying = onLastFmSubmitNowPlaying,
             onLastFmSubmitScrobbles = onLastFmSubmitScrobbles,
-            compact = true,
-        )
-        SectionLabel("APPEARANCE", PhoebeUi.accentLight)
-        AppearanceSettingsCard(
-            isLightMode,
-            onLightModeChange,
-            designId,
-            onDesignChange,
-            tintId,
-            onTintChange,
-            homeScreenLayoutMode,
-            onHomeScreenLayoutModeChange,
-            appSettings.nowPlayingVisualizerPreset,
-            onVisualizerPreset,
-            blurredArtworkAppearance = appSettings.blurredArtworkAppearance,
-            onBlurredArtworkAppearance = onBlurredArtworkAppearance,
-            tintedBackgroundGradient = appSettings.tintedBackgroundGradient,
-            onTintedBackgroundGradient = onTintedBackgroundGradient,
-            compact = true,
-        )
-        SectionLabel("LIBRARY", PhoebeUi.accentLight)
-        LibraryGridSizeSettingsCard(
-            albumGridItemSizeDp = libraryUi.albumGridItemSizeDp,
-            artistGridItemSizeDp = libraryUi.artistGridItemSizeDp,
-            onAlbumGridItemSize = onAlbumGridItemSize,
-            onArtistGridItemSize = onArtistGridItemSize,
-            compact = true,
-        )
-        HomeSettingsCard(libraryUi.homeSections, onHomeSections, compact = true)
-        BottomTabSettingsCard(libraryUi.mobileBottomTabs, onMobileBottomTabs, compact = true)
-        FavoritePlaylistSettingsCard(onExportFavoritePlaylists, onImportFavoritePlaylists, compact = true)
-        RadioStationsSettingsCard(onExportRadioStations, onImportRadioStations, compact = true)
-        BackupSettingsCard(
-            onExportBackupPackage = onExportBackupPackage,
-            onImportBackupPackage = onImportBackupPackage,
-            onReplaceFromBackupPackage = onReplaceFromBackupPackage,
-            compact = true,
-        )
-        SectionLabel("AUDIO PLAYBACK", PhoebeUi.accentLight)
-        AudioPlaybackSettingsCard(
-            settings = appSettings,
-            capabilities = audioProcessingCapabilities,
-            onCrossfadeSeconds = onCrossfadeSeconds,
-            onScanLibraryOnLaunch = onScanLibraryOnLaunch,
-            onKeepPlayingEnabled = onKeepPlayingEnabled,
-            onPersistEqualizerSettings = onPersistEqualizerSettings,
-            onPersistVolumeSettings = onPersistVolumeSettings,
-            onAudioProcessingSettings = onAudioProcessingSettings,
-            onStreamingPolicySettings = onStreamingPolicySettings,
-            onShowUltimateGuitarButton = onShowUltimateGuitarButton,
-            compact = true,
-        )
-        SectionLabel("REMOTE CONTROL (LAN)", PhoebeUi.accentLight)
-        RemoteControlSettingsCard(
-            appSettings = appSettings,
-            pairedDevices = pairedDevices,
+            onEventSettings = onEventSettings,
+            onCheckForUpdates = onCheckForUpdates,
+            onInstallUpdate = onInstallUpdate,
             onRemoteControlHostEnabled = onRemoteControlHostEnabled,
             onRemoteControlHostName = onRemoteControlHostName,
             onRevokePairedDevice = onRevokePairedDevice,
-            remoteControlClientState = remoteControlClientState,
             onConnectRemoteControl = onConnectRemoteControl,
             onDisconnectRemoteControl = onDisconnectRemoteControl,
-            compact = true,
-        )
-        SectionLabel("DOWNLOADS", PhoebeUi.accentLight)
-        DownloadsSettingsCard(
-            downloadDirectory = downloadDirectory,
-            downloadCount = downloadCount,
-            downloadItems = downloadItems,
-            downloadManager = downloadManager,
-            appSettings = appSettings,
-            defaultDownloadDirectoryLabel = defaultDownloadDirectoryLabel,
-            onDownloadDirectory = onDownloadDirectory,
-            onDeleteAllDownloads = onDeleteAllDownloads,
-            onDeleteCompletedDownloads = onDeleteCompletedDownloads,
-            onClearFailedDownloads = onClearFailedDownloads,
-            onRetryFailedDownloads = onRetryFailedDownloads,
-            onRetryDownloads = onRetryDownloads,
-            onCancelDownloads = onCancelDownloads,
-            onDeleteDownloads = onDeleteDownloads,
-            onDownloadPolicySettings = onDownloadPolicySettings,
-            compact = true,
-        )
-        SectionLabel("PERSONALIZATION", PhoebeUi.accentLight)
-        PersonalMixSettingsCard(libraryUi.personalMix, onPersonalMix, compact = true)
-        SectionLabel("NOTIFICATIONS", PhoebeUi.accentLight)
-        NotificationsSettingsCard(
-            settings = appSettings,
-            onNotifyWhenDownloadFinishes = onNotifyWhenDownloadFinishes,
-        )
-        SectionLabel("ABOUT", PhoebeUi.accentLight)
-        AboutSettingsCard(
-            compact = true,
-            updateState = appUpdateState,
-            onCheckForUpdates = onCheckForUpdates,
-            onInstallUpdate = onInstallUpdate,
-        )
-    }
+        ),
+        modifier = modifier,
+    )
 }
 
 @Composable
@@ -584,8 +773,6 @@ private fun AppearanceSettingsCard(
     onDesignChange: (String) -> Unit,
     tintId: String,
     onTintChange: (String) -> Unit,
-    homeScreenLayoutMode: HomeScreenLayoutMode,
-    onHomeScreenLayoutModeChange: (HomeScreenLayoutMode) -> Unit,
     nowPlayingVisualizerPreset: NowPlayingVisualizerPreset,
     onVisualizerPreset: (NowPlayingVisualizerPreset) -> Unit,
     blurredArtworkAppearance: Boolean,
@@ -600,8 +787,7 @@ private fun AppearanceSettingsCard(
     val selectedDesign = PhoebeDesignSystem.fromId(designId)
     val tintOptions = PhoebeTintOption.optionsForDesign(selectedDesign)
     SettingsCard {
-        Text("Appearance", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text("Theme and visuals", color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
+        if (!compact) SettingsCardHeader(title = "Appearance", subtitle = "Theme and visuals")
         Text("Design", color = PhoebeUi.primaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         Text("Choose the visual system used across Phoebe", color = PhoebeUi.secondaryText, fontSize = 12.sp)
         Spacer(Modifier.height(10.dp))
@@ -698,13 +884,6 @@ private fun AppearanceSettingsCard(
             }
             Spacer(Modifier.height(18.dp))
         }
-        Text("Mobile Home layout", color = PhoebeUi.primaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-        Spacer(Modifier.height(10.dp))
-        HomeLayoutModeControl(
-            selected = homeScreenLayoutMode,
-            onSelected = onHomeScreenLayoutModeChange,
-        )
-        Spacer(Modifier.height(18.dp))
         Text("Now Playing visualizer", color = PhoebeUi.primaryText, fontSize = 14.sp, fontWeight = FontWeight.Medium)
         Spacer(Modifier.height(10.dp))
         VisualizerPresetSelector(
@@ -849,6 +1028,23 @@ private fun DesignSystemOption(
 }
 
 @Composable
+private fun HomeLayoutSettingsCard(
+    selected: HomeScreenLayoutMode,
+    onSelected: (HomeScreenLayoutMode) -> Unit,
+) {
+    SettingsCard {
+        Text("Mobile Home layout", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+        Text(
+            "How sections are arranged on the phone Home screen",
+            color = PhoebeUi.mutedText,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(bottom = 14.dp),
+        )
+        HomeLayoutModeControl(selected = selected, onSelected = onSelected)
+    }
+}
+
+@Composable
 private fun HomeLayoutModeControl(
     selected: HomeScreenLayoutMode,
     onSelected: (HomeScreenLayoutMode) -> Unit,
@@ -945,15 +1141,12 @@ private fun AudioPlaybackSettingsCard(
     var localAudio by remember(settings.audioProcessing) { mutableStateOf(settings.audioProcessing.normalized()) }
     val audio = localAudio.normalized()
     val streamingPolicy = settings.streamingPolicy.normalized()
+    // The Playback page title already names this category, so each topic gets its own card instead of
+    // one "Audio Playback" card with sub-headings, matching how Home & tabs and Backup are laid out.
     SettingsCard {
-        Text("Audio Playback", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text("Transitions and library scan", color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
-        Text("Streaming quality", color = PhoebeUi.secondaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-        Text(
-            "Controls remote stream bitrate. Local and already-downloaded files stay original.",
-            color = PhoebeUi.mutedText,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(bottom = 8.dp),
+        SettingsCardHeader(
+            title = "Streaming quality",
+            subtitle = "Controls remote stream bitrate. Local and already-downloaded files stay original.",
         )
         StreamingQualitySelector(
             selected = streamingPolicy.quality,
@@ -972,14 +1165,18 @@ private fun AudioPlaybackSettingsCard(
         )
         SettingsSwitchRow(
             title = "Prefer home network",
-            subtitle = "Try your server's LAN address first on Wi‑Fi (default). Turn off to always use remote plex.direct first — useful when home Wi‑Fi cannot reach PMS.",
+            subtitle = "Try your server's LAN address first on Wi‑Fi",
             checked = streamingPolicy.preferLocalNetwork,
             onCheckedChange = { checked ->
                 onStreamingPolicySettings(streamingPolicy.copy(preferLocalNetwork = checked))
             },
         )
-        Spacer(Modifier.height(12.dp))
-        Text("Crossfade", color = PhoebeUi.secondaryText, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+    }
+    SettingsCard {
+        SettingsCardHeader(
+            title = "Crossfade",
+            subtitle = "Overlap songs as one ends, or play albums gapless",
+        )
         Slider(
             value = localCrossfade.toFloat(),
             onValueChange = {
@@ -1032,6 +1229,12 @@ private fun AudioPlaybackSettingsCard(
                 localAudio = nextAudio
                 onAudioProcessingSettings(nextAudio)
             },
+        )
+    }
+    SettingsCard {
+        SettingsCardHeader(
+            title = "General",
+            subtitle = "Queue, player buttons and startup",
         )
         SettingsSwitchRow(
             title = "Keep Playing",
@@ -1136,23 +1339,6 @@ private fun capabilitySubtitle(capability: FeatureCapability, supported: String)
         is FeatureCapability.Unsupported -> capability.reason
     }
 
-@Composable
-private fun NotificationsSettingsCard(
-    settings: AppSettings,
-    onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
-) {
-    SettingsCard {
-        Text("Notifications", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text("Download alerts", color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
-        SettingsSwitchRow(
-            title = "Download finished",
-            subtitle = "Be notified when something finishes downloading",
-            checked = settings.notifyWhenDownloadFinishes,
-            onCheckedChange = onNotifyWhenDownloadFinishes,
-        )
-    }
-}
-
 
 
 @Composable
@@ -1172,6 +1358,7 @@ private fun DownloadsSettingsCard(
     onCancelDownloads: (Set<String>) -> Unit,
     onDeleteDownloads: (Set<String>) -> Unit,
     onDownloadPolicySettings: (DownloadPolicySettings) -> Unit,
+    onNotifyWhenDownloadFinishes: (Boolean) -> Unit,
     compact: Boolean = false,
 ) {
     val pickDownloadDirectory = rememberPickDownloadDirectory(onPicked = onDownloadDirectory)
@@ -1185,8 +1372,7 @@ private fun DownloadsSettingsCard(
             .sortedWith(compareBy<DownloadItem> { it.state.sortOrder }.thenByDescending { it.updatedAtMs }.thenBy { it.title })
     }
     SettingsCard {
-        Text("Downloads", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text("Offline songs", color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
+        if (!compact) SettingsCardHeader(title = "Downloads", subtitle = "Offline songs")
         Text("Download Location", color = PhoebeUi.secondaryText, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
         Column(
             Modifier
@@ -1344,21 +1530,21 @@ private fun DownloadsSettingsCard(
         }
         SettingsSwitchRow(
             title = "Retry failed downloads",
-            subtitle = "Automatically requeue failed downloads when the manager runs",
+            subtitle = "Requeue failed downloads automatically",
             checked = policy.autoRetryFailedDownloads,
             onCheckedChange = { checked -> onDownloadPolicySettings(policy.copy(autoRetryFailedDownloads = checked)) },
         )
         SettingsSwitchRow(
             title = "Wi-Fi only",
-            subtitle = "Avoid starting downloads on metered mobile networks when the platform can detect them",
+            subtitle = "Don't start downloads on metered networks",
             checked = policy.wifiOnly,
             onCheckedChange = { checked -> onDownloadPolicySettings(policy.withWifiOnly(checked)) },
         )
         SettingsSwitchRow(
-            title = "Completion alerts",
-            subtitle = "Use download completion notifications for this device",
-            checked = policy.notifyOnCompletion,
-            onCheckedChange = { checked -> onDownloadPolicySettings(policy.copy(notifyOnCompletion = checked)) },
+            title = "Notify when finished",
+            subtitle = "Alert when a batch of downloads completes",
+            checked = appSettings.notifyWhenDownloadFinishes,
+            onCheckedChange = onNotifyWhenDownloadFinishes,
         )
         Text(
             "Quality: Original",
@@ -2218,30 +2404,17 @@ private fun SettingsSwitchRow(
 @Composable
 private fun AccountSettingsCard(
     session: PlexSession?,
-    appSettings: AppSettings,
-    listenBrainzCredentialAvailability: SecureCredentialAvailability,
-    onConnectListenBrainz: (String) -> Unit,
-    onDisconnectListenBrainz: () -> Unit,
-    onListenBrainzSubmitNowPlaying: (Boolean) -> Unit,
-    onListenBrainzSubmitListens: (Boolean) -> Unit,
-    onListenBrainzSubmitCurrentTrackFeedback: (Boolean) -> Unit,
-    onStartLastFmAuthorization: (String, String) -> Unit,
-    onFinishLastFmAuthorization: () -> Unit,
-    onDisconnectLastFm: () -> Unit,
-    onLastFmSubmitNowPlaying: (Boolean) -> Unit,
-    onLastFmSubmitScrobbles: (Boolean) -> Unit,
     compact: Boolean = false,
 ) {
     val signedIn = session?.token?.isNotBlank() == true
     val providerName = session.providerLabel()
     SettingsCard {
-        Text("Account", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text(
-            if (signedIn) "Your signed-in media provider" else "Connect a media provider to browse your library",
-            color = PhoebeUi.mutedText,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(bottom = if (compact) 10.dp else 14.dp),
-        )
+        if (!compact) {
+            SettingsCardHeader(
+                title = "Account",
+                subtitle = if (signedIn) "Your signed-in media provider" else "Connect a media provider to browse your library",
+            )
+        }
         if (!signedIn) {
             Text("Not signed in", color = PhoebeUi.secondaryText, fontSize = 13.sp)
         } else {
@@ -2252,11 +2425,9 @@ private fun AccountSettingsCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Box(
-                    Modifier
-                        .size(if (compact) 40.dp else 48.dp)
-                        .clip(CircleShape)
-                        .background(Brush.linearGradient(listOf(Color(0xFF3876C8), Color(0xFFB87C5C)))),
+                SettingsAccountAvatar(
+                    name = session.userName.takeIf { it.isNotBlank() },
+                    size = if (compact) 40.dp else 48.dp,
                 )
                 Column(Modifier.weight(1f)) {
                     Text(
@@ -2297,10 +2468,32 @@ private fun AccountSettingsCard(
                 }
             }
         }
-        Spacer(Modifier.height(if (compact) 16.dp else 18.dp))
+    }
+}
+
+@Composable
+private fun ScrobblingSettingsCard(
+    appSettings: AppSettings,
+    credentialAvailability: SecureCredentialAvailability,
+    onConnectListenBrainz: (String) -> Unit,
+    onDisconnectListenBrainz: () -> Unit,
+    onListenBrainzSubmitNowPlaying: (Boolean) -> Unit,
+    onListenBrainzSubmitListens: (Boolean) -> Unit,
+    onListenBrainzSubmitCurrentTrackFeedback: (Boolean) -> Unit,
+    onStartLastFmAuthorization: (String, String) -> Unit,
+    onFinishLastFmAuthorization: () -> Unit,
+    onDisconnectLastFm: () -> Unit,
+    onLastFmSubmitNowPlaying: (Boolean) -> Unit,
+    onLastFmSubmitScrobbles: (Boolean) -> Unit,
+    compact: Boolean = false,
+) {
+    SettingsCard {
+        if (!compact) {
+            SettingsCardHeader(title = "Scrobbling", subtitle = "Share what you play with ListenBrainz and Last.fm")
+        }
         ListenBrainzSettingsSection(
             appSettings = appSettings,
-            credentialAvailability = listenBrainzCredentialAvailability,
+            credentialAvailability = credentialAvailability,
             onConnect = onConnectListenBrainz,
             onDisconnect = onDisconnectListenBrainz,
             onSubmitNowPlaying = onListenBrainzSubmitNowPlaying,
@@ -2311,7 +2504,7 @@ private fun AccountSettingsCard(
         Spacer(Modifier.height(12.dp))
         LastFmSettingsSection(
             appSettings = appSettings,
-            credentialAvailability = listenBrainzCredentialAvailability,
+            credentialAvailability = credentialAvailability,
             onStartAuthorization = onStartLastFmAuthorization,
             onFinishAuthorization = onFinishLastFmAuthorization,
             onDisconnect = onDisconnectLastFm,
@@ -2724,13 +2917,7 @@ private fun AboutSettingsCard(
     val checking = updateState == AppUpdateState.Checking
     val installing = updateState is AppUpdateState.Installing
     SettingsCard {
-        Text("About Phoebe", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Text(
-            "Version and project links",
-            color = PhoebeUi.mutedText,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(bottom = if (compact) 10.dp else 14.dp),
-        )
+        if (!compact) SettingsCardHeader(title = "About Phoebe", subtitle = "Version and project links")
         Column(
             Modifier
                 .fillMaxWidth()
@@ -2770,21 +2957,24 @@ private fun AboutSettingsCard(
 
 @Composable
 private fun ImageCreditsSection() {
-    Text("Image Credits", color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-    Text(
-        "Mix and collection artwork from Unsplash",
-        color = PhoebeUi.mutedText,
-        fontSize = 12.sp,
-        modifier = Modifier.padding(top = 2.dp, bottom = 10.dp),
+    var expanded by remember { mutableStateOf(false) }
+    AboutLinkRow(
+        title = "Image credits",
+        subtitle = "Mix and collection artwork from Unsplash · ${UnsplashImageCredits.size} photos",
+        linkLabel = if (expanded) "Hide" else "Show",
+        onClick = { expanded = !expanded },
     )
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        UnsplashImageCredits.forEach { credit ->
-            AboutLinkRow(
-                title = credit.photographer,
-                subtitle = credit.description,
-                linkLabel = "Unsplash",
-                onClick = { openExternalUrl(credit.url) },
-            )
+    if (expanded) {
+        Spacer(Modifier.height(8.dp))
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            UnsplashImageCredits.forEach { credit ->
+                AboutLinkRow(
+                    title = credit.photographer,
+                    subtitle = credit.description,
+                    linkLabel = "Unsplash",
+                    onClick = { openExternalUrl(credit.url) },
+                )
+            }
         }
     }
 }
@@ -2885,15 +3075,6 @@ private fun AboutLinkRow(
     }
 }
 
-@Composable
-private fun GenericPlaceholderCard(title: String, compact: Boolean = false) {
-    SettingsCard {
-        Text(title, color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(if (compact) 8.dp else 12.dp))
-        Text("This section is not implemented yet.", color = PhoebeUi.secondaryText, fontSize = 13.sp)
-    }
-}
-
 private const val ListenBrainzSettingsUrl = "https://listenbrainz.org/settings/"
 private const val LastFmApiAccountsUrl = "https://www.last.fm/api/account/create"
 private const val ListenBrainzConnectUiTimeoutMs = 50_000L
@@ -2979,6 +3160,36 @@ private val UnsplashImageCredits = listOf(
         url = "https://unsplash.com/photos/a-black-shelf-with-a-bunch-of-cds-on-it-IGrl4aw5VQ8$UnsplashReferral",
     ),
 )
+
+/** Gradient circle with the account's initial, or a person icon when there is no user name. */
+@Composable
+private fun SettingsAccountAvatar(name: String?, size: Dp) {
+    Box(
+        Modifier
+            .size(size)
+            .clip(CircleShape)
+            .background(Brush.linearGradient(listOf(Color(0xFF3876C8), Color(0xFFB87C5C)))),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (name != null) {
+            Text(
+                name.take(1).uppercase(),
+                color = Color.White,
+                fontSize = (size.value * 0.4f).sp,
+                fontWeight = FontWeight.Bold,
+            )
+        } else {
+            PhoebeIconView(PhoebeIcon.Person, tint = Color.White, modifier = Modifier.size(size * 0.44f))
+        }
+    }
+}
+
+/** The bold title and muted subtitle that open a settings card. */
+@Composable
+private fun SettingsCardHeader(title: String, subtitle: String) {
+    Text(title, color = PhoebeUi.primaryText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+    Text(subtitle, color = PhoebeUi.mutedText, fontSize = 12.sp, modifier = Modifier.padding(bottom = 14.dp))
+}
 
 @Composable
 private fun SettingsCard(content: @Composable ColumnScope.() -> Unit) {

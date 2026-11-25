@@ -34,6 +34,7 @@ class SessionRepository(
     private val database: PhoebeDatabase,
     private val storage: PlatformStorage,
     private val databaseWriteGate: DatabaseWriteGate,
+    private val serverUrlResolver: ServerUrlResolver,
 ) {
     private val json = PhoebeDataJson
     private val mutableSession = MutableStateFlow<PlexSession?>(null)
@@ -153,8 +154,9 @@ class SessionRepository(
         }
     }
 
-    suspend fun signInJellyfin(serverUrl: String, username: String, password: String): PlexServer {
+    suspend fun signInJellyfin(rawServerUrl: String, username: String, password: String): PlexServer {
         val generation = sessionGeneration
+        val serverUrl = serverUrlResolver.resolve(MediaProviderType.Jellyfin, rawServerUrl)
         val session = providerRegistry.adapterFor(MediaProviderType.Jellyfin)
             ?.signIn(serverUrl, username, password)
             ?: run {
@@ -174,8 +176,9 @@ class SessionRepository(
         return session.selectedServer ?: error("Jellyfin did not return a server.")
     }
 
-    suspend fun signInProvider(type: MediaProviderType, serverUrl: String, username: String, password: String): PlexServer {
+    suspend fun signInProvider(type: MediaProviderType, rawServerUrl: String, username: String, password: String): PlexServer {
         val generation = sessionGeneration
+        val serverUrl = serverUrlResolver.resolve(type, rawServerUrl)
         val adapter = providerRegistry.adapterFor(type) ?: error("${type.name} is not available.")
         val session = adapter.signIn(serverUrl, username, password)
         save(session, expectedGeneration = generation)
@@ -185,8 +188,8 @@ class SessionRepository(
         return session.selectedServer ?: error("${type.name} did not return a server.")
     }
 
-    suspend fun startJellyfinQuickConnect(serverUrl: String): JellyfinQuickConnectResult =
-        jellyfinClient.initiateQuickConnect(serverUrl)
+    suspend fun startJellyfinQuickConnect(rawServerUrl: String): JellyfinQuickConnectResult =
+        jellyfinClient.initiateQuickConnect(serverUrlResolver.resolve(MediaProviderType.Jellyfin, rawServerUrl))
 
     suspend fun completeJellyfinQuickConnect(serverUrl: String, secret: String): PlexServer {
         val generation = sessionGeneration

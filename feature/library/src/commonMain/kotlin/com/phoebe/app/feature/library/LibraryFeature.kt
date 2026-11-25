@@ -26,6 +26,7 @@ data class LibraryRouteState(
     val libraryUi: LibraryUiPreferences,
     val jellyfinPagination: Boolean = false,
     val searchQuery: String = "",
+    val favoritesOnly: Boolean = false,
 )
 
 @Immutable
@@ -50,6 +51,7 @@ data class PlaylistsRouteState(
     val catalog: CatalogSnapshot = CatalogSnapshot(),
     val catalogRefreshing: Boolean,
     val searchQuery: String,
+    val favoritesOnly: Boolean = false,
 )
 
 @Immutable
@@ -123,7 +125,7 @@ fun LibraryMobileRoute(
         libraryUi = state.libraryUi,
         jellyfinPagination = state.jellyfinPagination,
         searchQuery = state.searchQuery,
-        onSearchQuery = actions.onSearchQuery,
+        favoritesOnly = state.favoritesOnly,
         libraryViewMode = libraryViewMode,
         onJellyfinPage = actions.onJellyfinPage,
         onFilter = actions.onFilter,
@@ -206,7 +208,7 @@ fun PlaylistsMobileRoute(
         catalog = state.catalog,
         catalogRefreshing = state.catalogRefreshing,
         searchQuery = state.searchQuery,
-        onSearchQuery = actions.onSearchQuery,
+        favoritesOnly = state.favoritesOnly,
         onPlaylist = actions.onPlaylist,
         modifier = modifier,
         topBar = topBar,

@@ -80,9 +80,7 @@ import kotlinx.coroutines.withContext
 
 private val MobileLibraryChromeTopPadding = 8.dp
 private val MobileLibraryTabsHeight = 50.dp
-private val MobileLibraryTabsToSearchGap = 10.dp
-private val MobileLibrarySearchHeight = 44.dp
-private val MobileLibrarySearchToContentGap = 10.dp
+private val MobileLibraryTabsToContentGap = 10.dp
 private val MobileLibraryContentGap = 8.dp
 private val MobileLibrarySectionIndexBottomPadding = 22.dp
 
@@ -118,7 +116,7 @@ fun LibraryMobileView(
     onAddToEndOfQueue: (Track) -> Unit = {},
     modifier: Modifier = Modifier,
     searchQuery: String = "",
-    onSearchQuery: (String) -> Unit = {},
+    favoritesOnly: Boolean = false,
     libraryViewMode: LibraryViewMode = LibraryViewMode.Grid,
     jellyfinPagination: Boolean = false,
     onJellyfinPage: (JellyfinLibraryPageKind, Int) -> Unit = { _, _ -> },
@@ -141,34 +139,40 @@ fun LibraryMobileView(
     val sortedTracks = remember(allTracks, sortBy, ascending) {
         sortTracksForLibrary(allTracks, sortBy, ascending)
     }
+    val likeActions = LocalLikeActions.current
+    // Favorites and search both narrow the loaded catalog locally, so server paging only applies when neither is on.
+    val unfiltered = searchQuery.isBlank() && !favoritesOnly
     var visibleArtistsResult by remember { mutableStateOf<List<Artist>?>(null) }
     var visibleAlbumsResult by remember { mutableStateOf<List<Album>?>(null) }
     var visibleTracksResult by remember { mutableStateOf<List<Track>?>(null) }
-    LaunchedEffect(sortedArtists, searchQuery) {
+    LaunchedEffect(sortedArtists, searchQuery, favoritesOnly) {
         visibleArtistsResult = withContext(Dispatchers.Default) {
-            filterArtistsByQuery(sortedArtists, searchQuery)
+            val source = if (favoritesOnly) sortedArtists.filter { it.favorite } else sortedArtists
+            filterArtistsByQuery(source, searchQuery)
         }
     }
-    LaunchedEffect(sortedAlbums, searchQuery) {
+    LaunchedEffect(sortedAlbums, searchQuery, favoritesOnly) {
         visibleAlbumsResult = withContext(Dispatchers.Default) {
-            filterAlbumsByQuery(sortedAlbums, searchQuery)
+            val source = if (favoritesOnly) sortedAlbums.filter { it.favorite } else sortedAlbums
+            filterAlbumsByQuery(source, searchQuery)
         }
     }
-    LaunchedEffect(sortedTracks, searchQuery) {
+    LaunchedEffect(sortedTracks, searchQuery, favoritesOnly, likeActions.likedTrackIds) {
         visibleTracksResult = withContext(Dispatchers.Default) {
-            filterTracksByQuery(sortedTracks, searchQuery)
+            val source = if (favoritesOnly) sortedTracks.filter(likeActions::isLiked) else sortedTracks
+            filterTracksByQuery(source, searchQuery)
         }
     }
-    val visibleArtists = visibleArtistsResult ?: if (searchQuery.isBlank()) sortedArtists else emptyList()
-    val visibleAlbums = visibleAlbumsResult ?: if (searchQuery.isBlank()) sortedAlbums else emptyList()
-    val visibleTracks = visibleTracksResult ?: if (searchQuery.isBlank()) sortedTracks else emptyList()
-    val artistTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.artistTotal else null
-    val albumTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.albumTotal else null
-    val trackTotal = if (searchQuery.isBlank()) catalog.remotePageInfo.trackTotal else null
+    val visibleArtists = visibleArtistsResult ?: if (unfiltered) sortedArtists else emptyList()
+    val visibleAlbums = visibleAlbumsResult ?: if (unfiltered) sortedAlbums else emptyList()
+    val visibleTracks = visibleTracksResult ?: if (unfiltered) sortedTracks else emptyList()
+    val artistTotal = if (unfiltered) catalog.remotePageInfo.artistTotal else null
+    val albumTotal = if (unfiltered) catalog.remotePageInfo.albumTotal else null
+    val trackTotal = if (unfiltered) catalog.remotePageInfo.trackTotal else null
     val artistPage = remember(visibleArtists, jellyfinPagination, pageIndex, artistTotal) { libraryPage(visibleArtists, jellyfinPagination, pageIndex, artistTotal) }
     val albumPage = remember(visibleAlbums, jellyfinPagination, pageIndex, albumTotal) { libraryPage(visibleAlbums, jellyfinPagination, pageIndex, albumTotal) }
     val trackPage = remember(visibleTracks, jellyfinPagination, pageIndex, trackTotal) { libraryPage(visibleTracks, jellyfinPagination, pageIndex, trackTotal) }
-    LaunchedEffect(filter, searchQuery, visibleArtists.size, visibleAlbums.size, visibleTracks.size) {
+    LaunchedEffect(filter, searchQuery, favoritesOnly, visibleArtists.size, visibleAlbums.size, visibleTracks.size) {
         val pageCount = when (filter) {
             LibraryFilterTab.Artists -> artistPage.pageCount
             LibraryFilterTab.Albums -> albumPage.pageCount
@@ -176,6 +180,7 @@ fun LibraryMobileView(
         }
         if (pageIndex > pageCount - 1) pageIndex = (pageCount - 1).coerceAtLeast(0)
     }
+    val emptyMessage = libraryEmptyMessage(filter, searchQuery, favoritesOnly)
     val chromePadding = LocalMobileChromePadding.current
     val listContentPadding = PaddingValues(
         top = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + MobileLibraryChromeTopPadding,
@@ -185,14 +190,13 @@ fun LibraryMobileView(
         MobileLibraryHeader(
             topBar = topBar,
             filter = filter,
-            searchQuery = searchQuery,
+            unfiltered = unfiltered,
             catalogRefreshing = catalogRefreshing,
             artistPage = artistPage,
             albumPage = albumPage,
             trackPage = trackPage,
             jellyfinPagination = jellyfinPagination,
             onFilter = onFilter,
-            onSearchQuery = onSearchQuery,
             onJellyfinPage = onJellyfinPage,
             onPageIndex = { pageIndex = it },
         )
@@ -210,6 +214,7 @@ fun LibraryMobileView(
                     onArtist = onArtist,
                     contentPadding = listContentPadding,
                     contentHeader = libraryHeader,
+                    emptyMessage = emptyMessage,
                 )
                 LibraryFilterTab.Albums -> MobileAlbumsContent(
                     catalog = catalog,
@@ -221,6 +226,7 @@ fun LibraryMobileView(
                     onAlbum = onAlbum,
                     contentPadding = listContentPadding,
                     contentHeader = libraryHeader,
+                    emptyMessage = emptyMessage,
                 )
                 LibraryFilterTab.Songs -> MobileSongsList(
                     tracks = trackPage.items,
@@ -234,9 +240,25 @@ fun LibraryMobileView(
                     onDownload = onDownload,
                     contentPadding = listContentPadding,
                     contentHeader = libraryHeader,
+                    emptyMessage = emptyMessage,
                 )
             }
         }
+    }
+}
+
+internal fun libraryEmptyMessage(filter: LibraryFilterTab, searchQuery: String, favoritesOnly: Boolean): String {
+    val noun = when (filter) {
+        LibraryFilterTab.Artists -> "artists"
+        LibraryFilterTab.Albums -> "albums"
+        LibraryFilterTab.Songs -> "songs"
+    }
+    val query = searchQuery.trim()
+    return when {
+        favoritesOnly && query.isNotEmpty() -> "No favorite $noun match \"$query\"."
+        favoritesOnly -> "No favorite $noun yet. Tap the heart again to show all $noun."
+        query.isNotEmpty() -> "No $noun match \"$query\"."
+        else -> "No $noun yet."
     }
 }
 
@@ -244,14 +266,13 @@ fun LibraryMobileView(
 private fun MobileLibraryHeader(
     topBar: (@Composable () -> Unit)?,
     filter: LibraryFilterTab,
-    searchQuery: String,
+    unfiltered: Boolean,
     catalogRefreshing: Boolean,
     artistPage: LibraryPage<Artist>,
     albumPage: LibraryPage<Album>,
     trackPage: LibraryPage<Track>,
     jellyfinPagination: Boolean,
     onFilter: (LibraryFilterTab) -> Unit,
-    onSearchQuery: (String) -> Unit,
     onJellyfinPage: (JellyfinLibraryPageKind, Int) -> Unit,
     onPageIndex: (Int) -> Unit,
 ) {
@@ -261,32 +282,21 @@ private fun MobileLibraryHeader(
             filter = filter,
             onFilter = onFilter,
         )
-        Spacer(Modifier.height(MobileLibraryTabsToSearchGap))
-        SearchPill(
-            query = searchQuery,
-            onQueryChange = onSearchQuery,
-            modifier = Modifier.fillMaxWidth().height(MobileLibrarySearchHeight),
-            placeholder = when (filter) {
-                LibraryFilterTab.Artists -> "Search artists"
-                LibraryFilterTab.Albums -> "Search albums"
-                LibraryFilterTab.Songs -> "Search songs"
-            },
-        )
-        Spacer(Modifier.height(MobileLibrarySearchToContentGap))
+        Spacer(Modifier.height(MobileLibraryTabsToContentGap))
         if (catalogRefreshing) {
             LibraryLoadingStrip(Modifier.padding(bottom = 6.dp))
         }
         when (filter) {
             LibraryFilterTab.Artists -> LibraryPaginationControls(artistPage, onPage = {
-                if (jellyfinPagination && searchQuery.isBlank()) onJellyfinPage(filter.toJellyfinPageKind(), it)
+                if (jellyfinPagination && unfiltered) onJellyfinPage(filter.toJellyfinPageKind(), it)
                 onPageIndex(it)
             })
             LibraryFilterTab.Albums -> LibraryPaginationControls(albumPage, onPage = {
-                if (jellyfinPagination && searchQuery.isBlank()) onJellyfinPage(filter.toJellyfinPageKind(), it)
+                if (jellyfinPagination && unfiltered) onJellyfinPage(filter.toJellyfinPageKind(), it)
                 onPageIndex(it)
             })
             LibraryFilterTab.Songs -> LibraryPaginationControls(trackPage, onPage = {
-                if (jellyfinPagination && searchQuery.isBlank()) onJellyfinPage(filter.toJellyfinPageKind(), it)
+                if (jellyfinPagination && unfiltered) onJellyfinPage(filter.toJellyfinPageKind(), it)
                 onPageIndex(it)
             })
         }
@@ -507,6 +517,7 @@ private fun MobileArtistsContent(
     onArtist: (Artist) -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
     contentHeader: (@Composable () -> Unit)? = null,
+    emptyMessage: String = "No artists yet.",
 ) {
     if (artists.isEmpty()) {
         LazyColumn(
@@ -517,7 +528,7 @@ private fun MobileArtistsContent(
                 item(key = "library-header", contentType = "library-header") { header() }
             }
             item(contentType = "empty-state") {
-                Text("No artists yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+                Text(emptyMessage, color = PhoebeUi.mutedText, fontSize = 13.sp, lineHeight = 18.sp)
             }
         }
         return
@@ -779,6 +790,7 @@ private fun MobileAlbumsContent(
     onAlbum: (Album) -> Unit,
     contentPadding: PaddingValues = PaddingValues(),
     contentHeader: (@Composable () -> Unit)? = null,
+    emptyMessage: String = "No albums yet.",
 ) {
     if (albums.isEmpty()) {
         LazyColumn(
@@ -789,7 +801,7 @@ private fun MobileAlbumsContent(
                 item(key = "library-header", contentType = "library-header") { header() }
             }
             item(contentType = "empty-state") {
-                Text("No albums yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+                Text(emptyMessage, color = PhoebeUi.mutedText, fontSize = 13.sp, lineHeight = 18.sp)
             }
         }
         return
@@ -1093,6 +1105,7 @@ private fun MobileSongsList(
     onAddToEndOfQueue: (Track) -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(),
     contentHeader: (@Composable () -> Unit)? = null,
+    emptyMessage: String = "No songs yet.",
     viewMode: LibraryViewMode = LibraryViewMode.List,
 ) {
     if (viewMode == LibraryViewMode.Flow || viewMode == LibraryViewMode.Immersive) {
@@ -1105,7 +1118,7 @@ private fun MobileSongsList(
                     item(key = "library-header", contentType = "library-header") { header() }
                 }
                 item(contentType = "empty-state") {
-                    Text("No songs yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+                    Text(emptyMessage, color = PhoebeUi.mutedText, fontSize = 13.sp, lineHeight = 18.sp)
                 }
             }
             return
@@ -1161,7 +1174,7 @@ private fun MobileSongsList(
                 item(key = "library-header", contentType = "library-header") { header() }
             }
             item(contentType = "empty-state") {
-                Text("No songs yet.", color = PhoebeUi.mutedText, fontSize = 13.sp)
+                Text(emptyMessage, color = PhoebeUi.mutedText, fontSize = 13.sp, lineHeight = 18.sp)
             }
         }
         return
@@ -1590,24 +1603,32 @@ fun PlaylistsMobileView(
     catalog: CatalogSnapshot,
     catalogRefreshing: Boolean,
     searchQuery: String,
-    onSearchQuery: (String) -> Unit,
     onPlaylist: (Playlist) -> Unit,
     modifier: Modifier = Modifier,
+    favoritesOnly: Boolean = false,
     topBar: (@Composable () -> Unit)? = null,
 ) {
     val playlistActions = LocalPlaylistActions.current
+    val favoriteActions = LocalFavoriteActions.current
     val playlists = playlistActions.playlists
     var showSmartPlaylistDialog by remember { mutableStateOf(false) }
     if (showSmartPlaylistDialog) {
         SmartPlaylistTemplateDialog(catalog = catalog, onDismiss = { showSmartPlaylistDialog = false })
     }
     var visiblePlaylistsResult by remember { mutableStateOf<List<Playlist>?>(null) }
-    LaunchedEffect(playlists, searchQuery) {
+    LaunchedEffect(playlists, searchQuery, favoritesOnly, favoriteActions.catalog) {
         visiblePlaylistsResult = withContext(Dispatchers.Default) {
-            filterPlaylistsByQuery(playlists, searchQuery)
+            val source = if (favoritesOnly) {
+                // Liked Songs is the favorites playlist, so it stays pinned while filtering.
+                playlists.filter { it.isLikedSongsPlaylist() || favoriteActions.isFavorite(it) }
+            } else {
+                playlists
+            }
+            filterPlaylistsByQuery(source, searchQuery)
         }
     }
-    val preparedVisiblePlaylists = visiblePlaylistsResult ?: if (searchQuery.isBlank()) playlists else emptyList()
+    val preparedVisiblePlaylists = visiblePlaylistsResult
+        ?: if (searchQuery.isBlank() && !favoritesOnly) playlists else emptyList()
     val catalogSyncInProgress = LocalCatalogSyncInProgress.current
     val chromePadding = LocalMobileChromePadding.current
 
@@ -1623,14 +1644,6 @@ fun PlaylistsMobileView(
     ) {
         topBar?.let { header ->
             item(key = "top-bar", contentType = "top-bar") { header() }
-        }
-        item(contentType = "search") {
-            SearchPill(
-                query = searchQuery,
-                onQueryChange = onSearchQuery,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                placeholder = "Search playlists",
-            )
         }
         if (catalogSyncInProgress) {
             item(contentType = "loading") {
@@ -1693,7 +1706,11 @@ fun PlaylistsMobileView(
                 } else if (preparedVisiblePlaylists.isEmpty()) {
                     item(contentType = "empty-filter") {
                         Text(
-                            "No playlists match \"$searchQuery\".",
+                            when {
+                                favoritesOnly && searchQuery.isNotBlank() -> "No favorite playlists match \"${searchQuery.trim()}\"."
+                                favoritesOnly -> "No favorite playlists yet. Tap the heart again to show all playlists."
+                                else -> "No playlists match \"${searchQuery.trim()}\"."
+                            },
                             color = PhoebeUi.mutedText,
                             fontSize = 13.sp,
                             lineHeight = 18.sp,

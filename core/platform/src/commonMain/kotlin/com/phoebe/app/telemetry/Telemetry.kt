@@ -9,6 +9,7 @@ object Telemetry {
 
     fun initialize() {
         if (initialized) return
+        if (isDebugBuild()) return // LOCAL ONLY - do not commit
         platformInitializeTelemetry(
             dsn = Dsn,
             debug = isDebugBuild(),
