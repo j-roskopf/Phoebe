@@ -827,10 +827,10 @@ fun MobilePlayer(
                 }
                 Spacer(Modifier.weight(1f).heightIn(min = expandedControlsGap))
                 val utilityTrack = track
-                // The artwork carries the heart; the row only needs one while a visualizer replaces the artwork.
-                val utilityShowLike = utilityTrack != null &&
-                    visualizerPreset.isVisualizer &&
-                    (utilityTrack.id.startsWith("radio:") || (likeActions.likesEnabled && utilityTrack.canTogglePlexLike()))
+                val utilityShowLike = utilityTrack != null && (
+                    utilityTrack.id.startsWith("radio:") ||
+                        (likeActions.likesEnabled && utilityTrack.canTogglePlexLike())
+                    )
                 MobileExpandedUtilityControls(
                     songRadio = utilityTrack
                         ?.takeIf(canStartSongRadio)
