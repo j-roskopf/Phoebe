@@ -491,6 +491,11 @@ compose.desktop {
             // (see configureSkiaGpuResourceCache in Main.kt) because a fixed budget
             // that fits a 1080p screen thrashes on a large or HiDPI one.
         ) + aarch64C1OsrWorkaroundJvmArgs + windowsSkikoJvmArgs()
+        if (phoebeDebugDistribution.get()) {
+            // Packaged "Phoebe Debug" builds behave like dev runs: separate ~/.phoebe-debug
+            // data and no background update check against the public releases.
+            jvmArgs += "-Dphoebe.debug=true"
+        }
         if (System.getProperty("os.name").lowercase().contains("mac")) {
             // The media keys dylib path is a dev-run-only override (see the JavaExec
             // block below); packaged apps load it from compose.application.resources.dir.

@@ -855,11 +855,14 @@ private fun mergeArtistsFromAlbums(artists: List<Artist>, albums: List<Album>): 
             val current = existing[key]
             val title = current?.title ?: artistAlbums.first().artist
             val genre = current?.genre ?: dominantCollectionTagLabel(artistAlbums.mapNotNull { it.genre })
+            // getArtists has no created date, so an artist counts as added when its newest album was.
+            val dateAddedMs = current?.dateAddedMs ?: artistAlbums.mapNotNull { it.dateAddedMs }.maxOrNull()
             existing[key] = current?.copy(
                 albumCount = maxOf(current.albumCount, artistAlbums.size),
                 thumbUrl = current.thumbUrl ?: artistAlbums.firstNotNullOfOrNull { it.thumbUrl },
                 favorite = current.favorite || artistAlbums.any { it.favorite },
                 genre = genre,
+                dateAddedMs = dateAddedMs,
             ) ?: Artist(
                 id = "artist:${key.hashCode().toUInt().toString(16)}",
                 title = title,
@@ -867,6 +870,7 @@ private fun mergeArtistsFromAlbums(artists: List<Artist>, albums: List<Album>): 
                 thumbUrl = artistAlbums.firstNotNullOfOrNull { it.thumbUrl },
                 favorite = artistAlbums.any { it.favorite },
                 genre = genre,
+                dateAddedMs = dateAddedMs,
             )
         }
     return existing.values.sortedBy { it.title.lowercase() }

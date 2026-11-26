@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -16,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -359,22 +361,29 @@ private fun CollectionSortHeader(
             color = PhoebeUi.primaryText,
             fontSize = 13.sp,
             fontWeight = FontWeight.Black,
-            modifier = Modifier.weight(1f),
             maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
         )
-        sortKeys.forEach { key ->
-            CollectionSortChip(
-                label = sortLabel(key),
-                selected = key == sortBy,
-                onClick = { onSortBy(key) },
-            )
+        // Chips scroll horizontally when they don't fit (narrow phones) and stay right-aligned when they do.
+        Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+            Row(
+                Modifier.horizontalScroll(rememberScrollState()),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                sortKeys.forEach { key ->
+                    CollectionSortChip(
+                        label = sortLabel(key),
+                        selected = key == sortBy,
+                        onClick = { onSortBy(key) },
+                    )
+                }
+                CollectionSortChip(
+                    label = if (ascending) "Asc" else "Desc",
+                    selected = true,
+                    onClick = { onAscending(!ascending) },
+                )
+            }
         }
-        CollectionSortChip(
-            label = if (ascending) "Asc" else "Desc",
-            selected = true,
-            onClick = { onAscending(!ascending) },
-        )
     }
 }
 
@@ -390,7 +399,7 @@ private fun CollectionSortChip(
         fontSize = 12.sp,
         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium,
         maxLines = 1,
-        overflow = TextOverflow.Ellipsis,
+        softWrap = false,
         modifier = Modifier
             .clip(RoundedCornerShape(999.dp))
             .background(if (selected) PhoebeUi.accentLight.copy(alpha = 0.18f) else PhoebeUi.elevatedFill)

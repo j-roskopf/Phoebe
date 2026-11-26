@@ -571,6 +571,7 @@ private fun MobileArtistsContent(
                     mode = LibrarySectionIndexMode.MobileScrollbar,
                     revealSignal = scrolling,
                     scrollbarStateProvider = { gridState.libraryScrollbarState() },
+                    touchExclusionTopPx = { gridState.libraryHeaderBottomPx() },
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .padding(
@@ -609,6 +610,7 @@ private fun MobileArtistsContent(
                     mode = LibrarySectionIndexMode.MobileScrollbar,
                     revealSignal = scrolling,
                     scrollbarStateProvider = { listState.libraryScrollbarState() },
+                    touchExclusionTopPx = { listState.libraryHeaderBottomPx() },
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .padding(
@@ -844,6 +846,7 @@ private fun MobileAlbumsContent(
                     mode = LibrarySectionIndexMode.MobileScrollbar,
                     revealSignal = scrolling,
                     scrollbarStateProvider = { gridState.libraryScrollbarState() },
+                    touchExclusionTopPx = { gridState.libraryHeaderBottomPx() },
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .padding(
@@ -882,6 +885,7 @@ private fun MobileAlbumsContent(
                     mode = LibrarySectionIndexMode.MobileScrollbar,
                     revealSignal = scrolling,
                     scrollbarStateProvider = { listState.libraryScrollbarState() },
+                    touchExclusionTopPx = { listState.libraryHeaderBottomPx() },
                     modifier = Modifier
                         .align(Alignment.CenterEnd)
                         .padding(
@@ -1217,6 +1221,7 @@ private fun MobileSongsList(
             mode = LibrarySectionIndexMode.MobileScrollbar,
             revealSignal = scrolling,
             scrollbarStateProvider = { listState.libraryScrollbarState() },
+            touchExclusionTopPx = { listState.libraryHeaderBottomPx() },
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(
@@ -1797,3 +1802,16 @@ fun MobilePlaylistRow(
         PhoebeIconView(PhoebeIcon.Forward, tint = PhoebeUi.mutedText, modifier = Modifier.size(12.dp))
     }
 }
+
+/** Bottom edge of the scrolling library header (toolbar, tabs) in px below the top content padding, or 0 once scrolled away. */
+private fun LazyListState.libraryHeaderBottomPx(): Float =
+    layoutInfo.visibleItemsInfo
+        .firstOrNull { it.key == "library-header" }
+        ?.let { (it.offset + it.size).toFloat().coerceAtLeast(0f) }
+        ?: 0f
+
+private fun LazyGridState.libraryHeaderBottomPx(): Float =
+    layoutInfo.visibleItemsInfo
+        .firstOrNull { it.key == "library-header" }
+        ?.let { (it.offset.y + it.size.height).toFloat().coerceAtLeast(0f) }
+        ?: 0f

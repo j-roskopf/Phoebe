@@ -42,14 +42,25 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.PointerId
+import androidx.compose.ui.input.pointer.changedToDown
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.node.CompositionLocalConsumerModifierNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.PointerInputModifierNode
+import androidx.compose.ui.node.currentValueOf
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.phoebe.app.domain.Album
@@ -169,8 +180,12 @@ fun LibrarySectionIndex(
     scrollbarState: LibraryScrollbarState? = null,
     scrollbarStateProvider: (() -> LibraryScrollbarState?)? = null,
     onScrubbingChanged: (Boolean) -> Unit = {},
+    // Mobile only: touches that start above this y (px, in the index's own coordinates) are ignored,
+    // so the rail never steals gestures from a header (toolbar, overflow menu) scrolled into that area.
+    touchExclusionTopPx: () -> Float = { 0f },
 ) {
     val currentOnScrubbingChanged by rememberUpdatedState(onScrubbingChanged)
+    val currentTouchExclusionTopPx by rememberUpdatedState(touchExclusionTopPx)
 
     DisposableEffect(Unit) {
         onDispose { currentOnScrubbingChanged(false) }
@@ -258,6 +273,30 @@ fun LibrarySectionIndex(
         modifier
             .width(containerWidth)
             .fillMaxHeight()
+            .then(
+                if (mobileMode) {
+                    Modifier.mobileSectionIndexScrub(
+                        hitWidth = LibrarySectionIndexHitWidth,
+                        touchExclusionTopPx = { currentTouchExclusionTopPx() },
+                        onScrubStart = { y, height ->
+                            scrubbing = true
+                            suppressNextExitLinger = false
+                            interactionLingerVisible = false
+                            hintVisible = false
+                            lastSelectedItemIndex = null
+                            selectAt(y, height)
+                        },
+                        onScrubMove = { y, height -> selectAt(y, height) },
+                        onScrubEnd = {
+                            scrubbing = false
+                            interactionLingerVisible = false
+                            hintVisible = false
+                        },
+                    )
+                } else {
+                    Modifier
+                },
+            )
     ) {
         val compactDateLabels = entries.any { it.label.length > 4 }
         val minLabelStep = if (compactDateLabels) 26.dp else 16.dp
@@ -468,35 +507,8 @@ fun LibrarySectionIndex(
                 )
                 .then(
                     if (mobileMode) {
-                        Modifier.pointerInput(entries) {
-                            awaitPointerEventScope {
-                                while (true) {
-                                    val down = awaitPointerEvent()
-                                        .changes
-                                        .firstOrNull { it.pressed }
-                                        ?: continue
-                                    scrubbing = true
-                                    suppressNextExitLinger = false
-                                    interactionLingerVisible = false
-                                    hintVisible = false
-                                    lastSelectedItemIndex = null
-                                    selectAt(down.position.y, size.height)
-                                    down.consume()
-
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val change = event.changes.firstOrNull() ?: continue
-                                        if (!change.pressed) break
-                                        selectAt(change.position.y, size.height)
-                                        change.consume()
-                                    }
-
-                                    scrubbing = false
-                                    interactionLingerVisible = false
-                                    hintVisible = false
-                                }
-                            }
-                        }
+                        // Mobile scrubbing is handled by mobileSectionIndexScrub on the container.
+                        Modifier
                     } else {
                         Modifier
                             .pointerInput(entries) {
@@ -535,6 +547,111 @@ fun LibrarySectionIndex(
                     },
                 ),
         )
+    }
+}
+
+/**
+ * Mobile scrub gesture for the section index rail.
+ *
+ * Unlike a plain pointerInput, this:
+ *  - shares pointer input with siblings, so taps and swipes that aren't a scrub still reach the list
+ *    underneath (row taps, header buttons such as the overflow menu);
+ *  - waits for touch slop and only claims mostly-vertical drags, so horizontal edge swipes (system
+ *    back / swipe-back navigation) never jump the list;
+ *  - ignores touches outside the right-hand [hitWidth] strip or above [touchExclusionTopPx].
+ *
+ * It runs on the Initial pass so that, once it claims a drag, the consumed change stops the list's
+ * own scroll gesture before it starts.
+ */
+private fun Modifier.mobileSectionIndexScrub(
+    hitWidth: Dp,
+    touchExclusionTopPx: () -> Float,
+    onScrubStart: (y: Float, height: Int) -> Unit,
+    onScrubMove: (y: Float, height: Int) -> Unit,
+    onScrubEnd: () -> Unit,
+): Modifier = this then MobileSectionIndexScrubElement(hitWidth, touchExclusionTopPx, onScrubStart, onScrubMove, onScrubEnd)
+
+private data class MobileSectionIndexScrubElement(
+    val hitWidth: Dp,
+    val touchExclusionTopPx: () -> Float,
+    val onScrubStart: (y: Float, height: Int) -> Unit,
+    val onScrubMove: (y: Float, height: Int) -> Unit,
+    val onScrubEnd: () -> Unit,
+) : ModifierNodeElement<MobileSectionIndexScrubNode>() {
+    override fun create() = MobileSectionIndexScrubNode(this)
+
+    override fun update(node: MobileSectionIndexScrubNode) {
+        node.element = this
+    }
+}
+
+private class MobileSectionIndexScrubNode(
+    var element: MobileSectionIndexScrubElement,
+) : Modifier.Node(), PointerInputModifierNode, CompositionLocalConsumerModifierNode {
+    private var trackedPointer: PointerId? = null
+    private var downPosition = Offset.Zero
+    private var scrubbing = false
+
+    override fun sharePointerInputWithSiblings(): Boolean = true
+
+    override fun onPointerEvent(pointerEvent: PointerEvent, pass: PointerEventPass, bounds: IntSize) {
+        if (pass != PointerEventPass.Initial) return
+        val tracked = trackedPointer
+        if (tracked == null) {
+            val down = pointerEvent.changes.firstOrNull { it.changedToDown() } ?: return
+            val hitWidthPx = with(currentValueOf(LocalDensity)) { element.hitWidth.toPx() }
+            if (down.isConsumed) return
+            if (down.position.x < bounds.width - hitWidthPx) return
+            if (down.position.y < element.touchExclusionTopPx()) return
+            trackedPointer = down.id
+            downPosition = down.position
+            return
+        }
+
+        val change = pointerEvent.changes.firstOrNull { it.id == tracked }
+        if (change == null || !change.pressed) {
+            // A tap that never crossed slop is left unconsumed so it reaches whatever is underneath.
+            finish()
+            return
+        }
+        if (scrubbing) {
+            element.onScrubMove(change.position.y, bounds.height)
+            change.consume()
+            return
+        }
+        if (change.isConsumed) {
+            reset()
+            return
+        }
+        val dx = abs(change.position.x - downPosition.x)
+        val dy = abs(change.position.y - downPosition.y)
+        val touchSlop = currentValueOf(LocalViewConfiguration).touchSlop
+        when {
+            dy > touchSlop && dy > dx -> {
+                scrubbing = true
+                element.onScrubStart(change.position.y, bounds.height)
+                change.consume()
+            }
+            dx > touchSlop -> reset()
+        }
+    }
+
+    override fun onCancelPointerInput() {
+        finish()
+    }
+
+    override fun onDetach() {
+        reset()
+    }
+
+    private fun finish() {
+        if (scrubbing) element.onScrubEnd()
+        reset()
+    }
+
+    private fun reset() {
+        trackedPointer = null
+        scrubbing = false
     }
 }
 
@@ -622,8 +739,11 @@ fun libraryArtistScrollIndex(
     sortBy: LibrarySortBy,
     ascending: Boolean,
 ): List<LibraryScrollIndexEntry> =
-    when (sortBy) {
-        LibrarySortBy.DateAdded -> buildGroupedScrollIndex(artists) { monthYearLabelFromEpochMs(it.dateAddedMs) ?: "Unknown" }
+    when {
+        // With no dates at all the date sort falls back to title A-Z, so index it alphabetically.
+        sortBy == LibrarySortBy.DateAdded && artists.any { it.dateAddedMs != null } ->
+            buildGroupedScrollIndex(artists) { monthYearLabelFromEpochMs(it.dateAddedMs) ?: "Unknown" }
+        sortBy == LibrarySortBy.DateAdded -> buildAlphaScrollIndex(artists, ascending = true) { it.title }
         else -> buildAlphaScrollIndex(artists, ascending) { it.title }
     }
 
