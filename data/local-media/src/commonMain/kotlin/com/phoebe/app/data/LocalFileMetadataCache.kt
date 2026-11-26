@@ -56,6 +56,11 @@ class LocalFileMetadataCache(
                         filepath = entry.track.filepath,
                         localArtworkUri = entry.track.localArtworkUri.orEmpty(),
                         dateAddedMs = entry.track.dateAddedMs ?: 0L,
+                        replayGainTrackGainDb = entry.track.replayGainTrackGainDb?.toDouble(),
+                        replayGainTrackPeak = entry.track.replayGainTrackPeak?.toDouble(),
+                        replayGainAlbumGainDb = entry.track.replayGainAlbumGainDb?.toDouble(),
+                        replayGainAlbumPeak = entry.track.replayGainAlbumPeak?.toDouble(),
+                        metadataVersion = entry.metadataVersion.toLong(),
                     )
                 }
             }
@@ -94,6 +99,11 @@ class LocalFileMetadataCache(
                         filepath = entry.track.filepath,
                         localArtworkUri = entry.track.localArtworkUri.orEmpty(),
                         dateAddedMs = entry.track.dateAddedMs ?: 0L,
+                        replayGainTrackGainDb = entry.track.replayGainTrackGainDb?.toDouble(),
+                        replayGainTrackPeak = entry.track.replayGainTrackPeak?.toDouble(),
+                        replayGainAlbumGainDb = entry.track.replayGainAlbumGainDb?.toDouble(),
+                        replayGainAlbumPeak = entry.track.replayGainAlbumPeak?.toDouble(),
+                        metadataVersion = entry.metadataVersion.toLong(),
                     )
                 }
             }
@@ -132,8 +142,13 @@ class LocalFileMetadataCache(
                 audioCodec = audioCodec,
                 bitrateKbps = bitrateKbps?.toInt(),
                 dateAddedMs = dateAddedMs,
+                replayGainTrackGainDb = replayGainTrackGainDb?.toFloat(),
+                replayGainTrackPeak = replayGainTrackPeak?.toFloat(),
+                replayGainAlbumGainDb = replayGainAlbumGainDb?.toFloat(),
+                replayGainAlbumPeak = replayGainAlbumPeak?.toFloat(),
             ),
             artworkScanned = localArtworkUri != null,
+            metadataVersion = metadataVersion.toInt(),
         )
 }
 
@@ -145,6 +160,8 @@ data class LocalFileMetadataCacheEntry(
     val albumId: String,
     val track: Track,
     val artworkScanned: Boolean = true,
+    /** [com.phoebe.app.sources.LocalAudioLibraryReader.metadataVersion] that produced this entry. */
+    val metadataVersion: Int = 0,
 ) {
     fun fingerprintMatches(sizeBytes: Long, modifiedAtMs: Long): Boolean =
         this.sizeBytes == sizeBytes && this.modifiedAtMs == modifiedAtMs

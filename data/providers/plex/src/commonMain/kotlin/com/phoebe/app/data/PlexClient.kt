@@ -2331,6 +2331,7 @@ class PlexClient private constructor(
         val genre = primaryGenreTag()
         val mood = primaryMoodTag()
         val style = primaryStyleTag()
+        val loudness = part.streams.firstOrNull { it.streamType == PlexAudioStreamType && it.gain != null }
         val bitrateRaw = mediaItem.bitrate
         val bitrateKbps = bitrateRaw?.let { raw ->
             when {
@@ -2360,6 +2361,10 @@ class PlexClient private constructor(
             rating = userRating.toStarRating(),
             playlistItemId = playlistItemId,
             parentAlbumId = parentRatingKey,
+            replayGainTrackGainDb = loudness?.gain?.toFloatOrNull(),
+            replayGainTrackPeak = loudness?.peak?.toFloatOrNull()?.takeIf { it > 0f },
+            replayGainAlbumGainDb = loudness?.albumGain?.toFloatOrNull(),
+            replayGainAlbumPeak = loudness?.albumPeak?.toFloatOrNull()?.takeIf { it > 0f },
         )
     }
 
@@ -3003,3 +3008,6 @@ private fun io.ktor.client.request.HttpRequestBuilder.plexHeaders(token: String?
     header(HttpHeaders.Accept, "application/json")
     token?.let { header("X-Plex-Token", it) }
 }
+
+/** Plex `streamType` for audio streams. */
+private const val PlexAudioStreamType = 2

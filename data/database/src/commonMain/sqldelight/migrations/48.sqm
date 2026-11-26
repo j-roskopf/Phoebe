@@ -1,0 +1,3 @@
+-- Tracks which tag-reader revision produced each cached local-file row, so a reader that learns
+-- new tags (e.g. ReplayGain) can re-read files whose size/mtime fingerprint did not change.
+ALTER TABLE LocalFileMetadataCacheRow ADD COLUMN metadataVersion INTEGER NOT NULL DEFAULT 0;

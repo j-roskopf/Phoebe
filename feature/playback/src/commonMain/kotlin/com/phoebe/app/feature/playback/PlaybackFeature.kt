@@ -42,6 +42,7 @@ data class MobilePlaybackRouteState(
     val initialUpNextExpanded: Boolean = false,
     val expansionFraction: Float = 0f,
     val effectiveStreamingQuality: StreamingQuality = StreamingQuality.Original,
+    val songRadioStartingIds: Set<String> = emptySet(),
 )
 
 class MobilePlaybackRouteActions(
@@ -59,6 +60,8 @@ class MobilePlaybackRouteActions(
     val onSwipeDismiss: () -> Unit,
     val onSkipQueueBy: (Int) -> Unit = {},
     val onOpenSongDetail: (Track) -> Unit = {},
+    val canStartSongRadio: (Track) -> Boolean = { false },
+    val onStartSongRadio: (Track) -> Unit = {},
     val onCast: () -> Unit = {},
     val onLyrics: () -> Unit = {},
     val onUltimateGuitar: (Track) -> Unit = {},
@@ -144,6 +147,9 @@ fun MobilePlaybackRoute(
         onMoveUpNext = actions.onMoveUpNext,
         onRemoveUpNext = actions.onRemoveUpNext,
         onOpenSongDetail = actions.onOpenSongDetail,
+        canStartSongRadio = actions.canStartSongRadio,
+        songRadioStartingIds = state.songRadioStartingIds,
+        onStartSongRadio = actions.onStartSongRadio,
         onCast = actions.onCast,
         onLyrics = actions.onLyrics,
         onUltimateGuitar = actions.onUltimateGuitar,

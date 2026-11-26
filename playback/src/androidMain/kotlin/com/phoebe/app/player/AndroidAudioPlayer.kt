@@ -571,13 +571,20 @@ class AndroidAudioPlayer(
                 val fadeDurationMs = remainingMs
                     .coerceAtMost(durationMs)
                     .coerceAtLeast(CrossfadeMinimumFadeMs)
-                fadeVolumes(outgoing, incoming, fadeDurationMs, baseVolume, generation)
+                fadeVolumes(
+                    outgoing = outgoing,
+                    incoming = incoming,
+                    durationMs = fadeDurationMs,
+                    baseVolume = baseVolume,
+                    incomingVolume = effectiveOutputVolume(queue, targetIndex),
+                    generation = generation,
+                )
                 if (!isAndroidCrossfadeTransitionCurrent(generation, incoming)) return@launch
                 if (outgoingOwnedByPlayback == null && activeLocalPlayer() !== outgoing) return@launch
                 if (outgoingOwnedByPlayback != null && crossfadePlayer !== outgoingOwnedByPlayback) return@launch
 
                 if (outgoingOwnedByPlayback != null) {
-                    incoming.volume = effectiveOutputVolume()
+                    incoming.volume = effectiveOutputVolume(queue, targetIndex)
                     incomingOwnedByPlayback = true
                     crossfadeIncomingPlayer = null
                     crossfadePlayer = incoming
@@ -592,7 +599,7 @@ class AndroidAudioPlayer(
                         ) {
                             return@withLock
                         }
-                        incoming.volume = effectiveOutputVolume()
+                        incoming.volume = effectiveOutputVolume(queue, targetIndex)
                         incomingOwnedByPlayback = true
                         crossfadeIncomingPlayer = null
                         crossfadePlayer = incoming
@@ -1058,14 +1065,16 @@ class AndroidAudioPlayer(
         incoming: Player,
         durationMs: Long,
         baseVolume: Float,
+        incomingVolume: Float,
         generation: Int,
     ) {
+        val incomingTargetVolume = incomingVolume
         val stepDelayMs = (durationMs / CrossfadeSteps).coerceAtLeast(16L)
         repeat(CrossfadeSteps) { index ->
             if (!isPlayRequestCurrent(generation) || !playWhenReady) return
             val progress = (index + 1).toFloat() / CrossfadeSteps.toFloat()
             val outgoingVolume = (baseVolume * (1f - progress)).coerceIn(0f, 1f)
-            val incomingVolume = (baseVolume * progress).coerceIn(0f, 1f)
+            val incomingVolume = (incomingTargetVolume * progress).coerceIn(0f, 1f)
             diagnostics.crossfadeVolume(
                 engine = PlaybackEnginePath.Media3Crossfade,
                 step = index + 1,

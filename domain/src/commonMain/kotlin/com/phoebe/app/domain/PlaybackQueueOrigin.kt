@@ -40,6 +40,14 @@ sealed interface PlaybackQueueOrigin {
         override val seedTrackIds: List<String> = emptyList(),
     ) : PlaybackQueueOrigin
 
+    /** A radio seeded from one song; [id] is the seed track's catalog id. */
+    data class SongRadio(
+        val id: String,
+        override val title: String,
+        override val providerType: MediaProviderType? = id.providerTypeFromCatalogId(),
+        override val seedTrackIds: List<String> = emptyList(),
+    ) : PlaybackQueueOrigin
+
     data class Mix(
         val id: String,
         override val title: String,

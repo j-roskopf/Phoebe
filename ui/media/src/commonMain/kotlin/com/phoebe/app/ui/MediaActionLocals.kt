@@ -327,6 +327,14 @@ data class FavoriteActions(
 
 val LocalFavoriteActions = compositionLocalOf { FavoriteActions() }
 
+/** Quick "shuffle everything" entry points for artist and album tiles (e.g. long-press on home). */
+data class ShuffleActions(
+    val onShuffleArtist: (Artist) -> Unit = {},
+    val onShuffleAlbum: (Album) -> Unit = {},
+)
+
+val LocalShuffleActions = compositionLocalOf { ShuffleActions() }
+
 data class RatingActions(
     val ratingsEnabled: Boolean = false,
     val catalog: CatalogSnapshot = CatalogSnapshot(),
@@ -360,6 +368,14 @@ data class TrackNavigationActions(
 )
 
 val LocalTrackNavigationActions = compositionLocalOf { TrackNavigationActions() }
+
+/** Starts a radio seeded by a song; [canStart] is false for servers without similar-track support. */
+data class SongRadioActions(
+    val canStart: (Track) -> Boolean = { false },
+    val onStart: (Track) -> Unit = {},
+)
+
+val LocalSongRadioActions = compositionLocalOf { SongRadioActions() }
 
 data class MetadataEditorActions(
     val onRequestEdit: (Track) -> Unit = {},

@@ -122,6 +122,11 @@ class LocalFolderIncrementalSyncDesktopTest {
             filepath = "alpha.mp3",
             localArtworkUri = null,
             dateAddedMs = 123,
+            replayGainTrackGainDb = null,
+            replayGainTrackPeak = null,
+            replayGainAlbumGainDb = null,
+            replayGainAlbumPeak = null,
+            metadataVersion = 0L,
         )
         val reader = FakeLocalAudioLibraryReader(
             files = listOf(localFile("file:///music/alpha.mp3", size = 10, modified = 100)),

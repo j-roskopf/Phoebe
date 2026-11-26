@@ -10,6 +10,7 @@ import com.phoebe.app.domain.MediaProviderType
 import com.phoebe.app.domain.MusicLibrary
 import com.phoebe.app.domain.PlexServer
 import com.phoebe.app.domain.PlexSession
+import com.phoebe.app.domain.Track
 import com.phoebe.app.platform.PlatformStorage
 import com.phoebe.app.testing.newInMemoryPhoebeDatabase
 import com.phoebe.app.testing.testHttpClient
@@ -129,6 +130,64 @@ class NavidromeArtistRadioDesktopTest {
         assertTrue(repository.navidromeSimilarTracksForItem(session, "plex:tr1").isEmpty())
     }
 
+    @Test
+    fun songRadioUsesSongSimilarSongsAndDropsTheSeed() = runBlocking {
+        val requestedPaths = mutableListOf<String>()
+        val requestedIds = mutableListOf<String?>()
+        val repository = repository(
+            MockEngine { request ->
+                requestedPaths += request.url.encodedPath
+                when (request.url.encodedPath) {
+                    "/rest/getSimilarSongs.view" -> {
+                        requestedIds += request.url.parameters["id"]
+                        respondJson(songsResponse("similarSongs", listOf("tr1") + (1..10).map { "sim$it" }))
+                    }
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        )
+
+        val tracks = repository.songRadio(session, seedTrack("navidrome:tr1"))
+
+        assertEquals(listOf<String?>("tr1"), requestedIds)
+        assertEquals((1..10).map { "navidrome:sim$it" }, tracks.map { it.id })
+        assertEquals(listOf("/rest/getSimilarSongs.view"), requestedPaths)
+    }
+
+    @Test
+    fun songRadioTopsUpThinResultsWithTheSongsArtistRadio() = runBlocking {
+        val repository = repository(
+            MockEngine { request ->
+                when (request.url.encodedPath) {
+                    "/rest/getSimilarSongs.view" -> respondJson(songsResponse("similarSongs", listOf("sim1", "sim2")))
+                    "/rest/search3.view" -> respondJson(
+                        """
+                        { "subsonic-response": { "status": "ok", "searchResult3": { "artist": [
+                          { "id": "ar-real", "name": "North Lake" }
+                        ] } } }
+                        """.trimIndent(),
+                    )
+                    "/rest/getSimilarSongs2.view" -> respondJson(
+                        songsResponse("similarSongs2", listOf("sim2") + (3..12).map { "sim$it" }),
+                    )
+                    else -> respond("", HttpStatusCode.NotFound)
+                }
+            },
+        )
+
+        val tracks = repository.songRadio(session, seedTrack("navidrome:tr1", artist = "North Lake"))
+
+        assertEquals((1..12).map { "navidrome:sim$it" }, tracks.map { it.id })
+    }
+
+    @Test
+    fun songRadioIgnoresTracksFromAnotherProvider() = runBlocking {
+        val repository = repository(MockEngine { respond("", HttpStatusCode.NotFound) })
+
+        assertTrue(repository.songRadio(session, seedTrack("plex:tr1")).isEmpty())
+        assertTrue(repository.songRadio(session, seedTrack("tr1")).isEmpty())
+    }
+
     private fun repository(engine: MockEngine): CatalogRepository {
         val (db, d) = newInMemoryPhoebeDatabase()
         driver = d
@@ -143,6 +202,16 @@ class NavidromeArtistRadioDesktopTest {
         )
     }
 }
+
+private fun seedTrack(id: String, artist: String = "Artist") = Track(
+    id = id,
+    title = "Seed",
+    artist = artist,
+    album = "Album",
+    durationMs = 200_000L,
+    streamUrl = "",
+    downloadUrl = "",
+)
 
 private fun songsResponse(key: String, ids: List<String>): String {
     val songs = ids.joinToString(",") { id ->

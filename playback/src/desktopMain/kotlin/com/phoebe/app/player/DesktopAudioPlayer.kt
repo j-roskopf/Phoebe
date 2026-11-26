@@ -995,7 +995,7 @@ class DesktopAudioPlayer(
                     prepared.pause()
                     prepared.seek(javafx.util.Duration.ZERO)
                     prepared.setMute(false)
-                    prepared.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+                    prepared.volume = effectiveOutputVolume(queue, targetIndex).toDouble().coerceIn(0.0, 1.0)
                     gaplessPlayerPrerolled = true
                     scheduleJavaFxGaplessHotStart(generation, track.id)
                     scheduleJavaFxGaplessBoundaryCommit(generation, track.id)
@@ -1051,7 +1051,7 @@ class DesktopAudioPlayer(
             sampledClip = null
             sampledStream = incoming
             sampledStreamSource = incomingSource
-            applyVolumeToLine(incoming.line, effectiveOutputVolume())
+            applyVolumeToLine(incoming.line, effectiveOutputVolume(queue, targetIndex))
             runCatching {
                 incoming.markAudibleStart()
                 if (!incoming.line.isRunning) {
@@ -1095,7 +1095,7 @@ class DesktopAudioPlayer(
             sampledClip = incoming
             sampledStream = null
             sampledStreamSource = null
-            applyVolumeToClip(incoming, effectiveOutputVolume())
+            applyVolumeToClip(incoming, effectiveOutputVolume(queue, targetIndex))
             runCatching {
                 incoming.microsecondPosition = 0L
                 incoming.start()
@@ -1131,7 +1131,7 @@ class DesktopAudioPlayer(
                     incoming.setOnReady(null)
                     incoming.setOnPlaying(null)
                     incoming.setMute(false)
-                    incoming.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+                    incoming.volume = effectiveOutputVolume(queue, targetIndex).toDouble().coerceIn(0.0, 1.0)
                     incoming.setOnEndOfMedia {
                         handleJavaFxEndOfMedia(incoming, generation)
                     }
@@ -1386,6 +1386,7 @@ class DesktopAudioPlayer(
         generation: Int,
     ) {
         var committed = false
+        val incomingTargetVolume = effectiveOutputVolume(queue, targetIndex)
         try {
             val steps = 24
             val stepDelay = (durationMs / steps).coerceAtLeast(16L)
@@ -1395,7 +1396,7 @@ class DesktopAudioPlayer(
                 }
                 val progress = (index + 1).toDouble() / steps.toDouble()
                 val outgoingVolume = (baseVolume * (1.0 - progress)).toFloat().coerceIn(0f, 1f)
-                val incomingVolume = (baseVolume * progress).toFloat().coerceIn(0f, 1f)
+                val incomingVolume = (incomingTargetVolume * progress).toFloat().coerceIn(0f, 1f)
                 diagnostics.crossfadeVolume(
                     engine = PlaybackEnginePath.SampledClip,
                     step = index + 1,
@@ -1421,7 +1422,7 @@ class DesktopAudioPlayer(
                     remoteSampledFile?.takeIf { it != temp }?.delete()
                     remoteSampledFile = temp
                 }
-                applyVolumeToClip(incoming, effectiveOutputVolume())
+                applyVolumeToClip(incoming, effectiveOutputVolume(queue, targetIndex))
                 adoptCrossfadeTarget(
                     queue = queue,
                     targetIndex = targetIndex,
@@ -1456,6 +1457,7 @@ class DesktopAudioPlayer(
         baseVolume: Float,
         generation: Int,
     ) {
+        val incomingTargetVolume = effectiveOutputVolume(queue, targetIndex)
         playbackExecutor.execute {
             val steps = 24
             val stepDelay = (durationMs / steps).coerceAtLeast(16L)
@@ -1463,7 +1465,7 @@ class DesktopAudioPlayer(
                 if (!isPlayRequestCurrent(generation)) return@execute
                 val progress = (index + 1).toDouble() / steps.toDouble()
                 val outgoingVolume = (baseVolume * (1.0 - progress)).toFloat().coerceIn(0f, 1f)
-                val incomingVolume = (baseVolume * progress).toFloat().coerceIn(0f, 1f)
+                val incomingVolume = (incomingTargetVolume * progress).toFloat().coerceIn(0f, 1f)
                 diagnostics.crossfadeVolume(
                     engine = PlaybackEnginePath.JavaFxMediaPlayer,
                     step = index + 1,
@@ -1490,7 +1492,7 @@ class DesktopAudioPlayer(
                         remoteSampledFile?.takeIf { it != temp }?.delete()
                         remoteSampledFile = temp
                     }
-                    incoming.volume = effectiveOutputVolume().toDouble().coerceIn(0.0, 1.0)
+                    incoming.volume = effectiveOutputVolume(queue, targetIndex).toDouble().coerceIn(0.0, 1.0)
                     incoming.setOnEndOfMedia {
                         handleJavaFxEndOfMedia(incoming, generation)
                     }

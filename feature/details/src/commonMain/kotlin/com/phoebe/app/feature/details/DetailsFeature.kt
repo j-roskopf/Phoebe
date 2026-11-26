@@ -81,6 +81,7 @@ class AlbumDetailRouteActions(
     val onDownloadAlbum: (Album) -> Unit,
     val onArtist: (Artist) -> Unit,
     val onLibraryColumns: (LibraryColumnVisibility) -> Unit,
+    val onShuffleAllTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks.shuffled(), 0) },
     val onCollectionItems: (CollectionEntry, String) -> Unit = { _, _ -> },
     val onSearchQuery: (String) -> Unit = {},
     val onAddToEndOfQueue: (Track) -> Unit = {},
@@ -89,6 +90,9 @@ class AlbumDetailRouteActions(
 @Immutable
 data class SongDetailRouteState(
     val track: Track,
+    /** Whether the track's server can build a radio from it (Plex, Jellyfin, Emby, Navidrome). */
+    val canStartRadio: Boolean = false,
+    val radioStarting: Boolean = false,
 )
 
 class SongDetailRouteActions(
@@ -97,6 +101,7 @@ class SongDetailRouteActions(
     val onAddToUpNext: (Track) -> Unit,
     val onDownload: (Track) -> Unit,
     val onOpenLyrics: (Track) -> Unit = {},
+    val onStartRadio: (Track) -> Unit = {},
 )
 
 @Immutable
@@ -120,6 +125,8 @@ class PlaylistDetailRouteActions(
     val onDeleteDownloadPlaylist: (Playlist) -> Unit = {},
     val onMovePlaylistTrack: (Playlist, Int, Int) -> Unit = { _, _, _ -> },
     val onAddToEndOfQueue: (Track) -> Unit = {},
+    val onPlayAllTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks, 0) },
+    val onShuffleAllTracks: (List<Track>) -> Unit = { tracks -> onPlayTracks(tracks.shuffled(), 0) },
 )
 
 @Composable
@@ -193,6 +200,7 @@ fun AlbumDetailRoute(
         searchQuery = state.searchQuery,
         onBack = actions.onBack,
         onPlayTracks = actions.onPlayTracks,
+        onShuffleAllTracks = actions.onShuffleAllTracks,
         onAddToUpNext = actions.onAddToUpNext,
         onDownload = actions.onDownload,
         onDownloadAlbum = actions.onDownloadAlbum,
@@ -218,6 +226,11 @@ fun SongDetailRoute(
         onAddToUpNext = actions.onAddToUpNext,
         onDownload = actions.onDownload,
         onOpenLyrics = actions.onOpenLyrics,
+        radio = if (state.canStartRadio) {
+            SongRadioAction(starting = state.radioStarting, onStart = actions.onStartRadio)
+        } else {
+            null
+        },
     )
 }
 
@@ -237,6 +250,8 @@ fun PlaylistDetailRoute(
         onSearchQuery = actions.onSearchQuery,
         onBack = actions.onBack,
         onPlayTracks = actions.onPlayTracks,
+        onPlayAllTracks = actions.onPlayAllTracks,
+        onShuffleAllTracks = actions.onShuffleAllTracks,
         onAddToUpNext = actions.onAddToUpNext,
         onDownload = actions.onDownload,
         onDownloadPlaylist = actions.onDownloadPlaylist,

@@ -173,6 +173,7 @@ CREATE TABLE LocalFileMetadataCacheRow (
     filepath TEXT,
     localArtworkUri TEXT,
     dateAddedMs INTEGER NOT NULL,
+    metadataVersion INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (folderId, uri)
 );
 
@@ -280,8 +281,9 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?);
 upsertTrack:
 INSERT OR REPLACE INTO TrackRow(
     id, title, artist, album, durationMs, streamUrl, downloadUrl,
-    thumbUrl, localArtworkUri, localUri, year, genre, mood, style, filepath, audioCodec, bitrateKbps, dateAddedMs, rating, parentAlbumId
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    thumbUrl, localArtworkUri, localUri, year, genre, mood, style, filepath, audioCodec, bitrateKbps, dateAddedMs, rating, parentAlbumId,
+    replayGainTrackGainDb, replayGainTrackPeak, replayGainAlbumGainDb, replayGainAlbumPeak
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 upsertTrackParent:
 INSERT OR REPLACE INTO TrackParentRow(parentId, trackId, position, playlistItemId) VALUES (?, ?, ?, ?);
@@ -340,8 +342,9 @@ SELECT * FROM LocalFileMetadataCacheRow WHERE folderId = ?;
 upsertLocalFileMetadataCache:
 INSERT OR REPLACE INTO LocalFileMetadataCacheRow(
     folderId, uri, sizeBytes, modifiedAtMs, trackId, albumId, title, artist,
-    album, durationMs, year, genre, mood, style, bitrateKbps, audioCodec, filepath, localArtworkUri, dateAddedMs
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+    album, durationMs, year, genre, mood, style, bitrateKbps, audioCodec, filepath, localArtworkUri, dateAddedMs,
+    replayGainTrackGainDb, replayGainTrackPeak, replayGainAlbumGainDb, replayGainAlbumPeak, metadataVersion
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 deleteLocalFileMetadataCache:
 DELETE FROM LocalFileMetadataCacheRow WHERE folderId = ? AND uri = ?;

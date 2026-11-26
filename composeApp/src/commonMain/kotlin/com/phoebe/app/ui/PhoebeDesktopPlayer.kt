@@ -265,6 +265,8 @@ internal fun DesktopPlayer(
     val onDownloadArtist = browseActions.onDownloadArtist
     val onProbeArtistRadio = browseActions.onProbeArtistRadio
     val onPlayArtistRadio = browseActions.onPlayArtistRadio
+    val canStartSongRadio = browseActions.canStartSongRadio
+    val onPlaySongRadio = browseActions.onPlaySongRadio
     val onLoadArtistEventAvailability = browseActions.onLoadArtistEventAvailability
     val onLoadArtistEvents = browseActions.onLoadArtistEvents
     val onLoadAlbumMusicBrainzMetadata = browseActions.onLoadAlbumMusicBrainzMetadata
@@ -599,6 +601,7 @@ internal fun DesktopPlayer(
                                         actions = AlbumDetailRouteActions(
                                             onBack = onPopDetail,
                                             onPlayTracks = onPlayTracks,
+                                            onShuffleAllTracks = onShuffleAllTracks,
                                             onAddToUpNext = onAddToUpNext,
                                             onDownload = onDownload,
                                             onDownloadAlbum = onDownloadAlbum,
@@ -613,13 +616,18 @@ internal fun DesktopPlayer(
                                 is AppScreen.SongDetail -> Column(Modifier.fillMaxSize()) {
                                     LibraryTopBar(searchQuery = searchQuery, onSearchQuery = onSearchQuery)
                                     SongDetailRoute(
-                                        state = SongDetailRouteState(track = targetScreen.track),
+                                        state = SongDetailRouteState(
+                                            track = targetScreen.track,
+                                            canStartRadio = canStartSongRadio(targetScreen.track),
+                                            radioStarting = targetScreen.track.id in radioStartingIds,
+                                        ),
                                         actions = SongDetailRouteActions(
                                             onBack = onPopDetail,
                                             onPlay = { onPlayTracks(listOf(targetScreen.track), 0) },
                                             onAddToUpNext = onAddToUpNext,
                                             onDownload = onDownload,
                                             onOpenLyrics = onOpenLyrics,
+                                            onStartRadio = onPlaySongRadio,
                                         ),
                                         modifier = Modifier.weight(1f).fillMaxWidth(),
                                     )

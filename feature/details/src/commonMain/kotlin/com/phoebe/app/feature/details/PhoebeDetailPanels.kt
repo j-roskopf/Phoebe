@@ -107,6 +107,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.CornerRadius
@@ -238,6 +239,7 @@ fun SongDetailPanel(
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     onOpenLyrics: (Track) -> Unit = {},
+    radio: SongRadioAction? = null,
 ) {
     val nowMs = LocalNowMs.current
     val playHistory = LocalPlayHistory.current
@@ -258,10 +260,10 @@ fun SongDetailPanel(
                 .fillMaxSize()
                 .padding(horizontal = horizontalPadding),
             contentPadding = PaddingValues(
-                top = mobileContentTopPadding(24.dp),
+                top = mobileContentTopPadding(if (compact) 8.dp else 24.dp),
                 bottom = bottomContentPadding
             ),
-            verticalArrangement = Arrangement.spacedBy(18.dp),
+            verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 18.dp),
         ) {
             item("intro") {
                 if (compact) {
@@ -284,11 +286,20 @@ fun SongDetailPanel(
                     onAddToUpNext = onAddToUpNext,
                     onDownload = onDownload,
                     onOpenLyrics = onOpenLyrics,
+                    radio = radio,
                 )
             }
             item("metadata") {
                 Column(verticalArrangement = Arrangement.spacedBy(if (compact) 12.dp else 14.dp)) {
-                    HomePanelLike { SongDetailMetadataRows(track, nowMs, lastPlayed, playHistory.playCountByTrack[track.id] ?: 0L) }
+                    HomePanelLike {
+                        SongDetailMetadataRows(
+                            track,
+                            nowMs,
+                            lastPlayed,
+                            playHistory.playCountByTrack[track.id] ?: 0L,
+                            linkArtistAndAlbum = true,
+                        )
+                    }
                 }
             }
         }
@@ -345,16 +356,18 @@ private fun SongDetailHero(
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     onOpenLyrics: (Track) -> Unit,
+    radio: SongRadioAction?,
 ) {
     if (compact) {
         Column(
             Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            // Sized so both action rows clear the mini player on a ~844dp-tall phone.
             Box(
                 Modifier
-                    .fillMaxWidth(0.78f)
-                    .widthIn(max = 320.dp)
+                    .fillMaxWidth(0.6f)
+                    .widthIn(max = 240.dp)
                     .aspectRatio(1f)
                     .align(Alignment.CenterHorizontally),
             ) {
@@ -365,13 +378,6 @@ private fun SongDetailHero(
                     radius = 14.dp,
                     maxDecodeDimension = HeroArtworkMaxDecodeDimension,
                 )
-                AudioQualityBadge(
-                    track = track,
-                    onArtwork = true,
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .padding(10.dp),
-                )
             }
             SongDetailText(
                 track = track,
@@ -381,8 +387,9 @@ private fun SongDetailHero(
                 autoScroll = true,
                 horizontalAlignment = Alignment.CenterHorizontally,
                 textAlign = TextAlign.Center,
+                lineSpacing = 4.dp,
             )
-            SongMobileActionRows(track, onPlay, onAddToUpNext, onDownload, onOpenLyrics)
+            SongMobileActionRows(track, onPlay, onAddToUpNext, onDownload, onOpenLyrics, radio)
         }
     } else {
         Row(
@@ -406,6 +413,7 @@ private fun SongDetailHero(
                     onAddToUpNext = onAddToUpNext,
                     onDownload = onDownload,
                     onOpenLyrics = onOpenLyrics,
+                    radio = radio,
                 )
             }
         }
@@ -421,12 +429,16 @@ private fun SongDetailText(
     autoScroll: Boolean = false,
     horizontalAlignment: Alignment.Horizontal = Alignment.Start,
     textAlign: TextAlign = TextAlign.Start,
+    lineSpacing: Dp = 10.dp,
 ) {
     val ratingActions = LocalRatingActions.current
+    val navigationActions = LocalTrackNavigationActions.current
+    val openArtist = Modifier.clickable(enabled = track.artist.isNotBlank()) { navigationActions.onOpenArtistForTrack(track) }
+    val openAlbum = Modifier.clickable(enabled = track.album.isNotBlank()) { navigationActions.onOpenAlbumForTrack(track) }
     Column(
         Modifier.fillMaxWidth(),
         horizontalAlignment = horizontalAlignment,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(lineSpacing),
     ) {
         if (autoScroll) {
             AutoScrollingText(
@@ -445,14 +457,14 @@ private fun SongDetailText(
                 color = PhoebeUi.secondaryText,
                 fontSize = 17.sp,
                 textAlign = textAlign,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().then(openArtist),
             )
             AutoScrollingText(
                 track.album,
                 color = PhoebeUi.mutedText,
                 fontSize = 14.sp,
                 textAlign = textAlign,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().then(openAlbum),
             )
         } else {
             Text(
@@ -475,7 +487,7 @@ private fun SongDetailText(
                 textAlign = textAlign,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().then(openArtist),
             )
             Text(
                 track.album,
@@ -484,7 +496,7 @@ private fun SongDetailText(
                 textAlign = textAlign,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().then(openAlbum),
             )
         }
         if (ratingActions.ratingsEnabled && track.isRemoteLibraryTrack()) {
@@ -531,8 +543,10 @@ private fun SongMobileActionRows(
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     onOpenLyrics: (Track) -> Unit,
+    radio: SongRadioAction?,
 ) {
     val metadataEditorActions = LocalMetadataEditorActions.current
+    val isCurrentTrack = LocalNowPlaying.current.trackId == track.id
     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
             Modifier.fillMaxWidth(),
@@ -549,13 +563,26 @@ private fun SongMobileActionRows(
                 prominent = true,
                 onClick = onPlay,
             )
-            SongActionButton(
-                icon = PhoebeIcon.Queue,
-                label = "Up Next",
-                modifier = Modifier
-                    .weight(1f)
-                    .height(48.dp),
-            ) { onAddToUpNext(track) }
+            if (radio != null) {
+                SongActionButton(
+                    icon = PhoebeIcon.Radio,
+                    label = if (radio.starting) "Starting" else "Radio",
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                    enabled = !radio.starting,
+                ) { radio.onStart(track) }
+            }
+            // The queue holds each song once, so Up Next has nothing to do for the playing song.
+            if (!isCurrentTrack) {
+                SongActionButton(
+                    icon = PhoebeIcon.Queue,
+                    label = "Up Next",
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(48.dp),
+                ) { onAddToUpNext(track) }
+            }
         }
         Row(
             Modifier.fillMaxWidth(),
@@ -600,8 +627,10 @@ private fun SongActionRow(
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     onOpenLyrics: (Track) -> Unit,
+    radio: SongRadioAction? = null,
 ) {
     val metadataEditorActions = LocalMetadataEditorActions.current
+    val isCurrentTrack = LocalNowPlaying.current.trackId == track.id
     if (scrollable) {
         LazyRow(
             modifier = Modifier.fillMaxWidth(),
@@ -609,7 +638,12 @@ private fun SongActionRow(
             contentPadding = PaddingValues(end = 4.dp),
         ) {
             item("play") { SongActionButton(PhoebeIcon.Play, "Play", Modifier.playTrackTarget(track), onClick = onPlay) }
-            item("up-next") { SongActionButton(PhoebeIcon.Queue, "Up Next", onClick = { onAddToUpNext(track) }) }
+            if (radio != null) {
+                item("radio") { SongRadioButton(track, radio) }
+            }
+            if (!isCurrentTrack) {
+                item("up-next") { SongActionButton(PhoebeIcon.Queue, "Up Next", onClick = { onAddToUpNext(track) }) }
+            }
             item("lyrics") { SongActionButton(PhoebeIcon.Lyrics, "Lyrics", onClick = { onOpenLyrics(track) }) }
             item("edit-metadata") {
                 SongActionButton(PhoebeIcon.Edit, "Edit Metadata", onClick = {
@@ -624,7 +658,12 @@ private fun SongActionRow(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SongActionButton(PhoebeIcon.Play, "Play", Modifier.playTrackTarget(track), onClick = onPlay)
-            SongActionButton(PhoebeIcon.Queue, "Up Next", onClick = { onAddToUpNext(track) })
+            if (radio != null) {
+                SongRadioButton(track, radio)
+            }
+            if (!isCurrentTrack) {
+                SongActionButton(PhoebeIcon.Queue, "Up Next", onClick = { onAddToUpNext(track) })
+            }
             SongActionButton(PhoebeIcon.Lyrics, "Lyrics", onClick = { onOpenLyrics(track) })
             SongActionButton(PhoebeIcon.Edit, "Edit Metadata", onClick = {
                 metadataEditorActions.onRequestEdit(track)
@@ -632,6 +671,21 @@ private fun SongActionRow(
             SongDownloadActionButton(track = track, onDownload = onDownload)
         }
     }
+}
+
+/** A song radio entry point; null in [SongDetailPanel] hides it for servers that can't build one. */
+class SongRadioAction(
+    val starting: Boolean,
+    val onStart: (Track) -> Unit,
+)
+
+@Composable
+private fun SongRadioButton(track: Track, radio: SongRadioAction) {
+    SongActionButton(
+        icon = PhoebeIcon.Radio,
+        label = if (radio.starting) "Starting" else "Radio",
+        enabled = !radio.starting,
+    ) { radio.onStart(track) }
 }
 
 @Composable
@@ -702,6 +756,7 @@ fun SongActionButton(
     modifier: Modifier = Modifier,
     prominent: Boolean = false,
     compact: Boolean = false,
+    enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
     val background = if (prominent) PhoebeUi.primaryText else PhoebeUi.elevatedFill
@@ -709,8 +764,9 @@ fun SongActionButton(
     val iconTint = if (prominent) PhoebeUi.shellTop else PhoebeUi.accentLight
     Row(
         modifier
+            .alpha(if (enabled) 1f else 0.6f)
             .clip(RoundedCornerShape(999.dp))
-            .clickable(onClick = onClick)
+            .clickable(enabled = enabled, onClick = onClick)
             .background(background)
             .border(BorderStroke(1.dp, PhoebeUi.border), RoundedCornerShape(999.dp))
             .padding(horizontal = if (compact) 10.dp else 14.dp, vertical = if (compact) 8.dp else 9.dp),
@@ -1169,6 +1225,7 @@ private fun MobileAlbumDetailHeader(
     favoriteActions: FavoriteActions,
     onBack: () -> Unit,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    onShuffleAllTracks: (List<Track>) -> Unit,
     onDownloadAlbum: (Album) -> Unit,
     onArtist: (Artist) -> Unit,
     onArtworkLongClick: () -> Unit,
@@ -1243,6 +1300,7 @@ private fun MobileAlbumDetailHeader(
                     enabled = visibleTracks.isNotEmpty(),
                     modifier = Modifier.weight(1f),
                     onClick = { onPlayTracks(visibleTracks, 0) },
+                    onLongClick = { onShuffleAllTracks(visibleTracks) },
                 )
                 MobileDetailIconSurface {
                     DownloadActionButton("Download", tracks, iconOnly = true) { onDownloadAlbum(album) }
@@ -1269,7 +1327,8 @@ private fun MobilePlaylistDetailHeader(
     ratingActions: RatingActions,
     onBack: () -> Unit,
     onSearchQuery: (String) -> Unit,
-    onPlayTracks: (List<Track>, Int) -> Unit,
+    onPlayAllTracks: (List<Track>) -> Unit,
+    onShuffleAllTracks: (List<Track>) -> Unit,
     onDownloadPlaylist: (Playlist) -> Unit,
     onCancelDownloadPlaylist: (Playlist) -> Unit,
     onDeleteDownloadPlaylist: (Playlist) -> Unit,
@@ -1377,11 +1436,24 @@ private fun MobilePlaylistDetailHeader(
                     placeholder = "Search songs and artists",
                 )
             }
-            MobileDetailPrimaryPlayButton(
-                enabled = visibleTracks.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth().padding(contentPadding).padding(top = 18.dp),
-                onClick = { onPlayTracks(visibleTracks, 0) },
-            )
+            Row(
+                Modifier.fillMaxWidth().padding(contentPadding).padding(top = 18.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                MobileDetailPrimaryPlayButton(
+                    enabled = visibleTracks.isNotEmpty(),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onPlayAllTracks(visibleTracks) },
+                )
+                MobileDetailSecondaryButton(
+                    icon = PhoebeIcon.InterwovenArrows,
+                    label = "Shuffle",
+                    enabled = visibleTracks.isNotEmpty(),
+                    modifier = Modifier.weight(1f),
+                    onClick = { onShuffleAllTracks(visibleTracks) },
+                )
+            }
         }
     }
 }
@@ -1556,6 +1628,7 @@ private fun DesktopAlbumDetailHeader(
     favoriteActions: FavoriteActions,
     onBack: () -> Unit,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    onShuffleAllTracks: (List<Track>) -> Unit,
     onDownloadAlbum: (Album) -> Unit,
     onArtist: (Artist) -> Unit,
     onArtworkClick: () -> Unit,
@@ -1625,6 +1698,7 @@ private fun DesktopAlbumDetailHeader(
             PlayAllActionButton(
                 tracks = visibleTracks,
                 onClick = { onPlayTracks(visibleTracks, 0) },
+                onLongClick = { onShuffleAllTracks(visibleTracks) },
             )
             DownloadActionButton("Download", tracks) { onDownloadAlbum(album) }
             DesktopDetailIconSurface {
@@ -3776,6 +3850,7 @@ fun AlbumDetailPanel(
     onSearchQuery: (String) -> Unit = {},
     onBack: () -> Unit,
     onPlayTracks: (List<Track>, Int) -> Unit,
+    onShuffleAllTracks: (List<Track>) -> Unit = { tracksToShuffle -> onPlayTracks(tracksToShuffle.shuffled(), 0) },
     onAddToUpNext: (Track) -> Unit,
     onDownload: (Track) -> Unit,
     onDownloadAlbum: (Album) -> Unit,
@@ -3888,6 +3963,7 @@ fun AlbumDetailPanel(
                         favoriteActions = LocalFavoriteActions.current,
                         onBack = onBack,
                         onPlayTracks = onPlayTracks,
+                        onShuffleAllTracks = onShuffleAllTracks,
                         onDownloadAlbum = onDownloadAlbum,
                         onArtist = onArtist,
                         onArtworkClick = { showArtworkGallery = true },
@@ -3925,6 +4001,7 @@ fun AlbumDetailPanel(
                         favoriteActions = LocalFavoriteActions.current,
                         onBack = onBack,
                         onPlayTracks = onPlayTracks,
+                        onShuffleAllTracks = onShuffleAllTracks,
                         onDownloadAlbum = onDownloadAlbum,
                         onArtist = onArtist,
                         onArtworkLongClick = { showArtworkGallery = true },
@@ -4197,6 +4274,8 @@ fun PlaylistDetailPanel(
     onMovePlaylistTrack: (Playlist, Int, Int) -> Unit = { _, _, _ -> },
     onLibraryColumns: (LibraryColumnVisibility) -> Unit,
     onAddToEndOfQueue: (Track) -> Unit = {},
+    onPlayAllTracks: (List<Track>) -> Unit = { tracksToPlay -> onPlayTracks(tracksToPlay, 0) },
+    onShuffleAllTracks: (List<Track>) -> Unit = { tracksToShuffle -> onPlayTracks(tracksToShuffle.shuffled(), 0) },
 ) {
     val tracks = remember(catalog.tracksByParent, playlist.id) {
         catalog.tracksByParent[playlist.id].orEmpty()
@@ -4333,7 +4412,8 @@ fun PlaylistDetailPanel(
                                 ratingActions = ratingActions,
                                 onBack = onBack,
                                 onSearchQuery = onSearchQuery,
-                                onPlayTracks = onPlayTracks,
+                                onPlayAllTracks = onPlayAllTracks,
+                                onShuffleAllTracks = onShuffleAllTracks,
                                 onDownloadPlaylist = onDownloadPlaylist,
                                 onCancelDownloadPlaylist = onCancelDownloadPlaylist,
                                 onDeleteDownloadPlaylist = onDeleteDownloadPlaylist,

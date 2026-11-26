@@ -831,6 +831,16 @@ private data class SubsonicSongDto(
     val userRating: Int? = null,
     val playCount: Int? = null,
     val played: String? = null,
+    /** OpenSubsonic extension (Navidrome and others). */
+    val replayGain: SubsonicReplayGainDto? = null,
+)
+
+@Serializable
+private data class SubsonicReplayGainDto(
+    val trackGain: Float? = null,
+    val albumGain: Float? = null,
+    val trackPeak: Float? = null,
+    val albumPeak: Float? = null,
 )
 
 @Serializable
@@ -941,6 +951,10 @@ private fun SubsonicSongDto.toTrack(baseUrl: String, username: String, password:
         dateAddedMs = created?.parseSubsonicTimestampMillis(),
         rating = userRating?.toFloat()?.coerceIn(0f, 5f),
         parentAlbumId = albumId,
+        replayGainTrackGainDb = replayGain?.trackGain,
+        replayGainTrackPeak = replayGain?.trackPeak?.takeIf { it > 0f },
+        replayGainAlbumGainDb = replayGain?.albumGain,
+        replayGainAlbumPeak = replayGain?.albumPeak?.takeIf { it > 0f },
     )
 
 private fun String.parseSubsonicTimestampMillis(): Long? {

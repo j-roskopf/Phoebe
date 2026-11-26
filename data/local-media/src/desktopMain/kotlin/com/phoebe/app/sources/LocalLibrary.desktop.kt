@@ -7,7 +7,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.jaudiotagger.audio.AudioFileIO
 import org.jaudiotagger.tag.FieldKey
+import org.jaudiotagger.tag.Tag
+import org.jaudiotagger.tag.TagTextField
+import org.jaudiotagger.tag.id3.AbstractID3v2Frame
+import org.jaudiotagger.tag.id3.framebody.FrameBodyTXXX
 import org.jaudiotagger.tag.images.Artwork
+import org.jaudiotagger.tag.mp4.field.Mp4TagReverseDnsField
+import com.phoebe.app.domain.ReplayGainInfo
 import java.io.File
 import java.io.IOException
 import java.net.URI
@@ -27,6 +33,9 @@ private val lastSidecarParentCache = AtomicReference<Pair<Path, Map<String, Path
 private const val MaxEmbeddedArtworkBytes = 12 * 1024 * 1024
 
 actual object LocalLibraryIO {
+    // 1: ReplayGain / R128 loudness tags.
+    actual val metadataVersion: Int = 1
+
     actual suspend fun listAudioFiles(rootUri: String): List<LocalAudioFile> = withContext(Dispatchers.IO) {
         val uri = runCatching { URI(rootUri) }.getOrNull() ?: return@withContext emptyList()
         val path = runCatching { Paths.get(uri) }.getOrNull() ?: return@withContext emptyList()
@@ -107,6 +116,7 @@ actual object LocalLibraryIO {
                 bitrateKbps = bitrateKbps,
                 audioCodec = audioCodec,
                 artworkUri = artworkUri,
+                replayGain = tag?.let(::readReplayGain),
             )
         }.getOrElse {
             AudioMetadata(
@@ -215,4 +225,34 @@ private fun String.stableArtworkHash(): String {
     var hash = 1125899906842597L
     forEach { c -> hash = (hash * 31) + c.code }
     return hash.toString()
+}
+
+/**
+ * Collects ReplayGain / R128 values from whichever tag flavour the file uses: Vorbis comments
+ * (FLAC/Ogg/Opus), ID3v2 `TXXX` user frames (MP3/WAV/AIFF) or MP4 reverse-DNS atoms (M4A).
+ */
+private fun readReplayGain(tag: Tag): ReplayGainInfo? {
+    val values = mutableMapOf<String, String>()
+    runCatching {
+        val fields = tag.fields
+        while (fields.hasNext()) {
+            val field = fields.next()
+            val entry: Pair<String, String>? = when {
+                field is AbstractID3v2Frame && field.body is FrameBodyTXXX -> {
+                    val body = field.body as FrameBodyTXXX
+                    body.description to body.firstTextValue
+                }
+                field is Mp4TagReverseDnsField -> field.descriptor to field.content
+                field is TagTextField -> field.id to field.content
+                else -> null
+            }
+            val (key, value) = entry ?: continue
+            if (key.isNullOrBlank() || value.isNullOrBlank()) continue
+            val normalizedKey = key.trim().uppercase()
+            if (normalizedKey.startsWith("REPLAYGAIN_") || normalizedKey.startsWith("R128_")) {
+                values.putIfAbsent(normalizedKey, value)
+            }
+        }
+    }
+    return ReplayGainInfo.fromTags(values)
 }

@@ -351,6 +351,10 @@ class CatalogRepositoryRefreshDesktopTest {
                 dateAddedMs = 123L,
                 rating = null,
                 parentAlbumId = "local_lf-old:album:1",
+                replayGainTrackGainDb = null,
+                replayGainTrackPeak = null,
+                replayGainAlbumGainDb = null,
+                replayGainAlbumPeak = null,
             )
             db.catalogQueries.upsertTrackParent("local_lf-old:album:1", "local_lf-old:track:1", 0L, null)
         }
@@ -791,6 +795,10 @@ class CatalogRepositoryRefreshDesktopTest {
                 dateAddedMs = null,
                 rating = null,
                 parentAlbumId = null,
+                replayGainTrackGainDb = null,
+                replayGainTrackPeak = null,
+                replayGainAlbumGainDb = null,
+                replayGainAlbumPeak = null,
             )
             db.catalogQueries.upsertTrackParent("plex:a1", "plex:old", 0, null)
         }
@@ -859,6 +867,10 @@ class CatalogRepositoryRefreshDesktopTest {
                 dateAddedMs = 41L,
                 rating = null,
                 parentAlbumId = null,
+                replayGainTrackGainDb = null,
+                replayGainTrackPeak = null,
+                replayGainAlbumGainDb = null,
+                replayGainAlbumPeak = null,
             )
             db.catalogQueries.upsertTrackParent("plex:a1", "plex:t1", 0, null)
         }
@@ -949,6 +961,10 @@ class CatalogRepositoryRefreshDesktopTest {
                 dateAddedMs = 41L,
                 rating = null,
                 parentAlbumId = "plex:a1",
+                replayGainTrackGainDb = null,
+                replayGainTrackPeak = null,
+                replayGainAlbumGainDb = null,
+                replayGainAlbumPeak = null,
             )
             db.catalogQueries.upsertTrackParent("plex:a1", "plex:t1", 0, null)
         }
@@ -1168,6 +1184,10 @@ class CatalogRepositoryRefreshDesktopTest {
                 dateAddedMs = null,
                 rating = null,
                 parentAlbumId = "a1",
+                replayGainTrackGainDb = null,
+                replayGainTrackPeak = null,
+                replayGainAlbumGainDb = null,
+                replayGainAlbumPeak = null,
             )
             db.catalogQueries.upsertTrackParent("plex:a1", "plex:deleted", 0, null)
         }
@@ -1239,6 +1259,10 @@ class CatalogRepositoryRefreshDesktopTest {
                 dateAddedMs = null,
                 rating = null,
                 parentAlbumId = "a1",
+                replayGainTrackGainDb = null,
+                replayGainTrackPeak = null,
+                replayGainAlbumGainDb = null,
+                replayGainAlbumPeak = null,
             )
             db.catalogQueries.upsertTrackParent("plex:a1", "plex:t1", 0, null)
         }
@@ -1304,6 +1328,10 @@ class CatalogRepositoryRefreshDesktopTest {
                 dateAddedMs = null,
                 rating = null,
                 parentAlbumId = "a1",
+                replayGainTrackGainDb = null,
+                replayGainTrackPeak = null,
+                replayGainAlbumGainDb = null,
+                replayGainAlbumPeak = null,
             )
             db.catalogQueries.upsertTrackParent("plex:a1", "plex:t1", 0, null)
             db.downloadsQueries.upsert(
@@ -1390,6 +1418,10 @@ class CatalogRepositoryRefreshDesktopTest {
                 dateAddedMs = null,
                 rating = null,
                 parentAlbumId = null,
+                replayGainTrackGainDb = null,
+                replayGainTrackPeak = null,
+                replayGainAlbumGainDb = null,
+                replayGainAlbumPeak = null,
             )
             db.catalogQueries.upsertTrackParent("plex:a1", "plex:t1", 0, null)
             db.catalogQueries.upsertCollectionValue("Albums", "Mood", "Angry", "999", null, "album.mood", 0)
@@ -1778,6 +1810,10 @@ class CatalogRepositoryRefreshDesktopTest {
                 dateAddedMs = null,
                 rating = null,
                 parentAlbumId = null,
+                replayGainTrackGainDb = null,
+                replayGainTrackPeak = null,
+                replayGainAlbumGainDb = null,
+                replayGainAlbumPeak = null,
             )
             db.catalogQueries.upsertTrackParent("plex:p1", "plex:t1", 0, null)
         }
@@ -1941,6 +1977,10 @@ class CatalogRepositoryRefreshDesktopTest {
                 dateAddedMs = null,
                 rating = null,
                 parentAlbumId = "plex:a1",
+                replayGainTrackGainDb = null,
+                replayGainTrackPeak = null,
+                replayGainAlbumGainDb = null,
+                replayGainAlbumPeak = null,
             )
             db.catalogQueries.upsertTrackParent("plex:a1", "plex:t1", 0, null)
         }
@@ -2440,6 +2480,10 @@ class CatalogRepositoryRefreshDesktopTest {
                 dateAddedMs = null,
                 rating = null,
                 parentAlbumId = "album-1",
+                replayGainTrackGainDb = null,
+                replayGainTrackPeak = null,
+                replayGainAlbumGainDb = null,
+                replayGainAlbumPeak = null,
             )
             db.catalogQueries.upsertTrackParent("jellyfin:album-1", "jellyfin:track-old", 0, null)
         }

@@ -14,6 +14,8 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
 actual object LocalLibraryIO {
+    actual val metadataVersion: Int = 0
+
     actual suspend fun listAudioFiles(rootUri: String): List<LocalAudioFile> {
         if (rootUri.startsWith(WebRootPrefix)) {
             return parseWebAudioFiles(webListLocalAudioFiles(rootUri))

@@ -1104,6 +1104,8 @@ private data class JellyfinItemDto(
     val ParentThumbImageTag: String? = null,
     val ChildCount: Int? = null,
     val AlbumCount: Int? = null,
+    /** Jellyfin 10.9+: gain in dB that brings the item to the server's loudness target. */
+    val NormalizationGain: Float? = null,
 )
 
 @Serializable
@@ -1217,6 +1219,7 @@ private fun JellyfinItemDto.toTrack(server: PlexServer, token: String): Track? {
         dateAddedMs = DateCreated.toEpochMillisOrNull(),
         rating = UserData?.Rating.toStarRating(),
         parentAlbumId = AlbumId,
+        replayGainTrackGainDb = NormalizationGain,
     )
 }
 

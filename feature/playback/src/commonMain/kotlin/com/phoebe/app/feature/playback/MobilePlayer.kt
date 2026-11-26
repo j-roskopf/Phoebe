@@ -1,5 +1,21 @@
 package com.phoebe.app.feature.playback
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.material3.PlainTooltip
+import androidx.compose.material3.TooltipAnchorPosition
+import androidx.compose.material3.TooltipBox
+import androidx.compose.material3.TooltipDefaults
+import androidx.compose.material3.rememberTooltipState
+import androidx.compose.ui.input.pointer.PointerEventPass
 import com.phoebe.app.ui.*
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
@@ -12,6 +28,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -141,6 +158,7 @@ private fun MobileExpandedSheetChrome(
 
 @Composable
 private fun MobileExpandedUtilityControls(
+    songRadio: MobileSongRadioControl?,
     castState: CastState,
     equalizerActive: Boolean,
     visualizerPreset: NowPlayingVisualizerPreset,
@@ -161,7 +179,7 @@ private fun MobileExpandedUtilityControls(
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (showLikeControl) {
-            MobileUtilityControl {
+            MobileUtilityControl(tooltip = if (liked) "Remove from Liked Songs" else "Add to Liked Songs") {
                 TransportIcon(
                     PhoebeIcon.Heart,
                     if (liked) "Remove from Liked Songs" else "Add to Liked Songs",
@@ -171,7 +189,31 @@ private fun MobileExpandedUtilityControls(
                 )
             }
         }
-        MobileUtilityControl {
+        if (songRadio != null) {
+            MobileUtilityControl(tooltip = if (songRadio.starting) "Starting radio…" else "Start radio from this song") {
+                if (songRadio.starting) {
+                    // Finding similar songs can take a few seconds (several server calls, then a cast
+                    // reload), so swap the icon for a spinner like the Cast icon's connecting state.
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(CircleShape)
+                            .background(PhoebeUi.accent.copy(alpha = 0.14f))
+                            .semantics { contentDescription = "Starting radio" },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            color = PhoebeUi.accentLight,
+                            strokeWidth = 2.dp,
+                        )
+                    }
+                } else {
+                    TransportIcon(PhoebeIcon.Radio, "Start radio from this song", songRadio.onStart)
+                }
+            }
+        }
+        MobileUtilityControl(tooltip = if (castState.isConnected) "Casting" else "Cast") {
             CastIcon(
                 active = castState.isConnected,
                 loading = castState.isBuffering,
@@ -179,14 +221,14 @@ private fun MobileExpandedUtilityControls(
                 onClick = onCast,
             )
         }
-        MobileUtilityControl {
+        MobileUtilityControl(tooltip = "Equalizer") {
             TransportIcon(PhoebeIcon.Equalizer, "Equalizer", onEqualizer, active = equalizerActive)
         }
-        MobileUtilityControl {
+        MobileUtilityControl(tooltip = "Lyrics") {
             TransportIcon(PhoebeIcon.Lyrics, "Lyrics", onLyrics)
         }
         if (ultimateGuitarTrack != null) {
-            MobileUtilityControl {
+            MobileUtilityControl(tooltip = "Open Ultimate Guitar") {
                 TransportIcon(
                     PhoebeIcon.Guitar,
                     "Open Ultimate Guitar",
@@ -194,7 +236,7 @@ private fun MobileExpandedUtilityControls(
                 )
             }
         }
-        MobileUtilityControl {
+        MobileUtilityControl(tooltip = "Visualizer") {
             VisualizerPresetButton(
                 selected = visualizerPreset,
                 onSelected = onVisualizerPreset,
@@ -203,16 +245,65 @@ private fun MobileExpandedUtilityControls(
     }
 }
 
+private class MobileSongRadioControl(
+    val starting: Boolean,
+    val onStart: () -> Unit,
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MobileUtilityControl(
+private fun RowScope.MobileUtilityControl(
+    tooltip: String,
     modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
-    Box(
-        modifier = modifier.width(44.dp),
-        contentAlignment = Alignment.Center,
+    var pressed by remember { mutableStateOf(false) }
+    val motionEnabled = LocalContinuousMotionEnabled.current
+    val pressScale by animateFloatAsState(
+        targetValue = if (pressed && motionEnabled) 0.86f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMedium),
+        label = "utility-press-scale",
+    )
+    val pressFill by animateColorAsState(
+        targetValue = if (pressed) PhoebeUi.primaryText.copy(alpha = 0.14f) else Color.Transparent,
+        animationSpec = tween(120),
+        label = "utility-press-fill",
+    )
+    // Up to seven controls (Like, Radio, Cast, EQ, Lyrics, Ultimate Guitar, Visualizer) share the row;
+    // the weight lets each give up a few dp on narrow phones instead of overflowing.
+    TooltipBox(
+        positionProvider = TooltipDefaults.rememberTooltipPositionProvider(TooltipAnchorPosition.Above),
+        tooltip = { PlainTooltip { Text(tooltip) } },
+        state = rememberTooltipState(),
+        modifier = modifier
+            .weight(1f, fill = false)
+            .width(44.dp),
     ) {
-        content()
+        Box(
+            modifier = Modifier
+                .size(44.dp)
+                // Observes presses without consuming them, so the icon's own click still fires.
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                        pressed = true
+                        try {
+                            waitForUpOrCancellation(pass = PointerEventPass.Initial)
+                        } finally {
+                            pressed = false
+                        }
+                    }
+                }
+                .graphicsLayer {
+                    scaleX = pressScale
+                    scaleY = pressScale
+                }
+                .clip(CircleShape)
+                .background(pressFill),
+            contentAlignment = Alignment.Center,
+        ) {
+            content()
+        }
     }
 }
 
@@ -252,6 +343,9 @@ fun MobilePlayer(
     onMoveUpNext: (Int, Int) -> Unit,
     onRemoveUpNext: (Int) -> Unit,
     onOpenSongDetail: (Track) -> Unit = {},
+    canStartSongRadio: (Track) -> Boolean = { false },
+    songRadioStartingIds: Set<String> = emptySet(),
+    onStartSongRadio: (Track) -> Unit = {},
     onCast: () -> Unit = {},
     onLyrics: () -> Unit = {},
     onUltimateGuitar: (Track) -> Unit = {},
@@ -738,6 +832,14 @@ fun MobilePlayer(
                         (likeActions.likesEnabled && utilityTrack.canTogglePlexLike())
                     )
                 MobileExpandedUtilityControls(
+                    songRadio = utilityTrack
+                        ?.takeIf(canStartSongRadio)
+                        ?.let { radioTrack ->
+                            MobileSongRadioControl(
+                                starting = radioTrack.id in songRadioStartingIds,
+                                onStart = { onStartSongRadio(radioTrack) },
+                            )
+                        },
                     castState = castState,
                     equalizerActive = equalizerProfile.enabled,
                     visualizerPreset = visualizerPreset,
@@ -803,6 +905,7 @@ fun MobilePlayer(
                             maxDecodeDimension = playerHeroArtworkMaxDecodeDimension(),
                             shape = artworkContentShape,
                             forceSquare = false,
+                            onLongClick = { onOpenSongDetail(t) },
                         ) {
                             val isRadio = t.id.startsWith("radio:")
                             val showFeedbackActions = isRadio || (likeActions.likesEnabled && t.canTogglePlexLike()) || (listenBrainzFeedbackTarget.available && listenBrainzFeedbackTarget.trackId == t.id)

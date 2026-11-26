@@ -153,6 +153,7 @@ fun TrackActionMenu(
     val ratingActions = LocalRatingActions.current
     val metadataEditorActions = LocalMetadataEditorActions.current
     val navigationActions = LocalTrackNavigationActions.current
+    val songRadioActions = LocalSongRadioActions.current
     val downloads = LocalDownloadStatus.current
     val downloadActions = LocalDownloadActions.current
     val downloadItem = track?.let { downloads.itemFor(it) }
@@ -186,6 +187,15 @@ fun TrackActionMenu(
                 text = { Text("Add to End of Queue") },
                 onClick = {
                     onAddToEndOfQueue()
+                    onDismiss()
+                },
+            )
+        }
+        if (track != null && songRadioActions.canStart(track)) {
+            DropdownMenuItem(
+                text = { Text("Start Radio") },
+                onClick = {
+                    songRadioActions.onStart(track)
                     onDismiss()
                 },
             )

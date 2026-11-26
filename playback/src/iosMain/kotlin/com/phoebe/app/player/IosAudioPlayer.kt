@@ -238,7 +238,7 @@ private class IosAudioPlayer(
         item.preferredForwardBufferDuration = GaplessPreferredForwardBufferSeconds
         val prepared = AVPlayer()
         prepared.automaticallyWaitsToMinimizeStalling = true
-        prepared.volume = effectiveOutputVolume()
+        prepared.volume = effectiveOutputVolume(queue, targetIndex)
         prepared.replaceCurrentItemWithPlayerItem(item)
         gaplessPlayer = prepared
         gaplessItem = item
@@ -276,6 +276,7 @@ private class IosAudioPlayer(
         gaplessTrackId = null
         installEqualizerTap(item, asset, allowTrackLoad = true)
         observePlayback(incoming, item, generation)
+        incoming.volume = effectiveOutputVolume(queue, targetIndex)
         incoming.seekToTime(CMTimeMakeWithSeconds(0.0, NSEC_PER_SEC.toInt()))
         if (playWhenReady) {
             incoming.play()
@@ -341,6 +342,7 @@ private class IosAudioPlayer(
                     incoming = incoming,
                     durationMs = iosCrossfadeFadeDurationMs(outgoing, durationMs),
                     baseVolume = baseVolume,
+                    incomingVolume = effectiveOutputVolume(queue, targetIndex),
                     generation = generation,
                 )
                 if (!isIosCrossfadeCurrent(generation, outgoing, incoming)) return@launch
@@ -394,8 +396,10 @@ private class IosAudioPlayer(
         incoming: AVPlayer,
         durationMs: Long,
         baseVolume: Float,
+        incomingVolume: Float,
         generation: Int,
     ) {
+        val incomingTargetVolume = incomingVolume
         val stepDelayMs = (durationMs / CrossfadeSteps).coerceAtLeast(16L)
         repeat(CrossfadeSteps) { index ->
             if (!isPlayRequestCurrent(generation) || crossfadePlayer !== incoming || player !== outgoing || !playWhenReady) {
@@ -403,7 +407,7 @@ private class IosAudioPlayer(
             }
             val progress = (index + 1).toFloat() / CrossfadeSteps.toFloat()
             val outgoingVolume = (baseVolume * (1f - progress)).coerceIn(0f, 1f)
-            val incomingVolume = (baseVolume * progress).coerceIn(0f, 1f)
+            val incomingVolume = (incomingTargetVolume * progress).coerceIn(0f, 1f)
             diagnostics.crossfadeVolume(
                 engine = PlaybackEnginePath.AvPlayer,
                 step = index + 1,
@@ -446,7 +450,7 @@ private class IosAudioPlayer(
         crossfadeEqualizerTap = null
         equalizerTapTrackLoadRequested = false
         equalizerInstallSuppressedForCurrentItem = incomingEqualizerTap == null
-        incoming.volume = effectiveOutputVolume()
+        incoming.volume = effectiveOutputVolume(queue, targetIndex)
         observePlayback(incoming, item, generation)
         adoptCrossfadeTarget(
             queue = queue,
